@@ -76,6 +76,13 @@ export async function saveUploads(files: File[]): Promise<SavedUploads> {
   return { attachments, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
+/** ?after= 缺省为 0；不是非负整数时返回 undefined。 */
+export function parseAfter(value: unknown): number | undefined {
+  if (value === undefined || value === "") return 0;
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return undefined;
+  return Number(value);
+}
+
 export function parseJsonField(value: unknown): { ok: true; value: unknown } | { ok: false } {
   if (typeof value !== "string") return { ok: true, value };
   try {
