@@ -44,7 +44,7 @@ async function start() {
 
   const port = Number(process.env.DE_PORT ?? process.env.PORT ?? 3000);
   // SSE 是长连接，Bun 默认 10 秒空闲就会断开
-  createApp({ engine, employeesDir, webDistDir }).listen({ port, idleTimeout: 120 });
+  createApp({ engine, employeesDir, workspaceDir, toolClient, webDistDir }).listen({ port, idleTimeout: 120 });
   console.log(`digital-employee 服务已启动：http://localhost:${port}（工作区 ${workspaceDir}${scriptFile ? `，剧本式模型 ${scriptFile}` : ""}）`);
 
   const shutdown = async () => {

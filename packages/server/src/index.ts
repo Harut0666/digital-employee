@@ -4,14 +4,23 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
-import { loadEmployeeConfig, isEmployeeId, type EmployeeConfig, type TaskEngine } from "@de/core";
+import { loadEmployeeConfig, isEmployeeId, resolveWorkspace, type EmployeeConfig, type ModelSettings, type TaskEngine, type ToolClient } from "@de/core";
 import { downloadResponse, staticResponse } from "./files";
 import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
+import { createChatRoutes } from "./routes/chat";
+import { createConfigRoutes } from "./routes/config";
+import { createSettingsRoutes } from "./routes/settings";
 
 export interface ServerOptions {
   engine: TaskEngine;
   employeesDir: string;
+  /** 工作区根目录；不传时用 resolveWorkspace()（%APPDATA%/digital-employee，DE_WORKSPACE 可覆盖） */
+  workspaceDir?: string;
+  /** 工具服务器客户端，供设置页下发故障注入（admin_set_faults） */
+  toolClient?: ToolClient;
+  /** 设置保存后重建模型提供者，由启动入口提供 */
+  onSettingsSaved?: (settings: ModelSettings) => void | Promise<void>;
   /** 前端构建产物目录；不传则不托管静态资源 */
   webDistDir?: string;
   /** 员工配置加载器，默认用 @de/core 的 loadEmployeeConfig；测试时可替换 */
@@ -21,6 +30,13 @@ export interface ServerOptions {
 export function createApp(options: ServerOptions) {
   const { engine, employeesDir } = options;
   const loadEmployee = options.loadEmployee ?? loadEmployeeConfig;
+  const routeDeps = {
+    engine,
+    employeesDir,
+    workspaceDir: options.workspaceDir ?? resolveWorkspace(),
+    toolClient: options.toolClient,
+    onSettingsSaved: options.onSettingsSaved,
+  };
 
   async function listEmployees() {
     const entries = await readdir(employeesDir, { withFileTypes: true }).catch(() => []);
@@ -59,6 +75,10 @@ export function createApp(options: ServerOptions) {
       set.status = 500;
       return { ok: false, error: "internal", message: error instanceof Error ? error.message : String(error) };
     })
+    // 设置页、员工配置页、前台对话各自一个路由模块（T10 / T11 / T12 填充）。
+    .use(createSettingsRoutes(routeDeps))
+    .use(createConfigRoutes(routeDeps))
+    .use(createChatRoutes(routeDeps))
     .group("/api", (api) =>
       api
         .get("/employees", () => listEmployees())

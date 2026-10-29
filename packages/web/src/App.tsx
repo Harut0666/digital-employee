@@ -11,14 +11,14 @@ import { NewConversation, TaskChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { TaskPanel } from "./components/TaskPanel";
 import type { CardActions } from "./components/Cards";
+import { EmployeeConfigPage } from "./pages/EmployeeConfig";
+import { SettingsPage } from "./pages/Settings";
 import { ROLE_LABELS } from "./view/permissions";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
   { id: "body", heading: "正文" },
 ];
-
-const PAGE_TITLES = { config: "员工配置", settings: "设置" } as const;
 
 function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   const api = useApi();
@@ -94,14 +94,8 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   let center: React.ReactNode;
   let panel: React.ReactNode;
   if (selection.kind === "page") {
-    center = (
-      <div className="chat-body">
-        <div className="placeholder-page">
-          <h2>{PAGE_TITLES[selection.page]}</h2>
-          <p>本期先放占位页，后续 ticket 实现。</p>
-        </div>
-      </div>
-    );
+    // 页面组件各自一个文件，T10/T11 并行填充时互不冲突。
+    center = selection.page === "settings" ? <SettingsPage /> : <EmployeeConfigPage employees={employees} />;
     panel = null;
   } else if (selection.kind === "new") {
     center = <NewConversation employee={employee} onPrompt={() => message.info("请在右侧填写表单并上传材料后提交")} />;
