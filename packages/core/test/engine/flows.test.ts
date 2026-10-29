@@ -410,7 +410,7 @@ describe("接缝 1 · T7 接线：准入工具故障、needs_human、质检输�
     expect(paused.pause?.message).toContain("validate_submission");
     expect(h.tools.callCount("validate_submission")).toBe(3);
     const failedEvents = await h.engine.events(paused.id);
-    expect(failedEvents.findLast((e) => e.type === "state_changed")).toMatchObject({ from: "admission", to: "awaiting_operator", trigger: "tool_failed" });
+    expect(failedEvents.filter((e) => e.type === "state_changed").at(-1)).toMatchObject({ from: "admission", to: "awaiting_operator", trigger: "tool_failed" });
 
     // 发起人不能重试；操作员重试后回到准入校验，而不是 running
     expect(await h.cmd(paused.id, { type: "retry" }, "initiator")).toMatchObject({ ok: false, error: "forbidden_role" });
@@ -444,7 +444,7 @@ describe("接缝 1 · T7 接线：准入工具故障、needs_human、质检输�
     await h.cmd(first.id, { type: "return", comment: "毛利按含税算" }, "reviewer");
     await h.engine.waitForSettled(first.id);
     const events = await h.engine.events(first.id);
-    expect(events.findLast((e) => e.type === "state_changed")).toMatchObject({ to: "awaiting_operator", trigger: "needs_human" });
+    expect(events.filter((e) => e.type === "state_changed").at(-1)).toMatchObject({ to: "awaiting_operator", trigger: "needs_human" });
   });
 
   test("质检输入源步骤 id 读自 workflow.qcSources，而不是写死", async () => {
