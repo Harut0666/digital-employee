@@ -56,6 +56,7 @@ export function eventStream(engine: TaskEngine, taskId: string, after: number, s
         controller.error(err);
         return;
       }
+      if (closed) return; // 回放期间客户端已断开：close() 已经跑过，不能再启动心跳
       heartbeat = setInterval(() => {
         if (!closed) controller.enqueue(encoder.encode(": keep-alive\n\n"));
       }, HEARTBEAT_MS);
