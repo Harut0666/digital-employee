@@ -63,6 +63,8 @@
         { "path": "table:西南/环比", "expected": 6.6 },
         { "path": "table:西南/目标达成率", "expected": 98.9 },
         { "path": "facts:company.deliveryShare", "expected": 31.3 },
+        { "path": "facts:regionCategories.华南.饮品.grossMarginRate", "expected": 60.5 },
+        { "path": "facts:regionCategories.华南.饮品.prevGrossMarginRate", "expected": 70.4 },
         { "path": "facts:quality.duplicates.count", "expected": 29 },
         { "path": "facts:quality.duplicates.revenueCents", "expected": 5629 },
         { "path": "facts:stores.GZ02.wow", "expected": 30.1 },
@@ -73,6 +75,8 @@
       ],
       "mustContain": [
         "第 43 周纪要",
+        "70.4%",
+        "60.5%",
         "29 条记录",
         "5,629",
         "去重",

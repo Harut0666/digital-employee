@@ -11,7 +11,7 @@
 | `period` | 统计周期，`year` 和 `week` |
 | `remark` | 发起人的备注，作为补充写作要求 |
 | `partialPeriod` | 为真表示数据只到周中，发起人选择按已有数据继续 |
-| `facts` | 程序算出的全部事实（`period`、`dataCoverage`、`company`、`regions`、`stores`、`categories`、`topProducts`、`anomalies`、`trend`、`quality`）。数字只能通过槽位引用 |
+| `facts` | 程序算出的全部事实（`period`、`dataCoverage`、`company`、`regions`、`stores`、`categories`、`regionCategories`、`topProducts`、`anomalies`、`trend`、`quality`）。数字只能通过槽位引用。`regionCategories` 是区域×品类的实收与本周、上周毛利率；`quality.returns.groups` 是具名退货明细（门店、日期、单品、份数、金额） |
 | `minutes` | 解析后的纪要，用于判断停业和写下周关注事项 |
 | `causes` | 上一步为每条异常匹配的原因 |
 | `contradictions` | 程序判出的纪要矛盾；没有则为空数组。每条含 `id`、`subject`（对象，`name` 是写进周报的展示名）、`claim`（纪要说法）、`actualWow`、`rule`、`sourceWeek`、`quote` |
@@ -29,14 +29,14 @@
 
 1. **本周摘要**（`summary`）：不超过 `structure.summaryMaxSentences` 句，按句号、问号、感叹号数。依次交代全公司实收（`{{company.revenue}}`）、环比（`{{company.wow}}`）、毛利率、目标达成率，再用 1 至 2 句讲最重要的异常。`partialPeriod` 为真时，第一句先说明数据只到事实 `dataCoverage` 的截止日（写成“10 月 29 日”这样的日期），周报按已有数据编写。
 2. **核心指标**（`metrics`）：1 至 2 句点评，如哪个区域达成最好、哪个区域最需关注，数字用槽位。不要逐项罗列，表格由程序生成。
-3. **品类表现**（`categories`）：用要点写各品类实收与环比的主要特点，再用一个要点列出本周实收前 5 名单品（单品名按 `facts.topProducts` 的顺序写，实收用槽位）。
+3. **品类表现**（`categories`）：用要点写各品类实收与环比的主要特点，再用一个要点列出本周实收前 5 名单品（单品名按 `facts.topProducts` 的顺序写，实收用槽位）。纪要提到某区域某品类毛利率变化（或该区域该品类毛利率两周差异明显）时，用槽位写出上周与本周的毛利率：`{{regionCategories.华南.饮品.prevGrossMarginRate}}`、`{{regionCategories.华南.饮品.grossMarginRate}}`（区域、品类换成纪要或事实里的那一个）。
 4. **异常与原因**（`anomalies`）：
    - 对 `facts.anomalies` 里的**每一条**异常写一个要点，先区域后门店，同级按环比变化从大到小；一条都不能少。
    - 每个要点写：对象名称、环比和实收（槽位，区域用 `regions.<区域名>`，门店用 `stores.<门店编码>`）、原因，并注明“（第 N 周纪要）”。原因取自 `causes` 中对应的一条，`cause` 是“原因待核实”的就如实写“原因待核实”，不补充推测。
    - 该异常的 `baseWeekHasMissingDays` 为真时，加一句“上周存在数据缺失日，环比基数偏低”。
    - 沿用上级原因的，保留“（区域整体原因）”“（店型整体原因）”标注。
    - 最后写纪要矛盾（见下）。
-5. **数据质量说明**（`data_quality`）：按岗位说明里“数据质量说明怎么写”逐项写。判断门店无数据日是停业还是数据缺失时，对照 `facts.quality.storeDays` 和各周 `minutes` 里的说法；上周的无数据日看 `facts.quality.prevWeekStoreDays`。
+5. **数据质量说明**（`data_quality`）：按岗位说明里“数据质量说明怎么写”逐项写。判断门店无数据日是停业还是数据缺失时，对照 `facts.quality.storeDays` 和各周 `minutes` 里的说法；上周的无数据日看 `facts.quality.prevWeekStoreDays`。退货有具名明细（`facts.quality.returns.groups`，含门店、日期、单品、份数、金额）时，用槽位写出门店、日期、品名、份数和金额，如“北京朝阳店 10 月 15 日草莓奶油切块退货 {{quality.returns.groups.BJ01.count}} 份，合计 {{quality.returns.groups.BJ01.revenue}}”。
 6. **下周关注事项**（`next_week`）：不超过 `structure.nextWeekMaxItems` 条，写成要点。来自本周纪要的行动项，或数据里的风险点（如活动结束后的回落、仍待处理的数据问题）。每条一句话。
 
 标题写成“经营周报（2026 年第 44 周）”的形式，年和周取自 `period`。

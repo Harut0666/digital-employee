@@ -121,6 +121,7 @@
                   "预包装食品：实收 {{categories.预包装食品.revenue}}，环比 {{categories.预包装食品.wow}}。",
                   "蛋糕：实收 {{categories.蛋糕.revenue}}，环比 {{categories.蛋糕.wow}}。",
                   "饮品：实收 {{categories.饮品.revenue}}，环比 {{categories.饮品.wow}}。",
+                  "华南饮品毛利率由 {{regionCategories.华南.饮品.prevGrossMarginRate}} 降至 {{regionCategories.华南.饮品.grossMarginRate}}。",
                   "实收前 5 名单品依次为：拿铁 {{topProducts.D02.revenue}}、生椰拿铁 {{topProducts.D03.revenue}}、美式咖啡 {{topProducts.D01.revenue}}、6寸生日蛋糕 {{topProducts.C04.revenue}}、8寸生日蛋糕 {{topProducts.C05.revenue}}。"
                 ]
               },

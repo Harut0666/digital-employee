@@ -34,6 +34,11 @@ export const FACTS: WeeklyFacts = {
     { ...metric({ revenueCents: 6_000_000, prevRevenueCents: 7_500_000 }), code: "HZ01", name: "杭州湖滨店", region: "华东", storeType: "商场店" },
   ],
   categories: [{ category: "饮品", revenueCents: 5_000_000, prevRevenueCents: 6_000_000, wow: -0.166_666 }],
+  regionCategories: {
+    华南: {
+      饮品: { revenueCents: 7_468_274, prevRevenueCents: 5_690_794, grossMarginRate: 0.60547, prevGrossMarginRate: 0.70361 },
+    },
+  },
   topProducts: [{ code: "D02", name: "拿铁", revenueCents: 2_000_000 }],
   anomalies: [
     {
@@ -54,7 +59,21 @@ export const FACTS: WeeklyFacts = {
     idConflicts: { count: 0, recordIds: [] },
     amountMismatch: { count: 0 },
     unknownCodes: { count: 0, revenueCents: 0 },
-    returns: { count: 11, revenueCents: -26_000 },
+    returns: {
+      count: 11,
+      revenueCents: -26_000,
+      groups: [
+        {
+          store: "HZ01",
+          storeName: "杭州湖滨店",
+          date: "2026-10-15",
+          product: "C01",
+          productName: "草莓奶油切块",
+          count: 5,
+          revenueCents: -5_000,
+        },
+      ],
+    },
     storeDays: [],
     prevWeekStoreDays: [],
   },
