@@ -18,7 +18,7 @@ function get(results: QcCheckResult[], id: string): QcCheckResult {
 }
 
 /** 程序从 A-01 纪要判出的矛盾：华南“基本持平”，实际环比 -12.7%。 */
-export const huananContradiction: DetectedContradiction = {
+const huananContradiction: DetectedContradiction = {
   id: "contradiction:region:华南",
   subject: { level: "region", key: "华南", name: "华南" },
   claim: { direction: "flat" },

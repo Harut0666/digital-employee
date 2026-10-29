@@ -122,6 +122,17 @@ describe("A-01 · 2026 年第 44 周：纪要里的说法", () => {
     });
     expect(out.contradictions).toEqual([]);
   });
+
+  test("三条规则按顺序判：华东“持平”先命中 flat；华北“持平”不超容差、但给出的幅度差过大 → 判 magnitude", async () => {
+    const out = await detect(44, [
+      claim({ subject: { level: "region", key: "华东" }, direction: "flat", magnitude: 0.3 }),
+      claim({ subject: { level: "region", key: "华北" }, direction: "flat", magnitude: 0.3 }),
+    ]);
+    expect(out.contradictions.map((c) => [c.subject.key, c.rule])).toEqual([
+      ["华东", "flat"],
+      ["华北", "magnitude"],
+    ]);
+  });
 });
 
 describe("A-02 · 2026 年第 43 周：客流、口感不是矛盾", () => {

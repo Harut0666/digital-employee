@@ -47,7 +47,8 @@
 
 - 写明纪要怎么说，并注明第 N 周纪要（`sourceWeek`）；原文可用引号逐字引用 `quote`；
 - 用槽位写数据显示的实际环比（`{{regions.华南.wow}}` 这样的写法，对象按 `subject.level` 与 `subject.key` 取值），并写明“以数据为准”；
-- 段落里必须出现矛盾对象名 `subject.name`，否则质检不通过。
+- 段落里必须出现矛盾对象名 `subject.name`，否则质检不通过；
+- 把这名矛盾的 `id` 原值写进输出的 `contradictionRefs`，如 `"contradiction:region:华南"`，不要改写格式。
 
 不要把没有矛盾的说法也列出，也不要写 `contradictions` 以外的矛盾。例如：“第 44 周纪要称华南本周与上周基本持平，数据显示华南环比 {{regions.华南.wow}}，以数据为准。”
 

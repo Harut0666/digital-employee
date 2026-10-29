@@ -47,12 +47,11 @@ function resolveSubject(facts: WeeklyFacts, subject: ClaimSubject): ResolvedSubj
  *   magnitude  给出幅度时，|实际幅度 − 纪要幅度| > magnitudeTolerance
  */
 function judge(claim: Claim, actualWow: number, thresholds: ContradictionThresholds): ContradictionRule | undefined {
-  if (claim.direction === "flat") {
-    return Math.abs(actualWow) > thresholds.flatTolerance ? "flat" : undefined;
-  }
-  const opposite = claim.direction === "up" ? actualWow < 0 : actualWow > 0;
-  if (opposite && Math.abs(actualWow) > thresholds.directionMin) return "direction";
-  if (typeof claim.magnitude === "number" && Math.abs(Math.abs(actualWow) - claim.magnitude) > thresholds.magnitudeTolerance) {
+  const actualMagnitude = Math.abs(actualWow);
+  if (claim.direction === "flat" && actualMagnitude > thresholds.flatTolerance) return "flat";
+  const opposite = claim.direction === "up" ? actualWow < 0 : claim.direction === "down" ? actualWow > 0 : false;
+  if (opposite && actualMagnitude > thresholds.directionMin) return "direction";
+  if (typeof claim.magnitude === "number" && Math.abs(actualMagnitude - claim.magnitude) > thresholds.magnitudeTolerance) {
     return "magnitude";
   }
   return undefined;
