@@ -1,8 +1,10 @@
 // MCP 工具服务器：注册场景 A 的工具，并提供故障注入。
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { FaultConfig, ToolName } from "@de/core/contract";
+import type { ComputeMetricsInput, FaultConfig, ToolName } from "@de/core/contract";
 import * as S from "./schemas";
+import { computeMetrics } from "./compute";
 import { parseMinutesFile } from "./minutes";
+import { loadSales } from "./sales/dataset";
 import { validateSubmission } from "./validate";
 
 export interface ToolsServerOptions {
@@ -66,6 +68,26 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       outputSchema: S.validateSubmissionOut,
     },
     wrap("validate_submission", (a) => validateSubmission(a as never) as never) as never,
+  );
+
+  server.registerTool(
+    "load_sales",
+    {
+      description: "读取销售明细（xlsx 或 csv），清洗后写成 JSON 数据集；文件名取内容哈希，已存在则直接返回。",
+      inputSchema: S.loadSalesIn,
+      outputSchema: S.loadSalesOut,
+    },
+    wrap("load_sales", (a: { salesPath: string; outDir: string }) => loadSales(a.salesPath, a.outDir)) as never,
+  );
+
+  server.registerTool(
+    "compute_metrics",
+    {
+      description: "按周报口径计算指标与异常，输出 WeeklyFacts（金额为整数分，比例为小数）。",
+      inputSchema: S.computeMetricsIn,
+      outputSchema: S.computeMetricsOut,
+    },
+    wrap("compute_metrics", async (a: ComputeMetricsInput) => computeMetrics(a) as never) as never,
   );
 
   server.registerTool(
