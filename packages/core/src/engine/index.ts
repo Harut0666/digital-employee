@@ -502,8 +502,10 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       const sections = proj.feedback.sections?.length ? `（涉及章节：${proj.feedback.sections.join("、")}）` : "";
       corrections.push(`审核人退回意见${sections}：${proj.feedback.comment}`);
     }
-    if (proj.qc?.some((c) => !c.passed)) {
-      for (const check of proj.qc) if (!check.passed) corrections.push(...check.issues.map((issue) => `质检「${check.label}」：${issue}`));
+    // 质检问题只交给 fixStep 指向本步骤的那些判断步骤，其余步骤不需要看到与自己无关的问题
+    for (const check of proj.qc ?? []) {
+      if (check.passed || check.fixStep !== step.id) continue;
+      corrections.push(...check.issues.map((issue) => `质检「${check.label}」：${issue}`));
     }
 
     const nowMs = now().getTime();

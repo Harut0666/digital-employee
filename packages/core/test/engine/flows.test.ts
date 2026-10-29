@@ -157,6 +157,25 @@ describe("接缝 1 · 质检", () => {
     expect(reruns[2]!.corrections?.join("\n")).toContain("仍有裸数字");
   });
 
+  test("重跑的判断步骤只收到 fixStep 指向自己的质检问题", async () => {
+    const mixed = [
+      ...failingChecks("match_causes", "异常 A 没有原因"),
+      ...failingChecks("write_report", "正文出现裸数字"),
+    ];
+    const qc = createStubQc([mixed]);
+    const judgment = createStubJudgment();
+    const h = await createHarness({ qc: qc.engine, judgment: judgment.runner });
+    const settled = await h.run();
+    expect(settled.state).toBe("awaiting_review");
+
+    const causesRerun = judgment.runs.filter((r) => r.step.id === "match_causes")[1]!;
+    expect(causesRerun.corrections?.join("\n")).toContain("异常 A 没有原因");
+    expect(causesRerun.corrections?.join("\n")).not.toContain("裸数字");
+    const writeRerun = judgment.runs.filter((r) => r.step.id === "write_report")[1]!;
+    expect(writeRerun.corrections?.join("\n")).toContain("正文出现裸数字");
+    expect(writeRerun.corrections?.join("\n")).not.toContain("异常 A");
+  });
+
   test("质检始终不通过 → awaiting_operator（qc_exhausted）；无 fixStep 的问题直接转人工", async () => {
     const always = Array.from({ length: 10 }, () => failingChecks("write_report", "不过"));
     const h = await createHarness({ qc: createStubQc(always).engine });
