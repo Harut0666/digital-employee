@@ -1,4 +1,5 @@
 // 图表：ECharts 服务端渲染出 SVG，再用 resvg-wasm 转成 PNG（Word 里嵌 PNG 最稳）。
+/// <reference path="./env.d.ts" />
 import * as echarts from "echarts";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import { existsSync, readFileSync } from "node:fs";
