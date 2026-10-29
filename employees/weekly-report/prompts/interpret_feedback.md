@@ -16,7 +16,7 @@
 
 ## 要做什么
 
-1. **没有任何退回意见**（首次执行）：直接提交 `{ "items": [] }`，不要编造意见。
+1. **没有任何退回意见**（首次执行）：直接提交 `{ "items": [], "needsHuman": false }`，不要编造意见。
 2. **有退回意见**：把它拆成互相独立的条目，一条意见一个条目，保持审核人的原意，不扩写、不合并不相干的意见。每个条目：
    - `id`：F1、F2……按出现顺序；
    - `comment`：该条意见的原话或忠实转述；
@@ -26,14 +26,16 @@
      - `cause`：要改异常原因，或原因的写法、出处；
      - `calculation_basis`：要求更换计算口径，如“毛利按含税算”“实收不扣折扣”“把停业日算进去”；
      - `unclear`：无法判断想要什么；
-   - `action`：打算怎么改，一句话，不写数字；
-   - `needsHuman`：`calculation_basis` 一律为 `true`；意见与《周报格式要求》冲突（如要求写同比、客单价，或要求超出 3 页）、无法照办的也为 `true`；其余为 `false`。
+   - `action`：打算怎么改，一句话，不写数字。
+3. **是否进入待人工处理**写在顶层，不写在条目里：
+   - `needsHuman`：只要有一条是 `calculation_basis`，或有一条与《周报格式要求》冲突（如要求写同比、客单价，或要求超出 3 页）而无法照办，就为 `true`；否则为 `false`；
+   - `needsHumanReason`：`needsHuman` 为 `true` 时必填，一句话说明是哪条意见、为什么无法自动处理，给操作员看；`needsHuman` 为 `false` 时省略。
 
 ## 注意
 
-- 事实和计算口径由程序决定，意见要求换口径的，不要设法用叙述绕过，如实标 `calculation_basis` 和 `needsHuman`。
+- 事实和计算口径由程序决定，意见要求换口径的，不要设法用叙述绕过，如实标 `calculation_basis`，并把顶层 `needsHuman` 置为 `true`。
 - 不要判断意见是否合理，也不要替审核人补充意见。
 
 ## 输出
 
-调用 `submit_result` 提交一个 JSON 对象，只含 `items` 一个字段，结构符合本步骤的输出 Schema。
+调用 `submit_result` 提交一个 JSON 对象，含 `items`、`needsHuman`，需要进入待人工处理时再加 `needsHumanReason`，结构符合本步骤的输出 Schema。
