@@ -72,6 +72,7 @@ export function TaskChat({
   stepDefs,
   elapsedMs,
   modelCalls,
+  emptyHint,
 }: {
   sessionId: string;
   title: string;
@@ -82,6 +83,8 @@ export function TaskChat({
   stepDefs: StepDef[];
   elapsedMs: number;
   modelCalls: { used: number; limit: number };
+  /** 没有任何对话卡片时显示的一句提示（例如草稿任务） */
+  emptyHint?: string;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const trajectory = useMemo(() => deriveTrajectory(events, stepDefs), [events, stepDefs]);
@@ -101,6 +104,11 @@ export function TaskChat({
       </div>
       <Trajectory key={sessionId} view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} />
       <div className="chat-body" ref={bodyRef}>
+        {view.cards.length === 0 && emptyHint && (
+          <div className="welcome" style={{ paddingTop: 48 }}>
+            <p style={{ fontSize: 16, color: "var(--muted)" }}>{emptyHint}</p>
+          </div>
+        )}
         {view.cards.map((card) =>
           card.kind === "user" || card.kind === "agent" ? <Message key={`${card.kind}-${card.seq}`} card={card} /> : renderCard(card, actions),
         )}
@@ -115,7 +123,7 @@ export function NewConversation({ employee, onPrompt }: { employee: EmployeeInfo
   const prompts = isWeekly
     ? [
         { key: "weekly", icon: <FileTextOutlined />, label: "出第 44 周周报", description: "基于本周销售数据和周会纪要，生成标准经营周报", tint: "#e0f3ed", color: "#1f8a70" },
-        { key: "sample", icon: <FolderOpenOutlined />, label: "载入公开样例", description: "查看示例周报的结构和内容，快速了解输出效果", tint: "#e3ebff", color: "#2f6fed" },
+        { key: "sample", icon: <FolderOpenOutlined />, label: "载入公开样例", description: "用第 44 周的样例数据建一份草稿任务，提交即可看到完整流程", tint: "#e3ebff", color: "#2f6fed" },
         { key: "about", icon: <MessageOutlined />, label: "周报包含哪些内容", description: "了解经营周报的标准章节、核心指标和数据要求", tint: "#efe6fb", color: "#7a4fd1" },
       ]
     : [

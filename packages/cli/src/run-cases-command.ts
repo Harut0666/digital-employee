@@ -2,7 +2,6 @@
 // 逐条执行用例，核对交付物的判定要点，最后写 summary.md。退出码等于未通过的条数。
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   createMcpToolClient,
@@ -17,6 +16,7 @@ import {
 } from "@de/core";
 import { createToolsServer } from "@de/tools";
 import { parseCase, runCase, type CaseDef } from "./case";
+import { resolveEmployeesDir } from "./paths";
 import { evaluateChecks, readRunEvidence, type CheckOutcome } from "./checks";
 
 export type RunMode = "scripted" | "real";
@@ -223,8 +223,7 @@ export async function runCasesCommand(args: RunCasesArgs): Promise<number> {
 
   const outBase = resolve(args.outDir ?? join("out", "cases"));
   mkdirSync(outBase, { recursive: true });
-  const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-  const employeesDir = process.env.DE_EMPLOYEES_DIR ?? join(repoRoot, "employees");
+  const employeesDir = resolveEmployeesDir();
 
   // 一次批量共用一个进程内工具服务器
   const tools = createToolsServer();

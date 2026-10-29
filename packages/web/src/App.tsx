@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, ConfigProvider, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
-import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import { LeftOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
 import type { TaskCommand } from "@de/core/contract";
 import { createApi, IS_MOCK, type UiRole, type UploadItem } from "./api";
 import { ApiContext, useApi, useEmployees, useTask, useTaskList } from "./hooks/data";
@@ -36,6 +36,8 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
 
   const taskId = selection.kind === "task" ? selection.id : undefined;
   const task = useTask(taskId);
+  // 服务端快照里的 state 最权威（草稿任务没有 state_changed 事件，视图里可能还是空）
+  const taskState = task.view.state ?? task.snapshot?.state;
   const employee = employees.find((e) => e.id === (selection.kind === "new" ? selection.employee : task.snapshot?.employee));
   const sessionTitle =
     selection.kind === "task" ? (tasks.find((t) => t.id === selection.id)?.title ?? task.snapshot?.id ?? "任务") : undefined;
@@ -76,9 +78,31 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
     }
   };
 
+  // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件）
+  const loadSample = async () => {
+    try {
+      const snap = await api.loadPublicSample();
+      refresh();
+      setSelection({ kind: "task", id: snap.id });
+      message.success("已载入公开样例，提交后开始生成周报");
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "载入样例失败");
+    }
+  };
+
+  const submitDraft = async () => {
+    if (!taskId) return;
+    setSubmitting(true);
+    try {
+      await run({ type: "submit" });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const actions: CardActions = {
     role,
-    state: task.view.state,
+    state: taskState,
     run,
     openSupplement: () => {
       setPanelOpen(true);
@@ -98,7 +122,15 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
     center = selection.page === "settings" ? <SettingsPage /> : <EmployeeConfigPage employees={employees} />;
     panel = null;
   } else if (selection.kind === "new") {
-    center = <NewConversation employee={employee} onPrompt={() => message.info("请在右侧填写表单并上传材料后提交")} />;
+    center = (
+      <NewConversation
+        employee={employee}
+        onPrompt={(key) => {
+          if (key === "sample") void loadSample();
+          else message.info("请在右侧填写表单并上传材料后提交");
+        }}
+      />
+    );
     panel = employee && (
       <>
         {initiatorOnly && <div className="panel-card" style={{ color: "var(--warn)" }}>{launchDisabledReason}</div>}
@@ -115,6 +147,7 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
         actions={actions}
         events={task.events}
         stepDefs={task.snapshot?.steps ?? []}
+        emptyHint={taskState === "draft" ? "已按公开样例建好草稿任务（第 44 周销售明细 + 周会纪要），点右侧「提交任务」开始执行。" : undefined}
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
       />
@@ -139,6 +172,16 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
           }}
         />
       </>
+    ) : taskState === "draft" ? (
+      <div className="panel-card">
+        <h4>草稿任务</h4>
+        <p className="chat-sub" style={{ marginBottom: 12 }}>
+          已载入公开样例的销售明细与周会纪要（第 44 周）。提交后员工开始执行。
+        </p>
+        <Button type="primary" block loading={submitting} disabled={initiatorOnly} icon={<SendOutlined />} onClick={submitDraft}>
+          提交任务
+        </Button>
+      </div>
     ) : (
       <TaskPanel snapshot={task.snapshot} view={task.view} downloadUrl={actions.downloadUrl} />
     );
@@ -153,7 +196,13 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
         <div className="col panel" ref={panelRef}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0, flex: 1, fontSize: 18 }}>
-              {selection.kind === "task" && task.view.state && task.view.state !== "draft" && task.view.state !== "awaiting_initiator" ? "任务面板" : selection.kind === "task" ? "补充材料" : "任务面板"}
+              {selection.kind === "task" && taskState === "draft"
+                ? "草稿任务"
+                : selection.kind === "task" && taskState && taskState !== "awaiting_initiator"
+                  ? "任务面板"
+                  : selection.kind === "task"
+                    ? "补充材料"
+                    : "任务面板"}
             </h3>
             <Tooltip title="收起">
               <Button type="text" icon={<RightOutlined />} onClick={() => setPanelOpen(false)} />

@@ -47,6 +47,15 @@ export interface CreateTaskInput {
 
 export type DeliverableKind = "docx" | "md" | "qc_record";
 
+/** 欢迎页的公开样例（服务端从工作区 samples 里读出，不含文件本体） */
+export interface PublicSampleInfo {
+  id: string;
+  employee: string;
+  title: string;
+  form: Record<string, unknown>;
+  files: { name: string; size: number }[];
+}
+
 export interface WebApi {
   listEmployees(): Promise<EmployeeInfo[]>;
   listTasks(): Promise<TaskSummary[]>;
@@ -55,6 +64,8 @@ export interface WebApi {
   /** 建草稿任务（不提交）。提交用 command(id, {type:"submit"})。 */
   createTask(input: CreateTaskInput): Promise<TaskSnapshot>;
   command(id: string, command: TaskCommand, uploads?: UploadItem[]): Promise<CommandResult>;
+  /** 欢迎页“载入公开样例”：用工作区里释放出来的样例建一份草稿任务（不提交）。 */
+  loadPublicSample(): Promise<TaskSnapshot>;
   /** 订阅任务事件：先补发 afterSeq 之后的事件，再实时推送。返回取消函数。 */
   subscribe(id: string, afterSeq: number, onEvent: (event: TaskEvent) => void): () => void;
   /** 交付物下载地址；无则 undefined。 */

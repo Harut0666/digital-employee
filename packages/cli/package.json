@@ -6,6 +6,9 @@
   "bin": {
     "de": "./src/main.ts"
   },
+  "exports": {
+    ".": "./src/commands.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit -p ."
