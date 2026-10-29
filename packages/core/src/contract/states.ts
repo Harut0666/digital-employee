@@ -53,7 +53,8 @@ export type TransitionTrigger =
   | "qc_exhausted"
   | "retry"
   | "approve"
-  | "return";
+  | "return"
+  | "needs_human";
 
 export interface Transition {
   from: TaskState;
@@ -67,6 +68,8 @@ export const TRANSITIONS: readonly Transition[] = [
   { from: "draft", to: "admission", trigger: "submit", actor: "initiator" },
   { from: "admission", to: "running", trigger: "admission_passed", actor: "system" },
   { from: "admission", to: "awaiting_initiator", trigger: "admission_failed", actor: "system" },
+  // 准入工具本身故障（重试用尽）属于工具故障，不是缺材料
+  { from: "admission", to: "awaiting_operator", trigger: "tool_failed", actor: "system" },
   { from: "awaiting_initiator", to: "admission", trigger: "supplement", actor: "initiator" },
   { from: "awaiting_initiator", to: "admission", trigger: "continue_without_minutes", actor: "initiator" },
   { from: "awaiting_initiator", to: "admission", trigger: "continue_with_partial", actor: "initiator" },
@@ -75,10 +78,14 @@ export const TRANSITIONS: readonly Transition[] = [
   { from: "running", to: "qc", trigger: "steps_completed", actor: "system" },
   { from: "running", to: "awaiting_operator", trigger: "limit_exceeded", actor: "system" },
   { from: "running", to: "awaiting_operator", trigger: "tool_failed", actor: "system" },
+  // 判断步骤输出 needsHuman（如退回意见要求换计算口径）
+  { from: "running", to: "awaiting_operator", trigger: "needs_human", actor: "system" },
   { from: "qc", to: "awaiting_review", trigger: "qc_passed", actor: "system" },
   { from: "qc", to: "running", trigger: "qc_autofix", actor: "system" },
   { from: "qc", to: "awaiting_operator", trigger: "qc_exhausted", actor: "system" },
   { from: "awaiting_operator", to: "running", trigger: "retry", actor: "operator" },
+  // 准入工具故障后的重试回到准入校验
+  { from: "awaiting_operator", to: "admission", trigger: "retry", actor: "operator" },
   { from: "awaiting_operator", to: "terminated", trigger: "terminate", actor: "operator" },
   { from: "awaiting_review", to: "delivered", trigger: "approve", actor: "reviewer" },
   { from: "awaiting_review", to: "running", trigger: "return", actor: "reviewer" },

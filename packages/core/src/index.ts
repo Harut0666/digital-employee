@@ -1,5 +1,5 @@
 export * from "./contract";
-export { createTaskEngine, type EngineInternals } from "./engine";
+export { createTaskEngine, SimulatedCrash, type EngineInternals } from "./engine";
 export { loadEmployeeConfig } from "./config";
 export { createMcpToolClient } from "./mcp";
 export {
