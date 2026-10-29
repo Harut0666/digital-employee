@@ -77,6 +77,18 @@ describe("validate_submission（接缝 2）", () => {
     expect(r.minutes[0].week).toEqual({ year: 2026, week: 44 });
   });
 
+  test("补交了更正的销售文件（追加在末尾）→ 取最新的 xlsx；xlsx 仍优先于更晚的 csv", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "de-sup-"));
+    const corrected = join(dir, "销售明细_更正.xlsx");
+    writeFileSync(corrected, readFileSync(sample("销售明细.xlsx")));
+    const period = { year: 2026, week: 44 };
+    const attachments = [att("销售明细.xlsx"), att("周会纪要_2026W44.docx"), { name: "销售明细_更正.xlsx", path: corrected }];
+    const r = await h.call("validate_submission", { period, attachments });
+    expect(r.sales).toEqual({ path: corrected, kind: "xlsx" });
+    const r2 = await h.call("validate_submission", { period, attachments: [...attachments, att("销售明细.csv")] });
+    expect(r2.sales).toEqual({ path: corrected, kind: "xlsx" });
+  });
+
   test("数据在周中截止 → period_incomplete；选择按已有数据继续后进入后续检查", async () => {
     const dir = mkdtempSync(join(tmpdir(), "de-csv-"));
     const lines = readFileSync(sample("销售明细.csv"), "utf8").split(/\r?\n/);

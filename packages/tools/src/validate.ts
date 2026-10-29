@@ -24,8 +24,9 @@ function pickSales(files: AttachmentRef[]): { ref: AttachmentRef; kind: "xlsx" |
     const kind = kindOf(ref);
     return kind ? [{ ref, kind }] : [];
   });
-  // 同时给了 xlsx 与 csv 时优先 xlsx（含维表）
-  return cands.find((c) => c.kind === "xlsx") ?? cands[0] ?? null;
+  // 同时给了 xlsx 与 csv 时优先 xlsx（含维表）；同类型取最后一个——补交的更正文件追加在末尾
+  const last = (kind: "xlsx" | "csv") => cands.filter((c) => c.kind === kind).at(-1);
+  return last("xlsx") ?? last("csv") ?? null;
 }
 
 function dimensionsOf(src: SalesSource | null) {
