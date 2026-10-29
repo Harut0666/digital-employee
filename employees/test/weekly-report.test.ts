@@ -92,7 +92,7 @@ describe("workflow.yaml", () => {
   test("上限按 design.md §6 设置", () => {
     expect(workflow.limits.task).toEqual({ modelCalls: 30, durationSec: 600 });
     expect(workflow.limits.toolRetry).toEqual({ attempts: 3, backoffMs: [1000, 2000, 4000] });
-    expect(workflow.limits.qcAutofix).toBe(2);
+    expect(workflow.limits.qcAutofix).toBe(3);
     expect(judgeSteps.length).toBe(3);
     for (const step of judgeSteps) expect(step.limits).toEqual({ rounds: 6, durationSec: 90 });
   });

@@ -151,7 +151,7 @@ function buildContent(employee: EmployeeInfo): Content {
       id: employee.id,
       name: employee.name,
       description: employee.description,
-      limits: { task: { modelCalls: 30, durationSec: 600 }, toolRetry: { attempts: 3, backoffMs: [1000, 2000, 4000] }, qcAutofix: 2 },
+      limits: { task: { modelCalls: 30, durationSec: 600 }, toolRetry: { attempts: 3, backoffMs: [1000, 2000, 4000] }, qcAutofix: 3 },
       admissionStep: defs[0]?.id ?? "admission",
       steps,
     },

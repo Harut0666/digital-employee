@@ -419,15 +419,15 @@ describe("E2E · 质检自动修正", () => {
   });
 
   test("质检自动修正用尽 → 转给操作员（qc_exhausted）", async () => {
-    // 剧本里的草稿始终带裸数字，自动修正两次仍不通过
+    // 剧本里的草稿始终带裸数字，自动修正三次（qcAutofix: 3）仍不通过
     const script = loadScript("A-01");
     const bad = JSON.parse(JSON.stringify(script.write_report![0]!)) as { toolCalls: { arguments: { title: string } }[] };
     bad.toolCalls[0]!.arguments.title += " 环比下降 9.3%";
-    const e2e = await createE2E({ script: { ...script, write_report: [bad as never, bad as never, bad as never] } });
+    const e2e = await createE2E({ script: { ...script, write_report: [bad as never, bad as never, bad as never, bad as never] } });
     const paused = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
     expect(paused.state).toBe("awaiting_operator");
     expect(paused.pause?.code).toBe("qc_exhausted");
     expect(paused.pause?.message).toContain("9.3%");
-    expect(ofType(await e2e.events(paused.id), "qc_result")).toHaveLength(3);
+    expect(ofType(await e2e.events(paused.id), "qc_result")).toHaveLength(4);
   });
 });

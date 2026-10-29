@@ -11,7 +11,7 @@ limits:
   toolRetry:
     attempts: 3
     backoffMs: [1000, 2000, 4000]
-  qcAutofix: 2
+  qcAutofix: 3
 
 admissionStep: admission
 # 事实步骤：$rendered.* 与质检用它的输出渲染槽位、核对数字
