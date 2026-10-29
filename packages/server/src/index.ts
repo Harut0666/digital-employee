@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Elysia } from "elysia";
 import { loadEmployeeConfig, type EmployeeConfig, type TaskEngine } from "@de/core";
+import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
 
 export interface ServerOptions {
@@ -131,6 +132,19 @@ export function createApp(options: ServerOptions) {
             return apiError("not_found", `任务不存在：${params.id}`);
           }
           return engine.events(params.id, after);
+        })
+        .get("/tasks/:id/stream", async ({ params, query, headers, request, set }) => {
+          // 重连时浏览器会带 Last-Event-ID，优先于 ?after=
+          const after = parseAfter(headers["last-event-id"] ?? query.after);
+          if (after === undefined) {
+            set.status = 400;
+            return apiError("invalid_input", "after 必须是非负整数");
+          }
+          if (!(await engine.get(params.id))) {
+            set.status = 404;
+            return apiError("not_found", `任务不存在：${params.id}`);
+          }
+          return eventStream(engine, params.id, after, request.signal);
         }),
     );
 }
