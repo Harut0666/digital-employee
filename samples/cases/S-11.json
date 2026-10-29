@@ -1,0 +1,120 @@
+{
+  "id": "S-11",
+  "title": "边界：周中截止且无纪要 → 两次继续（按已有数据 + 无纪要）",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../fixtures/销售明细-第44周周中截止.xlsx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "period_incomplete"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "continue_with_partial"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "minutes_missing"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "continue_without_minutes"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        {
+          "path": "table:全公司/实收（元）",
+          "expected": 226037
+        },
+        {
+          "path": "table:全公司/环比",
+          "expected": -64.3
+        },
+        {
+          "path": "table:全公司/目标达成率",
+          "expected": 35.4
+        },
+        {
+          "path": "facts:company.deliveryShare",
+          "expected": 31.6
+        },
+        {
+          "path": "facts:quality.returns.count",
+          "expected": 5
+        }
+      ],
+      "mustContain": [
+        "数据不完整"
+      ],
+      "mustNotContain": [
+        "客单价",
+        "同比"
+      ],
+      "anomalies": [
+        "region:华东",
+        "region:华南",
+        "region:华北",
+        "region:西南",
+        "store:SH01",
+        "store:SH02",
+        "store:HZ01",
+        "store:HZ02",
+        "store:NJ01",
+        "store:SZ01",
+        "store:SZ02",
+        "store:GZ01",
+        "store:GZ02",
+        "store:BJ01",
+        "store:BJ02",
+        "store:TJ01",
+        "store:CD01",
+        "store:CD02"
+      ],
+      "pause": {
+        "code": "period_incomplete",
+        "messageContains": "不完整"
+      }
+    }
+  }
+}

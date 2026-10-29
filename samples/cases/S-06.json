@@ -1,0 +1,108 @@
+{
+  "id": "S-06",
+  "title": "边界：只传 CSV（缺维表）→ 补传 xlsx 后继续",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.csv",
+      "path": "../scenario-a/销售明细.csv"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "missing_dimensions"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "supplement",
+        "attachments": [
+          {
+            "name": "销售明细.xlsx",
+            "path": "../scenario-a/销售明细.xlsx"
+          }
+        ]
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        {
+          "path": "table:全公司/实收（元）",
+          "expected": 573635
+        },
+        {
+          "path": "table:全公司/环比",
+          "expected": -9.3
+        },
+        {
+          "path": "table:全公司/目标达成率",
+          "expected": 89.8
+        },
+        {
+          "path": "facts:company.deliveryShare",
+          "expected": 31.8
+        },
+        {
+          "path": "facts:quality.returns.count",
+          "expected": 11
+        }
+      ],
+      "mustContain": [
+        "商场消防改造停业三天"
+      ],
+      "mustNotContain": [
+        "客单价",
+        "同比"
+      ],
+      "anomalies": [
+        "region:华东",
+        "region:华南",
+        "store:SH02",
+        "store:HZ01",
+        "store:SZ01",
+        "store:SZ02"
+      ],
+      "pause": {
+        "code": "missing_dimensions",
+        "messageContains": "门店信息"
+      }
+    }
+  }
+}
