@@ -35,7 +35,7 @@ import {
   type ToolCallResult,
   type TransitionTrigger,
 } from "../contract";
-import { appendEventLine, readEventLog } from "./event-log";
+import { appendEventLine, readEventLog, readEventLogSalvage } from "./event-log";
 import { TaskProjection, argsKey, type Checkpoint } from "./projection";
 import { replaceString, resolveInput } from "./refs";
 
@@ -722,6 +722,29 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     return year && week ? `${base} · ${year} 年第 ${week} 周` : base;
   }
 
+  function summaryOf(rt: Runtime): TaskSummary {
+    return { id: rt.id, employee: rt.proj.employee, title: titleOf(rt), state: rt.proj.state, updatedAt: rt.proj.lastTs };
+  }
+
+  /**
+   * 日志损坏的任务也要出现在列表里：按可解析的前缀给出最后已知状态，并带上错误说明。
+   * 只读，不改写损坏的日志；前缀里连一条事件都没有时无法给出摘要，只能靠在直接访问该任务时报错。
+   */
+  function salvagedSummary(id: TaskId, failure: unknown): TaskSummary | undefined {
+    try {
+      const dir = join(tasksDir, id);
+      const { events, error } = readEventLogSalvage(join(dir, "events.jsonl"));
+      if (events.length === 0) return undefined;
+      const config = loadEmployeeConfigSync(join(dir, "config"));
+      const proj = new TaskProjection(config);
+      for (const e of events) proj.apply(e);
+      const rt: Runtime = { id, dir, config, proj, events, logPath: join(dir, "events.jsonl"), listeners: new Set(), redrive: false, artifactCache: new Map() };
+      return { ...summaryOf(rt), error: error ?? errorText(failure) };
+    } catch {
+      return undefined;
+    }
+  }
+
   const engine: TaskEngine = {
     async create({ employee, form, attachments, actor }) {
       if (actor !== "initiator" && actor !== "system") throw new Error(`角色 ${actor} 不能创建任务`);
@@ -823,12 +846,22 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       if (!existsSync(tasksDir)) return summaries;
       for (const id of readdirSync(tasksDir)) {
         const cached = runtimes.get(id);
-        const rt = cached ?? loadRuntime(id);
-        if (!rt) continue;
-        // 只保留活跃任务的完整 Runtime；空闲任务（草稿/暂停/终态）按需重读，
-        // 否则列一次任务就会把所有任务的全部事件与配置永久缓存下来。
-        if (!cached && ACTIVE_STATES.includes(rt.proj.state)) runtimes.set(id, rt);
-        summaries.push({ id, employee: rt.proj.employee, title: titleOf(rt), state: rt.proj.state, updatedAt: rt.proj.lastTs });
+        if (cached) {
+          summaries.push(summaryOf(cached));
+          continue;
+        }
+        try {
+          const rt = loadRuntime(id);
+          if (!rt) continue;
+          // 只保留活跃任务的完整 Runtime；空闲任务（草稿/暂停/终态）按需重读，
+          // 否则列一次任务就会把所有任务的全部事件与配置永久缓存下来。
+          if (ACTIVE_STATES.includes(rt.proj.state)) runtimes.set(id, rt);
+          summaries.push(summaryOf(rt));
+        } catch (failure) {
+          // 一个任务的日志损坏不能拖垮整个列表：它仍以最后已知状态出现，并带上错误说明
+          const salvaged = salvagedSummary(id, failure);
+          if (salvaged) summaries.push(salvaged);
+        }
       }
       return summaries.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
     },
@@ -861,12 +894,17 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     async resumeAll() {
       if (!existsSync(tasksDir)) return;
       for (const id of readdirSync(tasksDir)) {
-        const cached = runtimes.get(id);
-        const rt = cached ?? loadRuntime(id);
-        if (!rt || !ACTIVE_STATES.includes(rt.proj.state)) continue;
-        // 只有需要恢复执行的活跃任务才留在内存里；暂停/终态任务读完就丢，和 list() 一致
-        if (!cached) runtimes.set(id, rt);
-        kick(rt);
+        try {
+          const cached = runtimes.get(id);
+          const rt = cached ?? loadRuntime(id);
+          if (!rt || !ACTIVE_STATES.includes(rt.proj.state)) continue;
+          // 只有需要恢复执行的活跃任务才留在内存里；暂停/终态任务读完就丢，和 list() 一致
+          if (!cached) runtimes.set(id, rt);
+          kick(rt);
+        } catch {
+          // 单个任务日志损坏不能挡住服务启动；它会在 list() 里以带 error 的摘要出现，等待人工处理
+          continue;
+        }
       }
     },
   };

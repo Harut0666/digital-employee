@@ -66,6 +66,8 @@ export interface TaskSummary {
   title: string;
   state: TaskState;
   updatedAt: string;
+  /** 事件日志损坏时给出的错误说明（任务仍以最后已知状态出现在列表里）；正常任务没有该字段 */
+  error?: string;
 }
 
 export interface TaskEngine {
