@@ -41,7 +41,7 @@ const FAIL: CaseRunOutcome = {
 
 describe("findCaseFiles", () => {
   test("glob 由命令行自己解析，Windows 下也能用；按用例编号排序", () => {
-    const files = findCaseFiles(globPath(join(CASES_DIR, "*.json")));
+    const files = findCaseFiles(globPath(join(CASES_DIR, "A-*.json")));
     expect(files.map((f) => f.split(/[\\/]/).at(-1))).toEqual([
       "A-01.json",
       "A-01-rework.json",
@@ -50,6 +50,21 @@ describe("findCaseFiles", () => {
       "A-04.json",
       "A-05.json",
     ]);
+  });
+
+  test("A 系列排在 S 系列前面（报告里先公开样例、后自测用例），组内按编号", () => {
+    const names = findCaseFiles(globPath(join(CASES_DIR, "*.json"))).map((f) => f.split(/[\\/]/).at(-1));
+    expect(names.slice(0, 6)).toEqual([
+      "A-01.json",
+      "A-01-rework.json",
+      "A-02.json",
+      "A-03.json",
+      "A-04.json",
+      "A-05.json",
+    ]);
+    expect(names[6]).toBe("S-01.json");
+    expect(names.at(-1)).toBe("S-24.json");
+    expect(names).toHaveLength(30);
   });
 
   test("没匹配到文件时返回空数组（由命令报错）", () => {

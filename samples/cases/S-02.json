@@ -1,0 +1,92 @@
+{
+  "id": "S-02",
+  "title": "正常：第 41 周无纪要，选择“无纪要继续”后交付",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 41
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "minutes_missing"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "continue_without_minutes"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        {
+          "path": "table:全公司/实收（元）",
+          "expected": 686010
+        },
+        {
+          "path": "table:全公司/环比",
+          "expected": 2
+        },
+        {
+          "path": "table:全公司/目标达成率",
+          "expected": 102.4
+        },
+        {
+          "path": "facts:company.deliveryShare",
+          "expected": 30.8
+        },
+        {
+          "path": "facts:quality.returns.count",
+          "expected": 11
+        }
+      ],
+      "mustContain": [
+        "原因待核实",
+        "数据质量说明"
+      ],
+      "mustNotContain": [
+        "客单价",
+        "同比"
+      ],
+      "anomalies": [
+        "store:SZ02",
+        "store:GZ02",
+        "store:BJ02"
+      ]
+    }
+  }
+}

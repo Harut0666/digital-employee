@@ -1,0 +1,282 @@
+{
+  "match_causes": [
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "causes": [
+              {
+                "anomalyId": "region:华东",
+                "level": "region",
+                "cause": "华东受门店停业和竞品开业影响下滑较多",
+                "quote": "本周华东受门店停业和竞品开业影响下滑较多",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "region:华南",
+                "level": "region",
+                "cause": "“第二杯半价”活动于 10 月 25 日结束，活动后回落",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SH02",
+                "level": "store",
+                "cause": "对面竞品于 10 月 24 日开业并推出买一送一，客流下滑",
+                "quote": "上海静安店对面竞品 10 月 24 日开业，开业期间推出买一送一",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:HZ01",
+                "level": "store",
+                "cause": "10 月 27 日至 29 日因商场消防改造停业三天",
+                "quote": "杭州湖滨店 10 月 27 日至 29 日因商场消防改造停业三天",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ01",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ02",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              }
+            ],
+            "claims": []
+          }
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "causes": [
+              {
+                "anomalyId": "region:华东",
+                "level": "region",
+                "cause": "华东受门店停业和竞品开业影响下滑较多",
+                "quote": "本周华东受门店停业和竞品开业影响下滑较多",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "region:华南",
+                "level": "region",
+                "cause": "“第二杯半价”活动于 10 月 25 日结束，活动后回落",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SH02",
+                "level": "store",
+                "cause": "对面竞品于 10 月 24 日开业并推出买一送一，客流下滑",
+                "quote": "上海静安店对面竞品 10 月 24 日开业，开业期间推出买一送一",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:HZ01",
+                "level": "store",
+                "cause": "10 月 27 日至 29 日因商场消防改造停业三天",
+                "quote": "杭州湖滨店 10 月 27 日至 29 日因商场消防改造停业三天",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ01",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ02",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              }
+            ],
+            "claims": []
+          }
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "causes": [
+              {
+                "anomalyId": "region:华东",
+                "level": "region",
+                "cause": "华东受门店停业和竞品开业影响下滑较多",
+                "quote": "本周华东受门店停业和竞品开业影响下滑较多",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "region:华南",
+                "level": "region",
+                "cause": "“第二杯半价”活动于 10 月 25 日结束，活动后回落",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SH02",
+                "level": "store",
+                "cause": "对面竞品于 10 月 24 日开业并推出买一送一，客流下滑",
+                "quote": "上海静安店对面竞品 10 月 24 日开业，开业期间推出买一送一",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:HZ01",
+                "level": "store",
+                "cause": "10 月 27 日至 29 日因商场消防改造停业三天",
+                "quote": "杭州湖滨店 10 月 27 日至 29 日因商场消防改造停业三天",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ01",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ02",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              }
+            ],
+            "claims": []
+          }
+        }
+      ]
+    }
+  ],
+  "write_report": [
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "title": "经营周报（2026 年第 44 周）",
+            "sections": [
+              {
+                "id": "summary",
+                "heading": "本周摘要",
+                "paragraphs": [
+                  "本周经营情况汇报。"
+                ]
+              }
+            ],
+            "causes": []
+          }
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "title": "经营周报（2026 年第 44 周）",
+            "sections": [
+              {
+                "id": "summary",
+                "heading": "本周摘要",
+                "paragraphs": [
+                  "本周经营情况汇报。"
+                ]
+              }
+            ],
+            "causes": []
+          }
+        }
+      ]
+    },
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "title": "经营周报（2026 年第 44 周）",
+            "sections": [
+              {
+                "id": "summary",
+                "heading": "本周摘要",
+                "paragraphs": [
+                  "本周经营情况汇报。"
+                ]
+              }
+            ],
+            "causes": []
+          }
+        }
+      ]
+    }
+  ]
+}
