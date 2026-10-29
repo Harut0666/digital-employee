@@ -8,6 +8,7 @@ export const TOOL_NAMES = [
   "validate_submission",
   "load_sales",
   "compute_metrics",
+  "detect_contradictions",
   "parse_minutes",
   "render_report_docx",
   "query_task",
@@ -65,6 +66,70 @@ export interface ComputeMetricsInput {
   anomalyThreshold: number;
 }
 export type ComputeMetricsOutput = WeeklyFacts;
+
+// ---- detect_contradictions ----
+// 模型只负责把纪要里的可核验说法抽成固定格式（claims），是否构成矛盾由程序按阈值判定（docs/design.md §10.3）。
+
+export type ClaimSubjectLevel = "company" | "region" | "store" | "category";
+export interface ClaimSubject {
+  level: ClaimSubjectLevel;
+  /** 对象业务键：全公司写 company；区域写区域名；门店写门店编码；品类写品类名 */
+  key: string;
+}
+
+export type ClaimDirection = "flat" | "up" | "down";
+
+/** 纪要中的一条可核验说法，结构与 employees/weekly-report/schemas/match_causes.json 的 claims 一致。 */
+export interface Claim {
+  subject: ClaimSubject;
+  /** 目前只核验实收环比 */
+  metric: "wow";
+  direction: ClaimDirection;
+  /** 纪要给出的幅度，按小数（两成写 0.2，约七成写 0.7）；没给幅度时省略 */
+  magnitude?: number;
+  /** 说法出自哪一周的纪要 */
+  sourceWeek: IsoWeek;
+  /** 原文摘录，逐字取自所注周次纪要的连续片段 */
+  quote: string;
+}
+
+/** 纪要矛盾的判定阈值，即 qc.yaml 的 contradiction 节。比例一律按小数（0.05 即 5%）。 */
+export interface ContradictionThresholds {
+  /** 说“持平”，但实际环比的绝对值大于此值，判为矛盾 */
+  flatTolerance: number;
+  /** 说的方向和实际相反，且实际环比的绝对值大于此值，判为矛盾 */
+  directionMin: number;
+  /** 给出的幅度与实际幅度相差超过此值（10 个百分点），判为矛盾 */
+  magnitudeTolerance: number;
+}
+
+export interface DetectContradictionsInput {
+  claims: Claim[];
+  facts: WeeklyFacts;
+  thresholds: ContradictionThresholds;
+}
+
+export type ContradictionRule = "flat" | "direction" | "magnitude";
+
+export interface DetectedContradiction {
+  /** 稳定 ID，如 "contradiction:region:华南"；质检按它核对草稿是否引用 */
+  id: string;
+  /** 说法针对的对象，name 是写进“异常与原因”章节时使用的展示名 */
+  subject: ClaimSubject & { name: string };
+  /** 纪要的说法（方向与幅度） */
+  claim: { direction: ClaimDirection; magnitude?: number };
+  /** 事实里的实际环比（未取整） */
+  actualWow: number;
+  rule: ContradictionRule;
+  sourceWeek: IsoWeek;
+  quote: string;
+}
+
+export interface DetectContradictionsOutput {
+  contradictions: DetectedContradiction[];
+  /** 对象在事实里找不到、或实际环比不可比而跳过的说法条数 */
+  skippedCount: number;
+}
 
 // ---- parse_minutes ----
 export interface ParseMinutesInput {

@@ -2,6 +2,8 @@
 import { z } from "zod";
 import type {
   ComputeMetricsInput,
+  DetectContradictionsInput,
+  DetectContradictionsOutput,
   LoadSalesInput,
   LoadSalesOutput,
   ParseMinutesInput,
@@ -124,6 +126,41 @@ export const computeMetricsOut = {
   }),
 };
 
+// ---- detect_contradictions ----
+const claimSubjectLevel = z.enum(["company", "region", "store", "category"]);
+const claimDirection = z.enum(["flat", "up", "down"]);
+const claim = z.object({
+  subject: z.object({ level: claimSubjectLevel, key: z.string().min(1) }),
+  metric: z.literal("wow"),
+  direction: claimDirection,
+  magnitude: z.number().nonnegative().optional(),
+  sourceWeek: isoWeek,
+  quote: z.string().min(1),
+});
+export const detectContradictionsIn = {
+  claims: z.array(claim),
+  facts: z.object(computeMetricsOut),
+  thresholds: z.object({
+    flatTolerance: z.number().nonnegative(),
+    directionMin: z.number().nonnegative(),
+    magnitudeTolerance: z.number().nonnegative(),
+  }),
+};
+export const detectContradictionsOut = {
+  contradictions: z.array(
+    z.object({
+      id: z.string(),
+      subject: z.object({ level: claimSubjectLevel, key: z.string(), name: z.string() }),
+      claim: z.object({ direction: claimDirection, magnitude: z.number().nonnegative().optional() }),
+      actualWow: z.number(),
+      rule: z.enum(["flat", "direction", "magnitude"]),
+      sourceWeek: isoWeek,
+      quote: z.string(),
+    }),
+  ),
+  skippedCount: z.number().int().nonnegative(),
+};
+
 // ---- parse_minutes ----
 export const parseMinutesIn = { paths: z.array(z.string()) };
 export const parseMinutesOut = {
@@ -181,3 +218,6 @@ _assert<Assignable<WeeklyFacts, In<typeof computeMetricsOut>>>();
 _assert<Assignable<ParseMinutesOutput, In<typeof parseMinutesOut>>>();
 _assert<Assignable<RenderReportInput, In<typeof renderReportIn>>>();
 _assert<Assignable<ValidateSubmissionOutput, In<typeof validateSubmissionOut>>>();
+_assert<Assignable<DetectContradictionsInput, In<typeof detectContradictionsIn>>>();
+_assert<Assignable<DetectContradictionsOutput, In<typeof detectContradictionsOut>>>();
+_assert<Assignable<In<typeof detectContradictionsOut>, DetectContradictionsOutput>>();
