@@ -243,7 +243,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       sections: (draft.sections ?? []).map((s) => ({
         ...s,
         heading: render(s.heading),
-        paragraphs: s.paragraphs.map(render),
+        paragraphs: (s.paragraphs ?? []).map(render),
         ...(s.bullets ? { bullets: s.bullets.map(render) } : {}),
       })),
     };

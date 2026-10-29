@@ -145,7 +145,7 @@ export const renderReportIn = {
       z.object({
         id: z.string(),
         heading: z.string(),
-        paragraphs: z.array(z.string()),
+        paragraphs: z.array(z.string()).optional(),
         bullets: z.array(z.string()).optional(),
       }),
     ),

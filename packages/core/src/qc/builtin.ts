@@ -37,12 +37,12 @@ export function checkStructure(input: QcInput): QcCheckResult {
   const nextCfg = cfg.sections[cfg.sections.length - 1];
   const summary = draft.sections.find((s) => s.id === summaryCfg?.id);
   if (summary) {
-    const n = countSentences([...summary.paragraphs, ...(summary.bullets ?? [])]);
+    const n = countSentences([...(summary.paragraphs ?? []), ...(summary.bullets ?? [])]);
     if (n > cfg.summaryMaxSentences) issues.push(`摘要有 ${n} 句，不得超过 ${cfg.summaryMaxSentences} 句`);
   }
   const next = draft.sections.find((s) => s.id === nextCfg?.id);
   if (next) {
-    const items = next.bullets && next.bullets.length > 0 ? next.bullets.length : next.paragraphs.length;
+    const items = next.bullets && next.bullets.length > 0 ? next.bullets.length : (next.paragraphs ?? []).length;
     if (items > cfg.nextWeekMaxItems) issues.push(`下周关注有 ${items} 条，不得超过 ${cfg.nextWeekMaxItems} 条`);
   }
 
