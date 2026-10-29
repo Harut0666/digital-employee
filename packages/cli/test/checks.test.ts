@@ -115,6 +115,19 @@ describe("numbers", () => {
     expect(failing(outcomes)).toEqual([]);
   });
 
+  test("facts: 路径能穿过退货明细数组（按门店编码取）与区域品类毛利率", async () => {
+    const outcomes = await evaluate({
+      numbers: [
+        { path: "facts:quality.returns.groups.HZ01.count", expected: 5 },
+        { path: "facts:quality.returns.groups.HZ01.revenueCents", expected: -50 },
+        { path: "facts:regionCategories.华南.饮品.prevGrossMarginRate", expected: 70.4 },
+        { path: "facts:regionCategories.华南.饮品.grossMarginRate", expected: 60.5 },
+      ],
+    });
+    expect(failing(outcomes)).toEqual([]);
+    expect(outcomes).toHaveLength(4);
+  });
+
   test("默认容差 ±0.5%：差一点点算通过，差得多判不通过并说明实际值", async () => {
     const within = await evaluate({ numbers: [{ path: "table:全公司/实收（元）", expected: 100100 }] });
     expect(failing(within)).toEqual([]);

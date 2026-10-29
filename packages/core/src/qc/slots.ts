@@ -8,8 +8,8 @@ export const SLOT_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 /** 字段别名：叙述里写 revenue，事实里叫 revenueCents。 */
 const FIELD_ALIASES: Record<string, string> = { revenue: "revenueCents" };
 
-/** 数组元素的业务键，按顺序尝试：stores→code、categories→category、anomalies→id/key。 */
-const ARRAY_KEYS = ["code", "category", "id", "key", "name"] as const;
+/** 数组元素的业务键，按顺序尝试：stores→code、categories→category、anomalies→id/key、退货明细→store/product。 */
+const ARRAY_KEYS = ["code", "category", "id", "key", "name", "store", "product"] as const;
 
 export interface ResolvedSlot {
   format: SlotFormat;

@@ -6,6 +6,8 @@ import type {
   DataQualityReport,
   IsoWeek,
   Metric,
+  RegionCategoryMetric,
+  ReturnGroup,
   StoreDay,
   StoreMetric,
   StoreType,
@@ -72,6 +74,30 @@ function metric(cur: Totals, prev: Totals, prevExists: boolean, targetCents: num
     achievement: targetCents ? cur.rev / targetCents : null,
     deliveryShare: hasRev ? cur.delivery / cur.rev : null,
   };
+}
+
+/**
+ * 区域×品类的实收与成本：门店编码经门店维表映射到区域，商品编码经商品维表映射到品类。
+ * 编码查不到的记录已在清洗时标记 unknown，不计入。返回 区域 → 品类 → 合计。
+ */
+function regionCategoryTotals(ds: Dataset, from: string, to: string): Map<string, Map<string, Totals>> {
+  const regionOf = new Map(ds.stores!.map((s) => [s.code, s.region]));
+  const categoryOf = new Map(ds.products!.map((p) => [p.code, p.category]));
+  const out = new Map<string, Map<string, Totals>>();
+  for (const r of ds.rows) {
+    if (r.unknown || r.date < from || r.date > to) continue;
+    const region = regionOf.get(r.store);
+    const category = categoryOf.get(r.product);
+    if (region === undefined || category === undefined) continue;
+    let byCategory = out.get(region);
+    if (!byCategory) out.set(region, (byCategory = new Map()));
+    const t = byCategory.get(category) ?? zero();
+    t.rev += r.netCents;
+    t.cost += r.costCents;
+    t.hasData = true;
+    byCategory.set(category, t);
+  }
+  return out;
 }
 
 function storeDays(ds: Dataset, agg: WeekAgg, from: string, to: string): StoreDay[] {
@@ -156,8 +182,10 @@ export function computeMetrics(input: ComputeMetricsInput): WeeklyFacts {
   const curCat = categoryRev(cur);
   const prevCat = categoryRev(prev);
   const categories: CategoryMetric[] = [];
+  const categoryOrder: string[] = [];
   for (const p of ds.products) {
     if (categories.some((c) => c.category === p.category)) continue;
+    categoryOrder.push(p.category);
     const revenueCents = curCat.get(p.category) ?? 0;
     const prevRevenueCents = prevExists ? (prevCat.get(p.category) ?? 0) : null;
     categories.push({
@@ -174,6 +202,27 @@ export function computeMetrics(input: ComputeMetricsInput): WeeklyFacts {
     .slice(0, 5)
     .map(([code, revenueCents]) => ({ code, name: nameOf.get(code)!, revenueCents }));
 
+  // 区域×品类：区域与品类的范围取自维表，没有数据也保留（值为 0 / null），槽位始终能解析。
+  const curRegionCategory = regionCategoryTotals(ds, period.from, period.to);
+  const prevRegionCategory = regionCategoryTotals(ds, prevRange.from, prevRange.to);
+  const regionCategories: WeeklyFacts["regionCategories"] = {};
+  for (const region of regionOrder) {
+    const row: Record<string, RegionCategoryMetric> = {};
+    for (const category of categoryOrder) {
+      const c = curRegionCategory.get(region)?.get(category);
+      const p = prevRegionCategory.get(region)?.get(category);
+      const revenueCents = c?.rev ?? 0;
+      const prevRevenueCents = p?.rev ?? 0;
+      row[category] = {
+        revenueCents,
+        prevRevenueCents: prevExists ? prevRevenueCents : null,
+        grossMarginRate: c && revenueCents > 0 ? (c.rev - c.cost) / c.rev : null,
+        prevGrossMarginRate: prevExists && p && prevRevenueCents > 0 ? (p.rev - p.cost) / p.rev : null,
+      };
+    }
+    regionCategories[region] = row;
+  }
+
   // 数据质量
   const inPeriod = (d: string) => d >= period.from && d <= period.to;
   const removedIn = ds.removed.filter((r) => inPeriod(r.date));
@@ -189,6 +238,26 @@ export function computeMetrics(input: ComputeMetricsInput): WeeklyFacts {
   const keptIn = ds.rows.filter((r) => inPeriod(r.date));
   const unknown = keptIn.filter((r) => r.unknown);
   const returns = keptIn.filter((r) => !r.unknown && r.qty < 0);
+  // 退货明细：同一门店、同一日期、同一单品合并成一组，按日期、门店、商品排序（槽位按门店或商品取第一组）
+  const storeNameOf = new Map(ds.stores.map((s) => [s.code, s.name]));
+  const returnGroups = new Map<string, ReturnGroup>();
+  for (const r of returns) {
+    const key = `${r.store}|${r.date}|${r.product}`;
+    const g =
+      returnGroups.get(key) ??
+      {
+        store: r.store,
+        storeName: storeNameOf.get(r.store) ?? r.store,
+        date: r.date,
+        product: r.product,
+        productName: nameOf.get(r.product) ?? r.product,
+        count: 0,
+        revenueCents: 0,
+      };
+    g.count += -r.qty;
+    g.revenueCents += r.netCents;
+    returnGroups.set(key, g);
+  }
   const conflictIds = [...new Set(removedIn.filter((r) => r.conflict).map((r) => r.id))];
   const curDays = storeDays(ds, cur, period.from, period.to);
   const prevDays = storeDays(ds, prev, prevRange.from, prevRange.to);
@@ -201,7 +270,13 @@ export function computeMetrics(input: ComputeMetricsInput): WeeklyFacts {
     idConflicts: { count: conflictIds.length, recordIds: conflictIds },
     amountMismatch: { count: keptIn.filter((r) => r.mismatch).length },
     unknownCodes: { count: unknown.length, revenueCents: unknown.reduce((a, r) => a + r.netCents, 0) },
-    returns: { count: returns.length, revenueCents: returns.reduce((a, r) => a + r.netCents, 0) },
+    returns: {
+      count: returns.length,
+      revenueCents: returns.reduce((a, r) => a + r.netCents, 0),
+      groups: [...returnGroups.values()].sort(
+        (a, b) => a.date.localeCompare(b.date) || a.store.localeCompare(b.store) || a.product.localeCompare(b.product),
+      ),
+    },
     storeDays: curDays,
     prevWeekStoreDays: prevDays,
   };
@@ -265,6 +340,7 @@ export function computeMetrics(input: ComputeMetricsInput): WeeklyFacts {
     regions,
     stores,
     categories,
+    regionCategories,
     topProducts,
     anomalies,
     trend,

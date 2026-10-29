@@ -30,6 +30,8 @@
 | 品类指标 | `{{categories.饮品.revenue}}`、`{{categories.饮品.wow}}` | |
 | 前 5 单品实收 | `{{topProducts.商品编码.revenue}}`（商品编码取自事实） | |
 | 数据质量条数、金额 | `{{quality.returns.count}}`、`{{quality.returns.revenue}}`、`{{quality.duplicates.count}}`、`{{quality.idConflicts.count}}`、`{{quality.amountMismatch.count}}`、`{{quality.unknownCodes.count}}` | 11、-260 元 |
+| 区域×品类毛利率 | `{{regionCategories.华南.饮品.grossMarginRate}}`、`{{regionCategories.华南.饮品.prevGrossMarginRate}}` | 60.5%、70.4% |
+| 具名退货明细 | `{{quality.returns.groups.BJ01.count}}`、`{{quality.returns.groups.BJ01.revenue}}`（按门店编码取第一组，也可写商品编码） | 15、-330 元 |
 
 - 金额类槽位渲染后自带“元”，比例类槽位自带“%”和正负号。槽位后面**不要再写“元”“%”“个百分点”**。
 - 只能使用输入事实里真实存在的字段。槽位对不上事实，质检判为不通过。
@@ -65,7 +67,7 @@
 
 1. **本周摘要**：不超过 5 句话。讲清楚全公司实收、环比、毛利率、目标达成情况，以及最重要的 1 至 2 个异常。数据不完整时（输入里 `partialPeriod` 为真），第一句先说明本周数据只到哪一天，周报是按已有数据编写的。
 2. **核心指标**：全公司及四个区域的实收、环比、毛利率、目标达成率。表格和图表由程序按事实生成，你只写 1 至 2 句点评，不重复罗列表格里的数。
-3. **品类表现**：各品类实收与环比的要点，以及本周实收前 5 名的单品。用简短文字和要点写，数字全部用槽位。
+3. **品类表现**：各品类实收与环比的要点，以及本周实收前 5 名的单品。用简短文字和要点写，数字全部用槽位。纪要提到某区域某品类毛利率变化（或该区域该品类毛利率两周差异明显）时，用 `{{regionCategories.<区域>.<品类>.prevGrossMarginRate}}` 与 `{{regionCategories.<区域>.<品类>.grossMarginRate}}` 写出上周与本周的毛利率，例如华南饮品毛利率由 `{{regionCategories.华南.饮品.prevGrossMarginRate}}` 降至 `{{regionCategories.华南.饮品.grossMarginRate}}`。
 4. **异常与原因**：环比超过 ±10% 的区域和门店，必须逐一列出，先区域后门店，同级按环比变化从大到小排。每条写明对象、环比（槽位）、原因、出自哪一周的纪要。上周存在数据缺失日的（输入里该异常的 `baseWeekHasMissingDays` 为真），附注“上周存在数据缺失日，环比基数偏低”。最后写纪要矛盾（如有）。
 5. **数据质量说明**：写数据里发现的情况，以及怎么处理的，见下文。
 6. **下周关注事项**：不超过 5 条，来自纪要的行动项或数据中的风险点，每条一句话。
@@ -74,7 +76,7 @@
 
 按事实里 `quality` 的内容逐项说明，没有发生的项不写：
 
-- 退货：笔数和合计金额，说明已直接冲减实收；
+- 退货：笔数和合计金额，说明已直接冲减实收；退货明细里能看到具体门店、日期、单品的（`facts.quality.returns.groups`），用槽位写出门店、日期、品名、份数和金额，如“北京朝阳店 10 月 15 日草莓奶油切块退货 {{quality.returns.groups.BJ01.count}} 份，合计 {{quality.returns.groups.BJ01.revenue}}”；
 - 重复上传：记录ID 相同的重复记录，说明只保留第一条，写清条数和金额；内容不一致的记录ID 冲突要单独写；
 - 实收与原价减折扣对不上的记录：说明以实收为准，写条数；
 - 门店编码或商品编码查不到的记录：说明不计入任何合计，写条数和金额；
