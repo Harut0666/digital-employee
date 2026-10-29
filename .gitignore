@@ -6,3 +6,4 @@ dist/
 settings.json
 *.log
 .DS_Store
+.claude/
