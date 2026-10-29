@@ -457,6 +457,16 @@ describe("SKILL.md 与提示词", () => {
     expect(read("prompts/write_report.md")).toContain("company.deliveryShare");
   });
 
+  // 真实模型回归：S-05（第 36 周）把异常阈值写成裸数字“10%”和槽位 {{anomalyThreshold}}，质检连退两次。
+  test("异常阈值不是事实：正文不写阈值数字、不用阈值槽位，没有异常对象时只写一句说明", () => {
+    const write = read("prompts/write_report.md");
+    expect(write).toContain("anomalyThreshold");
+    expect(write).toContain("不是事实");
+    expect(write).toContain("不要写阈值数字");
+    expect(skill).toContain("正文不要写异常阈值数字");
+    expect(skill).toContain("本周无环比异常的区域和门店");
+  });
+
   // 真实模型回归：数据质量说明只写退货汇总，漏掉纪要里具名的退货/停业事件。
   test("SKILL.md 与 write_report 提示词：数据质量说明逐条写纪要提到的停业与退货事件", () => {
     const write = read("prompts/write_report.md");
