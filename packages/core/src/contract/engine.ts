@@ -4,7 +4,7 @@
 import type { TaskEvent } from "./events";
 import type { QcCheckResult } from "./qc";
 import type { PauseReason, Role, TaskState } from "./states";
-import type { AttachmentRef, FaultConfig } from "./tools";
+import type { AttachmentRef, FaultConfig, FaultMode, ToolName } from "./tools";
 
 export type TaskId = string;
 
@@ -125,10 +125,35 @@ export interface ModelSettings {
   defaultModel: string;
 }
 
+/**
+ * 设置页“演示与调试”的开关（docs/design.md §14.1），持久化在 `<workspace>/settings.json` 的 demo 段。
+ * 工具故障发生在工具子进程里，由服务端通过 `admin_set_faults` 下发；
+ * 数据溯源与崩溃是引擎进程内的故障，通过可变的 FaultHooks 生效。
+ */
+export interface DemoSettings {
+  /** 工具名 → 故障模式；一次性故障（数据溯源、崩溃）不在这里 */
+  toolFaults: Partial<Record<ToolName, FaultMode>>;
+  /** 下一个写入步骤（qcSources.draft）注入一次裸数字，生效后自动清除 */
+  corruptTraceability: boolean;
+  /** 下一个步骤开始后退出进程一次，触发前持久化，触发后自动清除 */
+  crashOnNextStep: boolean;
+}
+
+/** “测试连接”的结果：发一条极短请求，只报告可用性、延迟和错误。 */
+export interface ModelConnectionTest {
+  ok: boolean;
+  latencyMs: number;
+  model: string;
+  /** ok=false 时的中文说明；不包含 API Key */
+  error?: string;
+}
+
 export interface FaultHooks {
   /** 在指定步骤执行到一半时让进程“崩溃”（测试中抛出 SimulatedCrash），用于演示断点恢复。 */
   crashAtStep?: string;
-  /** 注入到判断步骤之后、质检之前：篡改一个数字，用于演示“数据溯源不通过 → 自动修正”。 */
+  /** 下一个步骤开始执行后崩溃一次（设置页的一次性开关，命中后清除）。 */
+  crashOnNextStep?: boolean;
+  /** 注入到判断步骤之后、质检之前：篡改一个数字，用于演示“数据溯源不通过 → 自动修正”。命中后清除。 */
   corruptTraceability?: boolean;
   tools?: FaultConfig["tools"];
 }
@@ -141,7 +166,13 @@ export interface EngineDeps {
   toolClient: ToolClient;
   model: ModelProvider;
   now?: () => Date;
+  /** 运行时可变：服务端持有同一个对象，设置页改动后立即对新步骤生效。 */
   faults?: FaultHooks;
+  /**
+   * 崩溃注入是否真的退出进程（生产入口为 true；测试默认 false，抛 SimulatedCrash 让测试可断言）。
+   * 不靠环境变量判断测试环境，避免“猜测试环境”。
+   */
+  exitOnCrash?: boolean;
 }
 
 /** @de/core 提供：export function createTaskEngine(deps: EngineDeps): TaskEngine */

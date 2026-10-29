@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createJudgmentRunner } from "../agent";
-import { loadEmployeeConfigSync } from "../config";
+import { loadEmployeeConfigSync, loadDemoSettings, saveDemoSettings } from "../config";
 import { createQcEngine, renderSlots } from "../qc";
 import {
   STATE_LABELS,
@@ -16,6 +16,7 @@ import {
   type DraftReport,
   type EmployeeConfig,
   type EngineDeps,
+  type FaultHooks,
   type JudgmentFailure,
   type JudgmentRunner,
   type PauseCode,
@@ -46,7 +47,7 @@ export interface EngineInternals {
   qc?: QcEngine;
 }
 
-/** 模拟进程被杀：`faults.crashAtStep` 命中时抛出。抛出之后这个引擎实例不再写任何事件。 */
+/** 模拟进程被杀：崩溃注入命中时抛出。抛出之后这个引擎实例不再写任何事件。 */
 export class SimulatedCrash extends Error {
   constructor(readonly stepId: string) {
     super(`simulated crash at step "${stepId}"`);
@@ -137,6 +138,30 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
   const runtimes = new Map<TaskId, Runtime>();
   /** 一旦“崩溃”，这个实例就不能再写任何事件（模拟进程已死）。 */
   let dead: SimulatedCrash | undefined;
+  /**
+   * 故障开关是运行时可变对象：服务端持有同一引用，设置页改动立即对后续步骤生效。
+   * 一次性开关（数据溯源、崩溃）命中后会在这里被清掉。
+   */
+  const faults: FaultHooks = deps.faults ?? {};
+  const exitOnCrash = deps.exitOnCrash === true;
+
+  /** settings.json 里持久化的一次性崩溃标记；读取失败不影响任务执行。 */
+  function persistedCrashArmed(): boolean {
+    try {
+      return loadDemoSettings(workspaceDir).crashOnNextStep;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 一次性开关命中后同步清除持久化标记（崩溃时必须在进程退出之前完成）。 */
+  function persistFaultCleared(patch: { crashOnNextStep?: boolean; corruptTraceability?: boolean }): void {
+    try {
+      saveDemoSettings(workspaceDir, patch);
+    } catch {
+      /* 演示开关的持久化失败不应影响任务本身 */
+    }
+  }
 
   let judgment = internals.judgment;
   let qcEngine = internals.qc;
@@ -405,7 +430,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     }
 
     append(rt, { type: "step_started", stepId: step.id, attempt: (proj.startCounts.get(step.id) ?? 0) + 1, reworkRound: proj.reworkRound });
-    const crashArmed = deps.faults?.crashAtStep === step.id;
+    const crashArmed = faults.crashAtStep === step.id || faults.crashOnNextStep === true || persistedCrashArmed();
     if (crashArmed && step.kind === "compute") crash(rt, step.id);
 
     if (resolveError) return failStep(rt, step, "tool_failed", `步骤「${step.label}」的输入无法解析：${errorText(resolveError)}。${progressText(rt)}。`);
@@ -415,9 +440,15 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       : runJudge(rt, step, args as Record<string, unknown>, crashArmed);
   }
 
+  /** 模拟进程崩溃：先写 fault_injected，再清除一次性标记，最后退出进程。 */
   function crash(rt: Runtime, stepId: string): never {
     append(rt, { type: "fault_injected", target: stepId, mode: "crash" });
+    // 一次性：内存开关与 settings.json 里的标记都清掉，重启后 resumeAll 不会再次崩溃
+    faults.crashOnNextStep = false;
+    persistFaultCleared({ crashOnNextStep: false });
     dead = new SimulatedCrash(stepId);
+    // 生产入口 main.ts 传 exitOnCrash=true，真正退出进程；测试与命令行默认抛 SimulatedCrash
+    if (exitOnCrash) process.exit(1);
     throw dead;
   }
 
@@ -569,9 +600,12 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       pauseOperator(rt, "needs_human", "rework_needs_human", message, { output });
       return "paused";
     }
-    if (deps.faults?.corruptTraceability && step.id === rt.config.workflow.qcSources.draft && !proj.faultsInjected.has(`${step.id}:corruptTraceability`)) {
+    // 数据溯源故障：只对下一个写作步骤生效一次，命中后立即清除运行时与持久化开关
+    if (faults.corruptTraceability && step.id === rt.config.workflow.qcSources.draft && !proj.faultsInjected.has(`${step.id}:corruptTraceability`)) {
       output = corruptFirstParagraph(output);
       append(rt, { type: "fault_injected", target: step.id, mode: "corruptTraceability" });
+      faults.corruptTraceability = false;
+      persistFaultCleared({ corruptTraceability: false });
     }
     completeStep(rt, step, output);
     return "done";
@@ -586,7 +620,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     }
     if (!proj.done.has(qcStep.id)) {
       append(rt, { type: "step_started", stepId: qcStep.id, attempt: (proj.startCounts.get(qcStep.id) ?? 0) + 1, reworkRound: proj.reworkRound });
-      if (deps.faults?.crashAtStep === qcStep.id) crash(rt, qcStep.id);
+      if (faults.crashAtStep === qcStep.id || faults.crashOnNextStep === true || persistedCrashArmed()) crash(rt, qcStep.id);
 
       let checks: QcCheckResult[];
       try {

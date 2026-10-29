@@ -5,7 +5,17 @@ import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { EmployeeWorkflowSchema, QcConfigSchema, type EmployeeConfig } from "../contract";
 
-export { loadSettings, resolveWorkspace } from "./workspace";
+export {
+  DEFAULT_DEMO_SETTINGS,
+  clearCrashOnNextStep,
+  isDeepSeekConnection,
+  loadDemoSettings,
+  loadSettings,
+  readSettingsObject,
+  resolveWorkspace,
+  saveDemoSettings,
+  writeSettingsObject,
+} from "./workspace";
 
 function readText(path: string): string {
   return readFileSync(path, "utf8");

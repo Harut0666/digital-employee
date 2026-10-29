@@ -12,6 +12,7 @@ export const TOOL_NAMES = [
   "render_report_docx",
   "query_task",
   "web_search",
+  "admin_set_faults",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 
@@ -105,5 +106,15 @@ export interface RenderReportOutput {
 export type FaultMode = "timeout" | "error" | "invalid_output";
 export interface FaultConfig {
   /** 工具名 → 故障模式；未列出的工具正常 */
+  tools: Partial<Record<ToolName, FaultMode>>;
+}
+
+// ---- admin_set_faults（管理工具，不开放给任何员工）----
+// 由服务端在设置页下发到工具子进程；判断步骤若尝试调用，会被白名单拦截并留 tool_denied 事件。
+export interface AdminSetFaultsInput {
+  tools: Partial<Record<ToolName, FaultMode>>;
+}
+export interface AdminSetFaultsOutput {
+  ok: boolean;
   tools: Partial<Record<ToolName, FaultMode>>;
 }

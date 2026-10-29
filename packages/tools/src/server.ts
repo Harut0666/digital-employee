@@ -1,6 +1,13 @@
 // MCP 工具服务器：注册场景 A 的工具，并提供故障注入。
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ComputeMetricsInput, FaultConfig, RenderReportInput, ToolName, ValidateSubmissionInput } from "@de/core/contract";
+import type {
+  AdminSetFaultsInput,
+  ComputeMetricsInput,
+  FaultConfig,
+  RenderReportInput,
+  ToolName,
+  ValidateSubmissionInput,
+} from "@de/core/contract";
 import * as S from "./schemas";
 import { computeMetrics } from "./compute";
 import { parseMinutesFile } from "./minutes";
@@ -119,6 +126,25 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
     "web_search",
     { description: "联网搜索。不开放给任何员工，仅用于演示越权拦截。", inputSchema: S.webSearchIn },
     (async () => errorResult("web_search 未开放：该工具不对任何数字员工开放。")) as never,
+  );
+
+  // 管理工具：设置页经服务端下发故障开关。不放进任何员工的白名单，
+  // 判断步骤若尝试调用会在 beforeToolCall 被拦截并留 tool_denied 事件。
+  server.registerTool(
+    "admin_set_faults",
+    {
+      description: "设置页下发的工具故障开关（管理工具，不开放给任何员工，只有服务端可以调用）。",
+      inputSchema: S.adminSetFaultsIn,
+      outputSchema: S.adminSetFaultsOut,
+    },
+    (async (args: AdminSetFaultsInput) => {
+      // 管理工具自身不允许被注入故障，否则设置页就再也关不掉故障了
+      const tools = { ...args.tools } as FaultConfig["tools"];
+      delete tools.admin_set_faults;
+      faults = { tools };
+      const out = { ok: true, tools };
+      return { content: [{ type: "text" as const, text: JSON.stringify(out) }], structuredContent: out as Record<string, unknown> };
+    }) as never,
   );
 
   return {

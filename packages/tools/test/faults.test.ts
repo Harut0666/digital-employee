@@ -53,6 +53,31 @@ describe("故障注入", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("故障注入");
   });
+
+  test("admin_set_faults 在运行时下发开关：打开后该工具失败，清空后恢复", async () => {
+    h = await connect({ faultTimeoutMs: 20 });
+    const applied = await h.call<{ ok: boolean; tools: Record<string, string> }>("admin_set_faults", {
+      tools: { load_sales: "error" },
+    });
+    expect(applied.ok).toBe(true);
+    expect(applied.tools).toEqual({ load_sales: "error" });
+
+    const failed = await h.raw("load_sales", args());
+    expect(failed.isError).toBe(true);
+    expect(failed.content[0].text).toContain("故障注入");
+
+    const cleared = await h.call<{ ok: boolean; tools: Record<string, string> }>("admin_set_faults", { tools: {} });
+    expect(cleared.tools).toEqual({});
+    const ok = await h.raw("load_sales", args());
+    expect(ok.isError).toBeFalsy();
+  });
+
+  test("admin_set_faults 自身不受故障开关影响（不会把自己关掉）", async () => {
+    h = await connect();
+    await h.call("admin_set_faults", { tools: { admin_set_faults: "error" } });
+    const applied = await h.call<{ ok: boolean }>("admin_set_faults", { tools: {} });
+    expect(applied.ok).toBe(true);
+  });
 });
 
 describe("web_search", () => {
@@ -66,13 +91,24 @@ describe("web_search", () => {
   });
 });
 
+describe("admin_set_faults 的管理工具身份", () => {
+  test("在工具清单里，但不在任何员工可用的场景工具里（只有服务端调用）", async () => {
+    h = await connect();
+    const { tools } = await h.client.listTools();
+    const admin = tools.find((t) => t.name === "admin_set_faults");
+    expect(admin).toBeDefined();
+    expect(admin!.description).toContain("服务端");
+    expect(admin!.description).toContain("不开放");
+  });
+});
+
 describe("工具清单", () => {
-  test("场景 A 的工具都带有出参 Schema（web_search 除外）", async () => {
+  test("场景 A 的工具都带有出参 Schema（web_search 除外），admin_set_faults 也带出参 Schema", async () => {
     h = await connect();
     const { tools } = await h.client.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
-      ["compute_metrics", "load_sales", "parse_minutes", "render_report_docx", "validate_submission", "web_search"].sort(),
+      ["admin_set_faults", "compute_metrics", "load_sales", "parse_minutes", "render_report_docx", "validate_submission", "web_search"].sort(),
     );
     for (const t of tools) if (t.name !== "web_search") expect(t.outputSchema).toBeDefined();
   });
