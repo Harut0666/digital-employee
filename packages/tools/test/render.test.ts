@@ -108,4 +108,21 @@ describe("render_report_docx（接缝 2）", () => {
     expect(text).toContain("不可比");
     expect(out.chartCount).toBeGreaterThanOrEqual(2);
   });
+
+  test("章节只有要点（bullets）时也能生成 Word 并估算页数", async () => {
+    const r: RenderedReport = {
+      title: "青禾烘焙经营周报（2026 年第 44 周）",
+      sections: [
+        { id: "summary", heading: "本周摘要", paragraphs: ["本周全公司实收 573,635 元。"] },
+        { id: "categories", heading: "品类表现", bullets: ["饮品环比 -12.0%。"] },
+        { id: "next", heading: "下周关注事项", bullets: ["静安店会员日活动方案"] },
+      ],
+    };
+    const out = await render("task5/step-render/bullets", r);
+    const text = (await mammoth.extractRawText({ path: out.docxPath })).value;
+    expect(text).toContain("品类表现");
+    expect(text).toContain("饮品环比 -12.0%。");
+    expect(text).toContain("静安店会员日活动方案");
+    expect(out.estimatedPages).toBeGreaterThanOrEqual(1);
+  });
 });

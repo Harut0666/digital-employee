@@ -51,7 +51,8 @@ export interface JudgmentRunner {
 /** 判断步骤写出的报告草稿：叙述中只含槽位 {{path}}，不含裸数字（ADR-0002）。 */
 export interface DraftReport {
   title: string;
-  sections: { id: string; heading: string; paragraphs: string[]; bullets?: string[] }[];
+  /** 段落；章节可能只有要点（如品类表现、下周关注），此时省略 paragraphs */
+  sections: { id: string; heading: string; paragraphs?: string[]; bullets?: string[] }[];
   /** 原因匹配结果，供“异常覆盖”“引用真实”两项质检使用 */
   causes: {
     anomalyId: string;

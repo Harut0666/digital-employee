@@ -264,6 +264,20 @@ describe("输出 Schema", () => {
     expect(validate({ ...draft, extra: 1 })).toBe(false);
   });
 
+  test("章节可以只写要点（bullets）：提示词要求品类表现、下周关注用要点写", () => {
+    const validate = newAjv().compile(readJson("schemas/write_report.json"));
+    const bulletsOnly = {
+      ...draft,
+      sections: [
+        { id: "categories", heading: "品类表现", bullets: ["饮品环比 {{categories.饮品.wow}}。"] },
+        { id: "next_week", heading: "下周关注事项", bullets: ["跟进华南活动结束后的回落。"] },
+      ],
+    };
+    expect(validate(bulletsOnly)).toBe(true);
+    // 段落和要点都没有的章节仍然不合法
+    expect(validate({ ...bulletsOnly, sections: [{ id: "categories", heading: "品类表现" }] })).toBe(false);
+  });
+
   test("match_causes 给出与 DraftReport.causes 同形的原因，以及可核验说法", () => {
     const validate = newAjv().compile(readJson("schemas/match_causes.json"));
     expect(

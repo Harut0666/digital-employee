@@ -16,7 +16,7 @@ export interface TextPiece {
 export function narrativePieces(draft: DraftReport): TextPiece[] {
   const pieces: TextPiece[] = [{ where: "标题", text: draft.title }];
   for (const section of draft.sections) {
-    for (const p of section.paragraphs) pieces.push({ where: section.heading, text: p });
+    for (const p of section.paragraphs ?? []) pieces.push({ where: section.heading, text: p });
     for (const b of section.bullets ?? []) pieces.push({ where: section.heading, text: b });
   }
   for (const c of draft.causes) pieces.push({ where: `异常原因（${c.anomalyId}）`, text: c.cause });

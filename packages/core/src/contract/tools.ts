@@ -156,7 +156,8 @@ export interface RenderReportInput {
 }
 export interface RenderedReport {
   title: string;
-  sections: { id: string; heading: string; paragraphs: string[]; bullets?: string[] }[];
+  /** 段落；章节可能只有要点（如品类表现、下周关注），此时省略 paragraphs */
+  sections: { id: string; heading: string; paragraphs?: string[]; bullets?: string[] }[];
 }
 export interface RenderReportOutput {
   docxPath: string;
