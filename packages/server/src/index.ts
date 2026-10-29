@@ -1,8 +1,10 @@
 // T3 实现：Elysia 服务。导出 App 类型供前端 Eden 使用。
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import { loadEmployeeConfig, type EmployeeConfig, type TaskEngine } from "@de/core";
+import { downloadResponse, staticResponse } from "./files";
 import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
 
@@ -36,7 +38,12 @@ export function createApp(options: ServerOptions) {
   }
 
   return new Elysia()
-    .onError(({ error, set }) => {
+    .use(cors())
+    .onError(({ code, error, set }) => {
+      if (code === "NOT_FOUND") {
+        set.status = 404;
+        return apiError("not_found", "路径不存在");
+      }
       set.status = 500;
       return { ok: false, error: "internal", message: error instanceof Error ? error.message : String(error) };
     })
@@ -145,8 +152,29 @@ export function createApp(options: ServerOptions) {
             return apiError("not_found", `任务不存在：${params.id}`);
           }
           return eventStream(engine, params.id, after, request.signal);
+        })
+        .get("/tasks/:id/deliverables/:kind", async ({ params, set }) => {
+          const snapshot = await engine.get(params.id);
+          if (!snapshot) {
+            set.status = 404;
+            return apiError("not_found", `任务不存在：${params.id}`);
+          }
+          const ref = snapshot.deliverables.find((d) => d.kind === params.kind);
+          const res = ref ? await downloadResponse(ref.path) : undefined;
+          if (!res) {
+            set.status = 404;
+            return apiError("not_found", `没有可下载的交付物：${params.kind}`);
+          }
+          return res;
         }),
-    );
+    )
+    .get("/*", async ({ path, set }) => {
+      const isApi = path === "/api" || path.startsWith("/api/");
+      const res = options.webDistDir && !isApi ? await staticResponse(options.webDistDir, path) : undefined;
+      if (res) return res;
+      set.status = 404;
+      return apiError("not_found", "路径不存在");
+    });
 }
 
 export type App = ReturnType<typeof createApp>;
