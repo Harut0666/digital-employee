@@ -84,6 +84,19 @@ export const computeMetricsOut = {
       wow: nullableNum,
     }),
   ),
+  // 区域×品类的实收与毛利率：没有数据也保留（0 / null）
+  regionCategories: z.record(
+    z.string(),
+    z.record(
+      z.string(),
+      z.object({
+        revenueCents: z.number().int(),
+        prevRevenueCents: z.number().int().nullable(),
+        grossMarginRate: nullableNum,
+        prevGrossMarginRate: nullableNum,
+      }),
+    ),
+  ),
   topProducts: z.array(z.object({ code: z.string(), name: z.string(), revenueCents: z.number().int() })),
   anomalies: z.array(
     z.object({
@@ -122,7 +135,21 @@ export const computeMetricsOut = {
     idConflicts: z.object({ count: z.number().int(), recordIds: z.array(z.string()) }),
     amountMismatch: z.object({ count: z.number().int() }),
     unknownCodes: z.object({ count: z.number().int(), revenueCents: z.number().int() }),
-    returns: z.object({ count: z.number().int(), revenueCents: z.number().int() }),
+    returns: z.object({
+      count: z.number().int(),
+      revenueCents: z.number().int(),
+      groups: z.array(
+        z.object({
+          store: z.string(),
+          storeName: z.string(),
+          date: z.string(),
+          product: z.string(),
+          productName: z.string(),
+          count: z.number().int(),
+          revenueCents: z.number().int(),
+        }),
+      ),
+    }),
     storeDays: z.array(storeDay),
     prevWeekStoreDays: z.array(storeDay),
   }),

@@ -25,6 +25,17 @@ describe("renderSlots", () => {
     expect(renderSlots("{{quality.returns.count}} 笔", facts).text).toBe("12 笔");
   });
 
+  test("区域×品类毛利率：本周与上周都渲染为一位小数百分数", () => {
+    expect(
+      renderSlots("华南饮品毛利率由 {{regionCategories.华南.饮品.prevGrossMarginRate}} 降至 {{regionCategories.华南.饮品.grossMarginRate}}", facts).text,
+    ).toBe("华南饮品毛利率由 70.4% 降至 60.5%");
+  });
+
+  test("退货明细可按门店编码或商品编码取：份数与金额", () => {
+    expect(renderSlots("{{quality.returns.groups.BJ01.count}} 份 / {{quality.returns.groups.BJ01.revenue}}", facts).text).toBe("15 份 / -330 元");
+    expect(renderSlots("{{quality.returns.groups.C01.count}} 份", facts).text).toBe("15 份");
+  });
+
   test("未知路径进入 unresolved，原文保留", () => {
     const out = renderSlots("A {{regions.西南.wow}} B {{company.nope}} C {{regions.西南.wow}}", facts);
     expect(out.text).toBe("A {{regions.西南.wow}} B {{company.nope}} C {{regions.西南.wow}}");
