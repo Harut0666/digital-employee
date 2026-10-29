@@ -5,4 +5,7 @@ export * from "./tools";
 export * from "./facts";
 export * from "./qc";
 export * from "./employee-config";
+export * from "./form";
+export * from "./frontdesk";
+export * from "./config-api";
 export * from "./judgment";

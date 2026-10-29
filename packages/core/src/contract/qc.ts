@@ -21,6 +21,16 @@ export const QC_TEMPLATES = [
 ] as const;
 export type QcTemplate = (typeof QC_TEMPLATES)[number];
 
+/** 模板的中文名（配置页的“从模板新增规则”菜单用）。 */
+export const QC_TEMPLATE_LABELS: Record<QcTemplate, string> = {
+  forbidden_terms: "禁用词",
+  required_terms: "必含词",
+  section_must_contain: "章节必含内容",
+  max_items: "条数上限",
+  max_pages: "篇幅上限",
+  number_range: "数值范围",
+};
+
 export interface QcCheckResult {
   /** 内置检查名，或自定义规则的 id */
   id: string;

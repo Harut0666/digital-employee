@@ -1,7 +1,20 @@
 // 前端数据层接口。真实实现走 Eden（对接 T3 的接口），VITE_MOCK=1 时换成内存模拟。
 // 视图层只依赖这里的接口，不关心背后是谁。
 
-import type { CommandResult, Role, TaskCommand, TaskEvent, TaskSnapshot, TaskSummary } from "@de/core/contract";
+import type {
+  CommandResult,
+  ConfigDiff,
+  ConfigVersion,
+  EmployeeConfigResponse,
+  RestoreConfigResponse,
+  Role,
+  SaveConfigRequest,
+  SaveConfigResponse,
+  TaskCommand,
+  TaskEvent,
+  TaskSnapshot,
+  TaskSummary,
+} from "@de/core/contract";
 
 /** 界面上可切换的三种角色；system 只出现在事件里。 */
 export type UiRole = Exclude<Role, "system">;
@@ -46,4 +59,13 @@ export interface WebApi {
   subscribe(id: string, afterSeq: number, onEvent: (event: TaskEvent) => void): () => void;
   /** 交付物下载地址；无则 undefined。 */
   deliverableUrl(id: string, kind: DeliverableKind): string | undefined;
+
+  // ---- 员工配置页 ----
+  /** 配置页的数据：每个文件的原文与解析结果、派生视图、版本列表。 */
+  getEmployeeConfig(id: string): Promise<EmployeeConfigResponse>;
+  /** 保存一个配置文件：content（源文件视图）或 data（表单视图）二选一。校验失败会抛错。 */
+  saveEmployeeConfig(id: string, path: string, input: SaveConfigRequest): Promise<SaveConfigResponse>;
+  listConfigVersions(id: string): Promise<ConfigVersion[]>;
+  diffConfigVersion(id: string, versionId: string): Promise<ConfigDiff>;
+  restoreConfigVersion(id: string, versionId: string): Promise<RestoreConfigResponse>;
 }

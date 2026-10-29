@@ -4,6 +4,7 @@
 import { TRANSITIONS } from "@de/core/contract";
 import type { AttachmentRef, CommandResult, PauseReason, TaskCommand, TaskEvent, TaskSnapshot, TaskState, TaskSummary } from "@de/core/contract";
 import { deriveSessionView } from "../view/session-view";
+import { createMockConfigStore } from "./mock-config";
 import { EMPLOYEES, QC_CHECKS_PASSED, REWORK_STEPS, SEEDS, STEP_DEFS, type EventInput } from "./mock-data";
 import type { CreateTaskInput, DeliverableKind, EmployeeInfo, UiRole, UploadItem, WebApi } from "./types";
 
@@ -26,6 +27,7 @@ const TIME_LIMIT_MS = 600_000;
 
 export function createMockApi(getRole: () => UiRole): WebApi {
   const tasks = new Map<string, MockTask>();
+  const configs = createMockConfigStore();
   let counter = 100;
 
   const emit = (t: MockTask, input: EventInput, ts = new Date()) => {
@@ -259,6 +261,13 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     },
 
     deliverableUrl: (_id, _kind: DeliverableKind) => undefined,
+
+    // ---- 员工配置页 ----
+    getEmployeeConfig: async (id) => later(configs.get(id)),
+    saveEmployeeConfig: async (id, path, input) => configs.save(id, path, input),
+    listConfigVersions: async (id) => later(configs.versions(id)),
+    diffConfigVersion: async (id, versionId) => later(configs.diff(id, versionId)),
+    restoreConfigVersion: async (id, versionId) => later(configs.restore(id, versionId)),
   };
 }
 

@@ -4,8 +4,23 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { EmployeeWorkflowSchema, QcConfigSchema, type EmployeeConfig } from "../contract";
+import { workflowConsistencyProblems } from "./consistency";
 
 export { loadSettings, resolveWorkspace } from "./workspace";
+export { collectWritingRequirements, validateFormSchemaPurposes } from "./form";
+export { CONFIG_ROOT_FILES, describeConfigFiles, isWritableConfigPath, listConfigFiles, normalizeConfigPath, readConfigFileText, readConfigFiles } from "./files";
+export { prepareConfigText, type ConfigFileInput, type PrepareConfigResult } from "./write";
+export {
+  createConfigVersion,
+  diffConfigVersion,
+  listConfigVersions,
+  readConfigVersion,
+  removeConfigVersion,
+  restoreConfigVersion,
+  versionsDirFor,
+} from "./versions";
+export { formatFrontdesk, joinSkill, parseFrontdesk, splitSkill, FRONTDESK_TOOLS_HEADING } from "./markdown";
+export { workflowConsistencyProblems } from "./consistency";
 
 function readText(path: string): string {
   return readFileSync(path, "utf8");
@@ -77,29 +92,8 @@ export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
   const qcResult = QcConfigSchema.safeParse(parseYamlFile(root, "qc.yaml"));
   if (!qcResult.success) throw new Error(`qc.yaml 不符合契约：${qcResult.error.message}`);
 
-  const ids = workflow.steps.map((s) => s.id);
-  if (new Set(ids).size !== ids.length) throw new Error("workflow.yaml 中的步骤 id 不唯一");
-  const admission = workflow.steps.find((s) => s.id === workflow.admissionStep);
-  if (!admission) throw new Error(`admissionStep "${workflow.admissionStep}" 不在 workflow.yaml 的步骤中`);
-  if (admission.kind !== "compute") throw new Error(`admissionStep "${admission.id}" 必须是计算步骤`);
-  const qcSteps = workflow.steps.filter((s) => s.kind === "qc");
-  if (qcSteps.length > 1) throw new Error("workflow.yaml 最多只能有一个质检步骤");
-  if (qcSteps[0] && workflow.steps[workflow.steps.length - 1] !== qcSteps[0]) {
-    throw new Error("质检步骤必须是最后一个步骤");
-  }
-  // 质检修正步骤的解析值（含默认值）必须指向真实步骤：非场景 A 的员工若不显式配置，
-  // 质检问题就落不到可重跑的步骤上，只能一路转人工，因此加载配置时直接报错。
-  if (qcSteps.length > 0) {
-    const fixSteps: Array<["write" | "causes", string]> = [
-      ["write", workflow.qcFixSteps.write ?? workflow.qcSources.draft],
-      ["causes", workflow.qcFixSteps.causes],
-    ];
-    for (const [key, id] of fixSteps) {
-      if (!ids.includes(id)) {
-        throw new Error(`qcFixSteps.${key} 解析为 "${id}"，但不在 workflow.yaml 的步骤中；请显式配置 qcFixSteps.${key}`);
-      }
-    }
-  }
+  const problems = workflowConsistencyProblems(workflow);
+  if (problems.length > 0) throw new Error(problems[0]!);
 
   const prompts: Record<string, string> = {};
   const outputSchemas: Record<string, Record<string, unknown>> = {};

@@ -6,6 +6,7 @@
 import { treaty } from "@elysiajs/eden";
 import type { CommandResult, TaskEvent, TaskEventType, TaskSnapshot, TaskSummary } from "@de/core/contract";
 import type { App } from "@de/server";
+import { createConfigApi } from "./config";
 import type { CreateTaskInput, DeliverableKind, EmployeeInfo, UiRole, UploadItem, WebApi } from "./types";
 
 /** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
@@ -57,6 +58,7 @@ function unwrap<T>(res: Awaited<Reply<T>>): T {
 export function createEdenApi(getRole: () => UiRole, origin: string = window.location.origin): WebApi {
   const client = treaty<App>(origin, { headers: () => ({ "x-role": getRole() }) }) as unknown as ApiShape;
   const task = (id: string) => client.api.tasks({ id });
+  const configApi = createConfigApi(origin);
 
   return {
     listEmployees: async () => unwrap(await client.api.employees.get()),
@@ -102,6 +104,13 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
       return () => es.close();
     },
     deliverableUrl: (id, kind: DeliverableKind) => `${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}`,
+
+    // ---- 员工配置页 ----
+    getEmployeeConfig: configApi.getEmployeeConfig,
+    saveEmployeeConfig: configApi.saveEmployeeConfig,
+    listConfigVersions: configApi.listConfigVersions,
+    diffConfigVersion: configApi.diffConfigVersion,
+    restoreConfigVersion: configApi.restoreConfigVersion,
   };
 }
 

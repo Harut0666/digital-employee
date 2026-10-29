@@ -10,6 +10,7 @@ import type {
   JudgmentRunner,
   JudgmentStepInput,
   JudgmentStepResult,
+  ModelProvider,
   QcCheckResult,
   QcEngine,
   QcInput,
@@ -91,6 +92,8 @@ export interface HarnessOptions {
   patchWorkflow?: (workflow: Record<string, any>) => void;
   judgment?: JudgmentRunner;
   qc?: QcEngine;
+  /** 注入模型（如 createScriptedModelProvider），配合真实 judgment 检查模型看到了什么 */
+  model?: ModelProvider;
   now?: () => Date;
   faults?: FaultHooks;
 }
@@ -135,7 +138,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       workspaceDir,
       employeesDir,
       toolClient: tools.client,
-      model: { kind: "scripted" },
+      model: merged.model ?? { kind: "scripted" },
       now: merged.now,
       faults: merged.faults,
     };

@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, s
 import { basename, dirname, join, resolve } from "node:path";
 import { createJudgmentRunner } from "../agent";
 import { loadEmployeeConfigSync } from "../config";
+import { collectWritingRequirements } from "../config/form";
 import { createQcEngine, renderSlots } from "../qc";
 import {
   STATE_LABELS,
@@ -513,13 +514,17 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     }
 
     const nowMs = now().getTime();
+    // 表单里标了 x-purpose: writing_requirement 的字段，标题和取值作为“发起人的写作要求”
+    // 注入每个判断步骤的上下文（设计 §4.1）。字段只影响判断步骤，计算步骤的入参不变。
+    const writingRequirements = collectWritingRequirements(rt.config.formSchema, proj.form);
+    const judgmentContext = writingRequirements.length > 0 ? { ...context, writingRequirements } : context;
     let result: Awaited<ReturnType<JudgmentRunner["run"]>>;
     try {
       result = await getJudgment().run({
         taskId: rt.id,
         step,
         systemPrompt: [rt.config.skill, prompt].filter(Boolean).join("\n\n"),
-        context,
+        context: judgmentContext,
         corrections: corrections.length > 0 ? corrections : undefined,
         toolClient: deps.toolClient,
         model: deps.model,
