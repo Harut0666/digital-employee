@@ -399,4 +399,74 @@ describe("接缝 1 · 查询接口", () => {
   });
 });
 
+describe("接缝 1 · T7 接线：准入工具故障、needs_human、质检输入源", () => {
+  test("准入工具重试用尽 → awaiting_operator（tool_failed）；operator 重试回到准入并走完", async () => {
+    const h = await createHarness();
+    h.tools.failTimes("validate_submission", Infinity);
+    const paused = await h.run();
+
+    expect(paused.state).toBe("awaiting_operator");
+    expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
+    expect(paused.pause?.message).toContain("validate_submission");
+    expect(h.tools.callCount("validate_submission")).toBe(3);
+    const failedEvents = await h.engine.events(paused.id);
+    expect(failedEvents.findLast((e) => e.type === "state_changed")).toMatchObject({ from: "admission", to: "awaiting_operator", trigger: "tool_failed" });
+
+    // 发起人不能重试；操作员重试后回到准入校验，而不是 running
+    expect(await h.cmd(paused.id, { type: "retry" }, "initiator")).toMatchObject({ ok: false, error: "forbidden_role" });
+    h.tools.failTimes("validate_submission", 0);
+    const res = await h.cmd(paused.id, { type: "retry" }, "operator");
+    expect(res.ok).toBe(true);
+    const settled = await h.engine.waitForSettled(paused.id);
+    expect(settled.state).toBe("awaiting_review");
+    const events = await h.engine.events(paused.id);
+    expect(stateTrail(events)).toEqual(["draft", "admission", "awaiting_operator", "admission", "running", "qc", "awaiting_review"]);
+    expectContiguousSeq(events);
+  });
+
+  test("运行中的工具故障，重试仍回到 running 并从失败的步骤继续", async () => {
+    const h = await createHarness();
+    h.tools.failTimes("compute_metrics", Infinity);
+    const paused = await h.run();
+    h.tools.failTimes("compute_metrics", 0);
+    await h.cmd(paused.id, { type: "retry" }, "operator");
+    await h.engine.waitForSettled(paused.id);
+    const trail = stateTrail(await h.engine.events(paused.id));
+    expect(trail.slice(0, 5)).toEqual(["draft", "admission", "running", "awaiting_operator", "running"]);
+  });
+
+  test("判断输出 needsHuman 走 needs_human 触发器，不再复用 tool_failed", async () => {
+    const judgment = createStubJudgment({
+      outputs: { interpret_feedback: () => ({ items: [], needsHuman: true, needsHumanReason: "意见要求更换毛利口径" }) },
+    });
+    const h = await createHarness({ judgment: judgment.runner });
+    const first = await h.run();
+    await h.cmd(first.id, { type: "return", comment: "毛利按含税算" }, "reviewer");
+    await h.engine.waitForSettled(first.id);
+    const events = await h.engine.events(first.id);
+    expect(events.findLast((e) => e.type === "state_changed")).toMatchObject({ to: "awaiting_operator", trigger: "needs_human" });
+  });
+
+  test("质检输入源步骤 id 读自 workflow.qcSources，而不是写死", async () => {
+    const rename = (w: Record<string, any>) => {
+      const text = JSON.stringify(w)
+        .replaceAll('"write_report"', '"compose_report"')
+        .replaceAll("$steps.write_report", "$steps.compose_report");
+      for (const key of Object.keys(w)) delete w[key];
+      Object.assign(w, JSON.parse(text), { qcSources: { draft: "compose_report" } });
+    };
+    const qc = createStubQc();
+    const h = await createHarness({ patchWorkflow: rename, qc: qc.engine });
+    const first = await h.run();
+    expect(first.state).toBe("awaiting_review");
+    expect(first.steps.map((s) => s.id)).toContain("compose_report");
+    expect((qc.inputs[0]!.draft as any).title).toMatch(/^报告#/);
+
+    // 退回后，“上一版草稿”也取自配置里的草稿步骤
+    await h.cmd(first.id, { type: "return", comment: "改" }, "reviewer");
+    await h.engine.waitForSettled(first.id);
+    expect(qc.inputs.at(-1)!.previousDraft).toMatchObject({ title: expect.stringMatching(/^报告#/) });
+  });
+});
+
 void passingChecks;

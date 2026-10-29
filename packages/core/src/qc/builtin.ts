@@ -53,9 +53,10 @@ export function checkTraceability({ draft, facts }: QcInput): QcCheckResult {
   const issues: string[] = [];
   const unresolved = new Set<string>();
 
+  const quotes = draft.causes.flatMap((c) => (c.quote?.trim() ? [c.quote.trim()] : []));
   for (const piece of narrativePieces(draft)) {
     for (const path of renderSlots(piece.text, facts).unresolved) unresolved.add(path);
-    for (const n of findBareNumbers(piece.text)) {
+    for (const n of findBareNumbers(piece.text, quotes)) {
       issues.push(`「${piece.where}」出现未经槽位引用的数字：${n}，请改用 {{路径}} 槽位`);
     }
   }

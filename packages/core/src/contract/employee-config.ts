@@ -88,6 +88,20 @@ export const EmployeeWorkflowSchema = z.object({
   admissionStep: z.string(),
   /** 产出 WeeklyFacts 的步骤 id，$rendered.* 与质检用它的输出作为事实 */
   factsStep: z.string().optional(),
+  /**
+   * 质检的输入取自哪些步骤的输出（缺省值即场景 A 的约定）：
+   *   draft     报告草稿（判断步骤的输出，DraftReport），重做时也是“上一版草稿”的来源
+   *   minutes   纪要解析结果
+   *   rendered  渲染步骤的输出（带 estimatedPages、chartCount）
+   * 事实取自 factsStep。
+   */
+  qcSources: z
+    .object({
+      draft: z.string().default("write_report"),
+      minutes: z.string().default("parse_minutes"),
+      rendered: z.string().default("render_document"),
+    })
+    .prefault({}),
   steps: z.array(StepConfigSchema).min(1),
 });
 export type EmployeeWorkflow = z.infer<typeof EmployeeWorkflowSchema>;

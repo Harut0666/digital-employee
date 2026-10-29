@@ -121,6 +121,46 @@ describe("数据溯源 traceability", () => {
     expect(r.passed).toBe(true);
   });
 
+  test("白名单：带空格的日期写法（10 月 27 日、10/27、11/03–11/06）不算裸数字", () => {
+    const draft = withSection(makeDraft(), "next_week", {
+      paragraphs: [],
+      bullets: ["10 月 27 日至 29 日停业；方案 10/27 前提交，复盘 11/03–11/06 完成。", "10月30日（周五）恢复，11 月 2 日上市。"],
+    });
+    const r = get(run({ draft }), "traceability");
+    expect(r.issues).toEqual([]);
+  });
+
+  test("白名单：引号「」或“”内、逐字出自 causes[].quote 的数字不算裸数字", () => {
+    const draft = makeDraft();
+    draft.causes[0]!.quote = "手工台账记录当日实收约 5,100 元，另有 15 份退货";
+    draft.causes[0]!.cause = "纪要称「当日实收约 5,100 元」，且“另有 15 份退货”";
+    const r = get(run({ draft }), "traceability");
+    expect(r.issues).toEqual([]);
+    expect(r.passed).toBe(true);
+  });
+
+  test("引号内的数字必须真的出自 quote；引号外的数字、编造的引文仍被抓到", () => {
+    const draft = makeDraft();
+    draft.causes[0]!.quote = "手工台账记录当日实收约 5,100 元";
+    draft.causes[0]!.cause = "纪要称「当日实收约 9,999 元」，实际下降 15%";
+    const r = get(run({ draft }), "traceability");
+    expect(r.passed).toBe(false);
+    const text = r.issues.join("\n");
+    expect(text).toContain("9,999");
+    expect(text).toContain("15%");
+    expect(text).not.toContain("5,100");
+  });
+
+  test("嵌套引号：「“第二杯半价”活动已于 10 月 25 日结束」整句出自 quote 即可", () => {
+    const draft = makeDraft();
+    draft.causes[0]!.quote = "“第二杯半价”活动已于 10 月 25 日结束。陈某表示本周基本持平";
+    draft.causes[0]!.cause = "纪要称「“第二杯半价”活动已于 10 月 25 日结束」，销售量 120 杯";
+    const r = get(run({ draft }), "traceability");
+    expect(r.passed).toBe(false);
+    expect(r.issues.join("\n")).toContain("120");
+    expect(r.issues.join("\n")).not.toContain("25");
+  });
+
   test("槽位内部的数字不算裸数字；原因摘录（quote）里的数字不扫描", () => {
     const draft = makeDraft();
     draft.causes[0]!.quote = "华东区受连续降雨影响";
