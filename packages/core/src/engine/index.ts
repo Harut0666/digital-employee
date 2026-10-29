@@ -147,9 +147,8 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
   // ---------------------------------------------------------------- 事件与运行时
 
-  function openRuntime(id: TaskId): Runtime | undefined {
-    const cached = runtimes.get(id);
-    if (cached) return cached;
+  /** 从磁盘读出一个任务的完整 Runtime，不写缓存（list 用）。 */
+  function loadRuntime(id: TaskId): Runtime | undefined {
     const dir = join(tasksDir, id);
     const logPath = join(dir, "events.jsonl");
     if (!existsSync(logPath)) return undefined;
@@ -158,8 +157,15 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     const config = loadEmployeeConfigSync(join(dir, "config"));
     const proj = new TaskProjection(config);
     for (const e of events) proj.apply(e);
-    const rt: Runtime = { id, dir, config, proj, events, logPath, listeners: new Set(), redrive: false, artifactCache: new Map() };
-    runtimes.set(id, rt);
+    return { id, dir, config, proj, events, logPath, listeners: new Set(), redrive: false, artifactCache: new Map() };
+  }
+
+  /** 取任务的 Runtime：命中缓存则复用，否则读盘并缓存。 */
+  function openRuntime(id: TaskId): Runtime | undefined {
+    const cached = runtimes.get(id);
+    if (cached) return cached;
+    const rt = loadRuntime(id);
+    if (rt) runtimes.set(id, rt);
     return rt;
   }
 
@@ -816,8 +822,12 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       const summaries: TaskSummary[] = [];
       if (!existsSync(tasksDir)) return summaries;
       for (const id of readdirSync(tasksDir)) {
-        const rt = openRuntime(id);
+        const cached = runtimes.get(id);
+        const rt = cached ?? loadRuntime(id);
         if (!rt) continue;
+        // 只保留活跃任务的完整 Runtime；空闲任务（草稿/暂停/终态）按需重读，
+        // 否则列一次任务就会把所有任务的全部事件与配置永久缓存下来。
+        if (!cached && ACTIVE_STATES.includes(rt.proj.state)) runtimes.set(id, rt);
         summaries.push({ id, employee: rt.proj.employee, title: titleOf(rt), state: rt.proj.state, updatedAt: rt.proj.lastTs });
       }
       return summaries.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
@@ -851,8 +861,12 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     async resumeAll() {
       if (!existsSync(tasksDir)) return;
       for (const id of readdirSync(tasksDir)) {
-        const rt = openRuntime(id);
-        if (rt && ACTIVE_STATES.includes(rt.proj.state)) kick(rt);
+        const cached = runtimes.get(id);
+        const rt = cached ?? loadRuntime(id);
+        if (!rt || !ACTIVE_STATES.includes(rt.proj.state)) continue;
+        // 只有需要恢复执行的活跃任务才留在内存里；暂停/终态任务读完就丢，和 list() 一致
+        if (!cached) runtimes.set(id, rt);
+        kick(rt);
       }
     },
   };
