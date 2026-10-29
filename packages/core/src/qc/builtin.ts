@@ -133,7 +133,7 @@ export function checkContradictionCoverage(input: QcInput): QcCheckResult {
   const issues: string[] = [];
   const refs = new Set(draft.contradictionRefs ?? []);
   const section = anomaliesSection(draft);
-  const sectionText = section ? [section.heading, ...section.paragraphs, ...(section.bullets ?? [])].join("\n") : undefined;
+  const sectionText = section ? [section.heading, ...(section.paragraphs ?? []), ...(section.bullets ?? [])].join("\n") : undefined;
   for (const contradiction of contradictions ?? []) {
     if (!refs.has(contradiction.id)) {
       issues.push(`纪要矛盾 ${contradiction.id}（${contradiction.subject.name}）没有写进“异常与原因”章节`);

@@ -35,7 +35,7 @@ function draftWithContradiction(contradiction: DetectedContradiction = huananCon
   return {
     ...draft,
     sections: draft.sections.map((s) =>
-      s.id === "anomalies" ? { ...s, paragraphs: [...s.paragraphs, text] } : s,
+      s.id === "anomalies" ? { ...s, paragraphs: [...(s.paragraphs ?? []), text] } : s,
     ),
     contradictionRefs: [contradiction.id],
   };
