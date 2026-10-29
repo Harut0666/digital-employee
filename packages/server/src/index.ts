@@ -10,6 +10,7 @@ import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
 import { createChatRoutes } from "./routes/chat";
 import { createConfigRoutes } from "./routes/config";
+import { createSampleRoutes } from "./routes/samples";
 import { createSettingsRoutes } from "./routes/settings";
 
 export interface ServerOptions {
@@ -97,6 +98,7 @@ export function createApp(options: ServerOptions) {
     .use(createSettingsRoutes(routeDeps))
     .use(createConfigRoutes(routeDeps))
     .use(createChatRoutes(routeDeps))
+    .use(createSampleRoutes(routeDeps))
     .group("/api", (api) =>
       api
         .get("/employees", () => listEmployees())

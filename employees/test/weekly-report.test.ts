@@ -396,7 +396,18 @@ describe("SKILL.md 与提示词", () => {
   });
 
   test("提示词里的槽位示例都从 WeeklyFacts 的真实字段出发", () => {
-    const roots = new Set(["company", "regions", "stores", "categories", "topProducts", "quality", "trend", "period", "dataCoverage"]);
+    const roots = new Set([
+      "company",
+      "regions",
+      "stores",
+      "categories",
+      "regionCategories",
+      "topProducts",
+      "quality",
+      "trend",
+      "period",
+      "dataCoverage",
+    ]);
     const slots = [...[skill, ...judgeSteps.map((s) => read(s.prompt))].join("\n").matchAll(/\{\{([^}]+)\}\}/g)];
     expect(slots.length).toBeGreaterThan(0);
     for (const [, path] of slots) {
@@ -404,6 +415,20 @@ describe("SKILL.md 与提示词", () => {
       if (raw.includes("<") || raw === "路径") continue; // 语法说明里的占位写法
       expect(roots.has(raw.split(".")[0]!)).toBe(true);
     }
+  });
+
+  test("提示词给出具名退货与区域品类毛利率的槽位写法", () => {
+    const write = read("prompts/write_report.md");
+    for (const text of [skill, write]) {
+      expect(text).toContain("regionCategories");
+      expect(text).toContain("prevGrossMarginRate");
+      expect(text).toContain("quality.returns.groups");
+    }
+    // 具体路径与事实一致：退货明细按门店编码取份数/金额；毛利率分本周与上周
+    expect(skill).toContain("{{quality.returns.groups.BJ01.count}}");
+    expect(skill).toContain("{{quality.returns.groups.BJ01.revenue}}");
+    expect(skill).toContain("{{regionCategories.华南.饮品.prevGrossMarginRate}}");
+    expect(skill).toContain("{{regionCategories.华南.饮品.grossMarginRate}}");
   });
 
   test("write_report 提示词列出全部章节标题", () => {

@@ -100,9 +100,15 @@ describe("compute_metrics 口径规则", () => {
     expect(f.company.revenueCents).toBe(77000 + 29000); // A01 + A02（A02 含 -10 元退货）
   });
 
-  test("退货照常冲减并报告笔数和合计", async () => {
+  test("退货照常冲减并报告笔数和合计；具名退货按门店+日期+单品分组", async () => {
     const f = await compute(37);
-    expect(f.quality.returns).toEqual({ count: 1, revenueCents: -1000 });
+    expect(f.quality.returns).toEqual({
+      count: 1,
+      revenueCents: -1000,
+      groups: [
+        { store: "A02", storeName: "乙店", date: "2026-09-12", product: "P1", productName: "拿铁", count: 1, revenueCents: -1000 },
+      ],
+    });
     expect(f.stores.find((s) => s.code === "A02")!.revenueCents).toBe(29000);
   });
 

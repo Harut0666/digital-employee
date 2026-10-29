@@ -325,7 +325,8 @@ function resolveFactPath(facts: WeeklyFacts | undefined, dotted: string): Resolv
       const found = current.find(
         (item) =>
           isRecord(item) &&
-          [item.code, item.key, item.id, item.name, item.category].some((key) => key === segment),
+          // 数组的业务键与槽位渲染一致（qc/slots.ts 的 ARRAY_KEYS）；退货明细按 store/product 取
+          [item.code, item.key, item.id, item.name, item.category, item.store, item.product].some((key) => key === segment),
       );
       if (found === undefined) return { error: `事实里没有 ${trail}` };
       current = found;

@@ -2,7 +2,6 @@
 // 真实引擎在 T1 合并前会抛 "not implemented"，由 T7 集成验证。
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   createMcpToolClient,
@@ -15,6 +14,7 @@ import {
 } from "@de/core";
 import { createToolsServer } from "@de/tools";
 import { parseCase, runCase } from "./case";
+import { resolveEmployeesDir } from "./paths";
 
 export interface RunCaseCommandArgs {
   caseFile: string;
@@ -39,8 +39,7 @@ export async function runCaseCommand(args: RunCaseCommandArgs): Promise<number> 
   const workspaceDir = process.env.DE_WORKSPACE ? resolve(process.env.DE_WORKSPACE) : join(outDir, "workspace");
   mkdirSync(join(workspaceDir, "tasks"), { recursive: true });
 
-  const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
-  const employeesDir = process.env.DE_EMPLOYEES_DIR ?? join(repoRoot, "employees");
+  const employeesDir = resolveEmployeesDir();
 
   const model = args.scriptedFile
     ? createScriptedModelProvider(readJson(resolve(args.scriptedFile)) as ModelScript)

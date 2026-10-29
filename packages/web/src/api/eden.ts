@@ -7,7 +7,7 @@ import { treaty } from "@elysiajs/eden";
 import type { CommandResult, TaskEvent, TaskEventType, TaskSnapshot, TaskSummary } from "@de/core/contract";
 import type { App } from "@de/server";
 import { createConfigApi } from "./config";
-import type { CreateTaskInput, DeliverableKind, EmployeeInfo, UiRole, UploadItem, WebApi } from "./types";
+import type { CreateTaskInput, DeliverableKind, EmployeeInfo, PublicSampleInfo, UiRole, UploadItem, WebApi } from "./types";
 
 /** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
 const EVENT_TYPE_SET: Record<TaskEventType, true> = {
@@ -43,6 +43,7 @@ interface ApiShape {
       get(): Reply<TaskSummary[]>;
       post(body: { employee: string; form: string; attachments: File[] }): Reply<TaskSnapshot>;
     } & ((params: { id: string }) => TaskRoute);
+    samples: { get(): Reply<{ samples: PublicSampleInfo[] }> } & ((params: { id: string }) => { tasks: { post(): Reply<TaskSnapshot> } });
   };
 }
 
@@ -87,6 +88,12 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
       const v = res.error?.value as CommandResult | undefined;
       if (v && typeof v === "object" && "ok" in v) return v;
       return unwrap(res);
+    },
+    async loadPublicSample() {
+      const list = unwrap(await client.api.samples.get());
+      const sample = list.samples[0];
+      if (!sample) throw new Error("工作区里没有公开样例（首次启动会自动释放到 samples/）");
+      return unwrap(await client.api.samples({ id: sample.id }).tasks.post());
     },
     subscribe(id, afterSeq, onEvent) {
       // EventSource 不能带自定义请求头；SSE 只读，不依赖角色。

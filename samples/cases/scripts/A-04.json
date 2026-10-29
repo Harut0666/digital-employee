@@ -238,7 +238,7 @@
                 "heading": "数据质量说明",
                 "paragraphs": [
                   "广州海珠店 10 月 14 日没有系统数据，原因是收银系统故障，门店当日改用手工台账记录；手工台账数据未并入系统实收合计，本周实收按系统数据计算。",
-                  "北京朝阳店 10 月 15 日草莓奶油切块因奶油口感异常下架并退货，已在系统中登记。",
+                  "北京朝阳店 10 月 15 日草莓奶油切块因奶油口感异常下架并退货 {{quality.returns.groups.BJ01.count}} 份，合计 {{quality.returns.groups.BJ01.revenue}}，已在系统中登记。",
                   "本周退货 {{quality.returns.count}} 笔，合计 {{quality.returns.revenueCents}}，已按负数冲减实收。"
                 ]
               },

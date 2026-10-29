@@ -31,6 +31,11 @@ export function makeFacts(overrides: Partial<WeeklyFacts> = {}): WeeklyFacts {
       store("BJ02", "华北", { revenueCents: 7_000_000, prevRevenueCents: 6_800_000, wow: 0.0294 }),
     ],
     categories: [{ category: "饮品", revenueCents: 10_000_000, prevRevenueCents: 9_000_000, wow: 0.1111 }],
+    regionCategories: {
+      华南: {
+        饮品: { revenueCents: 7_468_274, prevRevenueCents: 5_690_794, grossMarginRate: 0.60547, prevGrossMarginRate: 0.70361 },
+      },
+    },
     topProducts: [{ code: "P001", name: "拿铁", revenueCents: 1_200_000 }],
     anomalies: [
       {
@@ -63,7 +68,21 @@ export function makeFacts(overrides: Partial<WeeklyFacts> = {}): WeeklyFacts {
       idConflicts: { count: 0, recordIds: [] },
       amountMismatch: { count: 0 },
       unknownCodes: { count: 1, revenueCents: 5_000 },
-      returns: { count: 12, revenueCents: -80_000 },
+      returns: {
+        count: 12,
+        revenueCents: -80_000,
+        groups: [
+          {
+            store: "BJ01",
+            storeName: "北京朝阳店",
+            date: "2026-10-15",
+            product: "C01",
+            productName: "草莓奶油切块",
+            count: 15,
+            revenueCents: -33_000,
+          },
+        ],
+      },
       storeDays: [],
       prevWeekStoreDays: [],
     },

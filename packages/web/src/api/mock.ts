@@ -241,6 +241,29 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       return later({ ok: true, snapshot: snapshot(t) } satisfies CommandResult);
     },
 
+    async loadPublicSample() {
+      // 模拟公开样例：第 44 周的销售明细与周会纪要（真实后端读工作区 samples/ 里的文件）
+      const t: MockTask = {
+        id: `mock-sample-${++counter}`,
+        employee: "weekly-report",
+        title: "第 44 周周报（公开样例）",
+        form: { period: { year: 2026, week: 44 } },
+        attachments: [],
+        uploads: [],
+        events: [],
+        listeners: new Set(),
+        allowMissingMinutes: false,
+        allowPartial: false,
+      };
+      attach(t, [
+        { slot: "salesFile", file: new File(["mock-xlsx"], "销售明细.xlsx") },
+        { slot: "minutesFiles", file: new File(["mock-docx"], "周会纪要_2026W44.docx") },
+      ]);
+      emit(t, { type: "task_created", employee: t.employee, configHash: "mock", form: t.form, attachments: t.attachments });
+      tasks.set(t.id, t);
+      return later(snapshot(t));
+    },
+
     subscribe(id, afterSeq, onEvent) {
       const t = tasks.get(id);
       if (!t) return () => {};

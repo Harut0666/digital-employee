@@ -17,6 +17,7 @@
 - **轨迹**：对话框顶部固定显示当前任务的执行过程（步骤、工具调用、模型轮次、质检、暂停与重做），折叠成一行摘要，运行中自动展开并跟随最新事件；只读，不提供推进操作。
 - **工具走 MCP**：工具服务器独立进程、stdio 协议，内置故障注入（超时 / 报错 / 非法输出），可现场演示工具故障与重试。
 - **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝。
+- **单文件 exe**：`bun build --compile` 把服务端、前端构建产物、员工配置、公开样例和 resvg wasm 打进一个 exe；双击即用，首次启动自动建 `%APPDATA%\digital-employee` 工作区，端口冲突自动换端口 —— 见[设计文档 §14](docs/design.md)。
 - **全栈 TypeScript**：Bun + Elysia + React/Vite + antd；前后端共享契约类型。
 
 ## 目录结构
@@ -28,21 +29,40 @@ digital-employee/
 │   ├── tools/     MCP 工具服务器（场景 A 的工具、故障注入）
 │   ├── server/    Elysia：REST 接口、SSE 事件流、角色权限
 │   ├── web/       React 前端（任务对话、轨迹、发起表单、审核、设置）
-│   └── cli/       命令行：跑用例、回放事件
+│   ├── cli/       命令行：跑用例、回放事件
+│   └── app/       打包入口：exe 子命令分派、工作区释放、端口选择（design §14）
 ├── employees/
 │   └── weekly-report/   场景 A 员工配置（提示词、输出 Schema、流程与质检配置）
 ├── samples/
 │   ├── scenario-a/      样例数据（销售明细、周会纪要、格式要求）
 │   └── cases/           A-01…A-05 命令行用例及其剧本式假模型输出
+├── scripts/       构建与冒烟：gen-embedded.ts（生成嵌入归档）、build-exe.ts、smoke-exe.ps1
 ├── docs/          设计文档、术语表、ADR、ticket、界面稿
 └── README.md
 ```
 
 ## 快速开始
 
+### 方式一：双击 exe（评审演示用，不需要安装开发环境）
+
+1. 构建一次 exe：`bun run build:exe`（先构建前端 → 生成嵌入归档 → `bun build --compile`），产物是 `dist/digital-employee.exe`。
+2. 双击运行。首次启动在 `%APPDATA%\digital-employee\` 建立工作区：释放默认员工配置到 `employees\`、公开样例到 `samples\`（**已存在的文件不覆盖**），写一份不含 Key 的 `settings.json`，然后自动打开浏览器到 `http://localhost:8787`。
+3. 端口 8787 被占用时自动往后找空闲端口，控制台打印实际地址；不想自动开浏览器就设 `DE_NO_OPEN=1`。
+4. 欢迎页点「载入公开样例」：用释放出来的第 44 周样例（销售明细 + 周会纪要）一键建一份**草稿任务**，点「提交任务」即可看到发起 → 执行 → 质检 → 审核 → 交付的完整流程。没有 API Key 时用剧本式模型启动：
+
+```powershell
+$env:DE_SCRIPTED="$env:APPDATA\digital-employee\samples\cases\scripts\A-01.json"; .\dist\digital-employee.exe
+```
+
+实测（Windows 11、Bun 1.4.2）：exe **105.8MB**（含 24 条 S 系列用例后）；冷启动到接口可用约 **1.0 秒**（3 次测量 0.83–1.10s）；剧本模式跑完 A-01 到 delivered 约 3.4 秒。
+
+exe 也能当命令行用：`digital-employee.exe init`（只准备工作区）、`mcp-server`（工具服务器），以及和 `de` 一样的 `run-case` / `run-cases` / `check` / `replay`。
+
+嵌进 exe 的资源：前端构建产物、`employees/`、`samples/scenario-a/` 与 `samples/cases/`。**不含 `samples/fixtures/`**（约 12MB 变异数据，只有 `de fixtures` 和异常用例用得到，打进去不划算）。
+
 ### 环境
 
-- [Bun](https://bun.sh) ≥ 1.4（`bun --version` 确认）
+> 以下小节是**源码运行**方式；评审演示直接用上面的 exe 即可。需要 [Bun](https://bun.sh) ≥ 1.4（`bun --version` 确认）。
 - Windows 10/11（默认工作区在 `%APPDATA%\digital-employee`；其他平台用 `DE_WORKSPACE` 指定工作区）
 - 真实模型需要一个 DeepSeek 或 OpenAI 兼容接口的 API Key；只想看流程可以用下面的**离线剧本模式**，不需要 Key
 
@@ -97,13 +117,24 @@ DE_SCRIPTED=samples/cases/scripts/A-01.json bun run dev:server
 
 剧本文件按步骤给出模型回复（`{ "<stepId>": [{ toolCalls: [...] }] }`），样例在 `samples/cases/scripts/`。端到端测试也用同一种剧本。
 
+### 打包 exe 与冒烟
+
+```bash
+bun run build:exe    # 前端构建 → 生成 packages/app/assets/*.bundle → dist/digital-employee.exe
+powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1
+```
+
+`scripts/smoke-exe.ps1` 在**临时工作区**（新的 `DE_WORKSPACE`）里真的运行 exe：先 `exe init` 释放资源，再用剧本模式把公开样例 A-01 跑到 delivered 并断言 docx 交付物存在，最后以服务端模式起 exe、从控制台解析实际地址，校验 `/api/employees`、`/api/samples`、首页与前端脚本都可访问，然后关掉进程。
+
 ## 常用命令
 
 | 命令 | 说明 |
 |---|---|
 | `bun test` | 全仓库测试（含端到端；剧本式模型，不联网、不需要 Key） |
-| `bun run typecheck` | 5 个包分别 `tsc --noEmit` |
-| `bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/<id>/result.json` |
+| `bun run typecheck` | 6 个包分别 `tsc --noEmit` |
+| `bun run build:exe` | 构建单文件 exe：`dist/digital-employee.exe` |
+| `powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1` | exe 冒烟：临时工作区跑 A-01 + 起服务端校验接口与界面 |
+| `bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/`（`result.json`、`snapshot.json`、`events.jsonl`） |
 | `bun packages/cli/src/main.ts replay <workspace> <taskId>` | 按时间回放某任务的事件 |
 | `bun packages/cli/src/main.ts mcp-server` | 以 stdio 运行工具服务器 |
 
@@ -192,4 +223,9 @@ employees/weekly-report/
 
 - 场景 A（经营周报）已端到端跑通：契约、工具、引擎、服务端/CLI、前端、质检与集成测试均已实现。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
-- 单文件 exe 打包（设计 §14）尚未加入仓库脚本，当前以源码方式用 Bun 运行。
+- 单文件 exe 已落地（设计 §14）：`bun run build:exe` → `dist/digital-employee.exe`（约 105.8MB），首次启动释放工作区，欢迎页可一键载入公开样例；`scripts/smoke-exe.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面”。
+- 已知限制：
+  - 字体未嵌入。ticket 里的“思源黑体子集（OFL）”需要仓库里不存在、也没找到可合法分发来源的字体文件，因此**跳过字体嵌入**并保留回退：图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（`noto` 等缺失时由阅读端回退），不嵌入字体二进制。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
+  - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时跑 `digital-employee.exe fixtures`（源数据已嵌入，输出到工作区 `samples/fixtures/`，约 31 秒）或源码 `de fixtures`；8 条依赖夹具的 S 用例要先这样生成夹具才能跑。
+  - 源码模式（`bun run dev:server`）不会释放工作区样例：欢迎页「载入公开样例」只在 exe 首次启动（或工作区里已有 `samples/`）时可用；源码演示请直接用 exe，或把 `samples/` 复制进工作区。
+  - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。

@@ -133,6 +133,15 @@ describe("A-02 · 2026 年第 43 周（含重复记录）", () => {
   test("前 5 单品", () => {
     expect(f().topProducts.map((p) => p.name)).toEqual(["拿铁", "生椰拿铁", "美式咖啡", "6寸生日蛋糕", "8寸生日蛋糕"]);
   });
+  test("区域×品类毛利率：华南饮品由第 42 周 70.4% 降至 60.5%", () => {
+    const rc = f().regionCategories["华南"]!["饮品"]!;
+    expect(pct1(rc.grossMarginRate)).toBe(60.5);
+    expect(pct1(rc.prevGrossMarginRate)).toBe(70.4);
+    expect(rc.revenueCents).toBe(7_468_274);
+    expect(rc.prevRevenueCents).toBe(5_690_794);
+    // 全公司口径的毛利率不受影响
+    expect(pct1(f().company.grossMarginRate)).toBe(60.1);
+  });
 });
 
 describe("A-04 · 2026 年第 42 周（数据缺失与退货）", () => {
@@ -153,6 +162,26 @@ describe("A-04 · 2026 年第 42 周（数据缺失与退货）", () => {
     expect(f().quality.returns.count).toBe(15);
     expect(yuan(f().quality.returns.revenueCents)).toBe(-656);
   });
+  test("退货明细按门店+日期+单品分组：北京朝阳店 10/15 草莓奶油切块 15 份、-330 元", () => {
+    const groups = f().quality.returns.groups;
+    // 当周 15 笔退货各属不同的门店+日期+单品
+    expect(groups).toHaveLength(15);
+    expect(groups).toContainEqual({
+      store: "BJ01",
+      storeName: "北京朝阳店",
+      date: "2026-10-15",
+      product: "C01",
+      productName: "草莓奶油切块",
+      count: 15,
+      revenueCents: -33000,
+    });
+    // 按日期、门店、商品排序：groups.BJ01 取到的是 10/15 这笔，而不是 10/18 的小额退货
+    const dates = groups.map((g) => g.date);
+    expect([...dates].sort()).toEqual(dates);
+    expect(groups.find((g) => g.store === "BJ01")).toMatchObject({ date: "2026-10-15", product: "C01", count: 15 });
+    // 明细金额合计与退货合计一致（笔数是记录条数，份数是 -qty 之和）
+    expect(groups.reduce((sum, g) => sum + g.revenueCents, 0)).toBe(f().quality.returns.revenueCents);
+  });
 });
 
 describe("compute_metrics 其他", () => {
@@ -166,6 +195,10 @@ describe("compute_metrics 其他", () => {
     expect(f.company.wow).toBeNull();
     expect(f.anomalies).toEqual([]);
     expect(f.trend.map((t) => t.week.week)).toEqual([36]);
+    // 上周没有数据：区域×品类的 prev 字段为 null
+    const rc = f.regionCategories["华南"]!["饮品"]!;
+    expect(rc.prevRevenueCents).toBeNull();
+    expect(rc.prevGrossMarginRate).toBeNull();
   });
 
   test("超出数据覆盖范围的周期返回 isError", async () => {

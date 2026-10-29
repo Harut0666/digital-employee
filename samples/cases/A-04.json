@@ -65,6 +65,8 @@
         { "path": "facts:company.deliveryShare", "expected": 31.5 },
         { "path": "facts:quality.returns.count", "expected": 15 },
         { "path": "facts:quality.returns.revenueCents", "expected": -656 },
+        { "path": "facts:quality.returns.groups.BJ01.count", "expected": 15 },
+        { "path": "facts:quality.returns.groups.BJ01.revenueCents", "expected": -330 },
         { "path": "facts:stores.GZ02.wow", "expected": -24.8 },
         { "path": "facts:stores.SZ02.wow", "expected": 50.5 },
         { "path": "facts:stores.CD02.wow", "expected": 44.8 }
@@ -74,6 +76,8 @@
         "广州海珠店",
         "北京朝阳店",
         "草莓奶油切块",
+        "15 份",
+        "-330 元",
         "退货",
         "节后",
         "写字楼店"
