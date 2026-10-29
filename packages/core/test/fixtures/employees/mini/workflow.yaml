@@ -1,0 +1,69 @@
+id: mini
+name: 迷你员工
+description: 引擎测试用的最小员工
+limits:
+  task:
+    modelCalls: 30
+    durationSec: 600
+  toolRetry:
+    attempts: 3
+    backoffMs: [0, 0, 0]
+  qcAutofix: 2
+admissionStep: admission
+steps:
+  - id: admission
+    label: 准入校验
+    kind: compute
+    tool: validate_submission
+    input:
+      sales: "$form.sales"
+      allowMissingMinutes: "$form.allowMissingMinutes"
+  - id: load_data
+    label: 读取数据
+    kind: compute
+    tool: load_sales
+    input:
+      dir: "$task.dir"
+      n: "$form.n"
+  - id: compute_metrics
+    label: 计算指标
+    kind: compute
+    tool: compute_metrics
+    input:
+      data: "$steps.load_data"
+      threshold: "$config.contradiction.flatTolerance"
+  - id: match_causes
+    label: 匹配原因
+    kind: judge
+    prompt: prompts/match_causes.md
+    input:
+      facts: "$steps.compute_metrics"
+    tools: []
+    outputSchema: schemas/match_causes.json
+    limits:
+      rounds: 6
+      durationSec: 90
+    rework: true
+  - id: write_report
+    label: 撰写报告
+    kind: judge
+    prompt: prompts/write_report.md
+    input:
+      facts: "$steps.compute_metrics"
+      causes: "$steps.match_causes"
+    tools: []
+    outputSchema: schemas/write_report.json
+    limits:
+      rounds: 6
+      durationSec: 90
+    rework: true
+  - id: render_document
+    label: 生成文档
+    kind: compute
+    tool: render_report_docx
+    input:
+      report: "$steps.write_report"
+      outDir: "$task.dir"
+  - id: qc
+    label: 质检
+    kind: qc

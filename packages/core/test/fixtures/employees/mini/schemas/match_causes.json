@@ -1,0 +1,1 @@
+{ "type": "object", "properties": { "causes": { "type": "array" } }, "required": ["causes"] }

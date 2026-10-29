@@ -1,0 +1,20 @@
+builtin:
+  structure:
+    sections:
+      - { id: summary, heading: 本周摘要 }
+    summaryMaxSentences: 5
+    nextWeekMaxItems: 3
+    minCharts: 2
+  traceability: {}
+  anomaly_coverage:
+    threshold: 0.1
+  quote_integrity: {}
+  forbidden_terms:
+    terms: [客单价, 同比]
+  length:
+    maxPages: 3
+  feedback_response: {}
+contradiction:
+  flatTolerance: 0.02
+  directionMin: 0.05
+  magnitudeTolerance: 0.1
