@@ -28,6 +28,9 @@
         "@de/core": "workspace:*",
         "@de/tools": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.2",
+        "exceljs": "^4.4.0",
+        "jszip": "^3.10.2",
+        "mammoth": "^1.13.0",
       },
     },
     "packages/core": {

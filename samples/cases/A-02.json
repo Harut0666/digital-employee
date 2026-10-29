@@ -44,6 +44,56 @@
     }
   ],
   "expect": {
-    "state": "delivered"
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:全公司/实收（元）", "expected": 632486 },
+        { "path": "table:全公司/环比", "expected": 4.4 },
+        { "path": "table:全公司/毛利率", "expected": 60.1 },
+        { "path": "table:华东/实收（元）", "expected": 224516 },
+        { "path": "table:华东/环比", "expected": -2.8 },
+        { "path": "table:华东/目标达成率", "expected": 95.5 },
+        { "path": "table:华南/实收（元）", "expected": 203120 },
+        { "path": "table:华南/环比", "expected": 19.0 },
+        { "path": "table:华南/目标达成率", "expected": 105.8 },
+        { "path": "table:华北/实收（元）", "expected": 123734 },
+        { "path": "table:华北/环比", "expected": -3.5 },
+        { "path": "table:华北/目标达成率", "expected": 95.2 },
+        { "path": "table:西南/实收（元）", "expected": 81116 },
+        { "path": "table:西南/环比", "expected": 6.6 },
+        { "path": "table:西南/目标达成率", "expected": 98.9 },
+        { "path": "facts:company.deliveryShare", "expected": 31.3 },
+        { "path": "facts:quality.duplicates.count", "expected": 29 },
+        { "path": "facts:quality.duplicates.revenueCents", "expected": 5629 },
+        { "path": "facts:stores.GZ02.wow", "expected": 30.1 },
+        { "path": "facts:stores.GZ01.wow", "expected": 15.0 },
+        { "path": "facts:stores.SZ01.wow", "expected": 17.4 },
+        { "path": "facts:stores.SZ02.wow", "expected": 17.2 },
+        { "path": "facts:stores.CD02.wow", "expected": 17.4 }
+      ],
+      "mustContain": [
+        "第 43 周纪要",
+        "29 条记录",
+        "5,629",
+        "去重",
+        "第二杯半价",
+        "成都高新店",
+        "爬坡",
+        "拿铁",
+        "生椰拿铁",
+        "美式咖啡",
+        "6寸生日蛋糕",
+        "8寸生日蛋糕"
+      ],
+      "mustNotContain": ["客单价", "同比", "208,749", "22.3%"],
+      "anomalies": [
+        "region:华南",
+        "store:GZ01",
+        "store:GZ02",
+        "store:SZ01",
+        "store:SZ02",
+        "store:CD02"
+      ]
+    }
   }
 }
