@@ -22,8 +22,22 @@ export const EMPLOYEES: EmployeeInfo[] = [
             week: { type: "integer", title: "ISO 周次", default: 44, minimum: 1, maximum: 53 },
           },
         },
+        salesFile: { type: "string", title: "销售明细", description: "销售明细文件" },
+        minutesFiles: { type: "array", title: "周会纪要", items: { type: "string" } },
       },
     },
+    formUi: {
+      salesFile: { "ui:widget": "file", "ui:options": { accept: ".xlsx,.csv" }, "ui:help": "支持 xlsx、csv；推荐 xlsx。" },
+      minutesFiles: { "ui:widget": "files", "ui:options": { accept: ".docx" }, "ui:help": "可多选；上传本周和前几周的纪要都可以。" },
+    },
+    reviewSections: [
+      { id: "summary", heading: "本周摘要" },
+      { id: "metrics", heading: "核心指标" },
+      { id: "categories", heading: "品类表现" },
+      { id: "anomalies", heading: "异常与原因" },
+      { id: "data_quality", heading: "数据质量说明" },
+      { id: "next_week", heading: "下周关注事项" },
+    ],
   },
   {
     id: "tech-review",

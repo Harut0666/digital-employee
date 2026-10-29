@@ -35,10 +35,11 @@ export function TaskPanel({
   // 到了待审核 / 已交付自动切到预览；其他状态回到概览
   useEffect(() => setTab(reviewing && hasDoc ? "preview" : "overview"), [reviewing, hasDoc, snapshot?.id]);
 
-  const calls = snapshot?.budget.modelCalls ?? { used: view.counts.modelCalls, limit: 30 };
-  const time = snapshot?.budget.elapsedMs ?? { used: view.elapsedMs, limit: 600_000 };
-  const usedCalls = Math.max(calls.used, view.counts.modelCalls);
-  const usedTime = Math.max(time.used, view.elapsedMs);
+  // 预算由引擎判定，界面显示以快照为准，不从事件自行推算（重试、退回后预算窗口会重新计算）
+  const calls = snapshot?.budget.modelCalls ?? { used: 0, limit: 30 };
+  const time = snapshot?.budget.elapsedMs ?? { used: 0, limit: 600_000 };
+  const usedCalls = calls.used;
+  const usedTime = time.used;
 
   return (
     <div>
