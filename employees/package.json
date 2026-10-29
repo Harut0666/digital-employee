@@ -1,0 +1,13 @@
+{
+  "name": "@de/employees",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@de/core": "workspace:*",
+    "ajv": "^8.20.0"
+  }
+}

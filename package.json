@@ -1,0 +1,17 @@
+{
+  "name": "digital-employee",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "employees"],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun run --filter '*' typecheck",
+    "dev:server": "bun run --filter @de/server dev",
+    "dev:web": "bun run --filter @de/web dev"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "ajv": "^8.20.0",
+    "typescript": "^5.9.0"
+  }
+}
