@@ -10,3 +10,4 @@ settings.json
 out/
 .scratch/
 .playwright-cli/
+.worktrees/
