@@ -26,6 +26,7 @@ describe("loadEmployeeConfig", () => {
       "admission",
       "load_data",
       "compute_metrics",
+      "interpret_feedback",
       "match_causes",
       "write_report",
       "render_document",

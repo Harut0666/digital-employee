@@ -101,6 +101,7 @@ export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
   }
 
   const formPath = join(root, "form.schema.json");
+  const formUiPath = join(root, "form.ui.json");
   return {
     id: workflow.id,
     dir: root,
@@ -110,6 +111,7 @@ export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
     workflow,
     qc: qcResult.data,
     formSchema: existsSync(formPath) ? parseJson(readText(formPath), "form.schema.json") : {},
+    formUi: existsSync(formUiPath) ? parseJson(readText(formUiPath), "form.ui.json") : undefined,
     prompts,
     outputSchemas,
   };

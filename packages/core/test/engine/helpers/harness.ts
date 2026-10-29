@@ -56,7 +56,9 @@ export function createStubJudgment(options: StubJudgmentOptions = {}) {
         ? custom(input, n)
         : input.step.id === "match_causes"
           ? { causes: [{ n }] }
-          : { title: `报告#${n}` };
+          : input.step.id === "interpret_feedback"
+            ? { items: [{ n }] }
+            : { title: `报告#${n}` };
       return { ok: true, output, modelCalls: 1 };
     },
   };

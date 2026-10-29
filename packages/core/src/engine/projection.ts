@@ -227,17 +227,22 @@ export class TaskProjection {
     this.autofixCount = 0;
   }
 
+  /** when: rework 的判断步骤在首轮（未被退回过）不执行，记为 skipped。由状态推导，不需要事件。 */
+  private skippedByWhen(step: EmployeeConfig["workflow"]["steps"][number]): boolean {
+    return step.kind === "judge" && step.when === "rework" && this.reworkRound === 0;
+  }
+
   /** 第一个尚未完成的步骤（不含质检步骤）；全部完成返回 -1。 */
   nextStepIndex(excludeId?: string): number {
     return this.steps.findIndex(
-      (s) => s.kind !== "qc" && s.id !== excludeId && !this.done.has(s.id) && !this.skipped.has(s.id),
+      (s) => s.kind !== "qc" && s.id !== excludeId && !this.done.has(s.id) && !this.skipped.has(s.id) && !this.skippedByWhen(s),
     );
   }
 
   stepStatuses(): StepStatus[] {
     return this.steps.map((s) => {
       let status: StepStatus["status"] = "pending";
-      if (this.skipped.has(s.id)) status = "skipped";
+      if (this.skipped.has(s.id) || this.skippedByWhen(s)) status = "skipped";
       else if (this.done.has(s.id)) status = "done";
       else if (this.running === s.id && ACTIVE_STATES.includes(this.state)) status = "running";
       else if (this.failed.has(s.id)) status = "failed";

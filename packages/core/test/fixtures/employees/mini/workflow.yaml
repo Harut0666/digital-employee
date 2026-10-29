@@ -10,6 +10,7 @@ limits:
     backoffMs: [0, 0, 0]
   qcAutofix: 2
 admissionStep: admission
+factsStep: compute_metrics
 steps:
   - id: admission
     label: 准入校验
@@ -32,12 +33,27 @@ steps:
     input:
       data: "$steps.load_data"
       threshold: "$config.contradiction.flatTolerance"
+  - id: interpret_feedback
+    label: 解读退回意见
+    kind: judge
+    prompt: prompts/interpret_feedback.md
+    input:
+      feedback: "$task.feedback"
+      previousDraft: "$steps.write_report"
+    tools: []
+    outputSchema: schemas/interpret_feedback.json
+    limits:
+      rounds: 6
+      durationSec: 90
+    rework: true
+    when: rework
   - id: match_causes
     label: 匹配原因
     kind: judge
     prompt: prompts/match_causes.md
     input:
       facts: "$steps.compute_metrics"
+      feedback: "$steps.interpret_feedback.items"
     tools: []
     outputSchema: schemas/match_causes.json
     limits:
@@ -64,6 +80,7 @@ steps:
     input:
       report: "$steps.write_report"
       outDir: "$task.dir"
+      idempotencyKey: "$task.idempotencyKey"
   - id: qc
     label: 质检
     kind: qc

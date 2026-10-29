@@ -23,6 +23,7 @@ describe("接缝 1 · 正常路径", () => {
       ["admission", "done"],
       ["load_data", "done"],
       ["compute_metrics", "done"],
+      ["interpret_feedback", "skipped"],
       ["match_causes", "done"],
       ["write_report", "done"],
       ["render_document", "done"],
@@ -76,7 +77,9 @@ describe("接缝 1 · 正常路径", () => {
 
     // 步骤输出按 sha256 命名
     const completed = (await h.engine.events(settled.id)).find((e) => e.type === "step_completed");
-    expect(completed && completed.type === "step_completed" && completed.outputPath).toContain(completed!.type === "step_completed" ? completed.outputSha256 : "");
+    if (completed?.type !== "step_completed") throw new Error("缺少 step_completed");
+    expect(completed.outputPath).toContain(completed.outputSha256);
+    expect(existsSync(completed.outputPath)).toBe(true);
   });
 });
 

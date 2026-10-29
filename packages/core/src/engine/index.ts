@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, s
 import { basename, join, resolve } from "node:path";
 import { createJudgmentRunner } from "../agent";
 import { loadEmployeeConfigSync } from "../config";
-import { createQcEngine } from "../qc";
+import { createQcEngine, renderSlots } from "../qc";
 import {
   STATE_LABELS,
   TRANSITIONS,
@@ -22,6 +22,7 @@ import {
   type QcCheckResult,
   type QcEngine,
   type QcInput,
+  type WeeklyFacts,
   type Role,
   type StepConfig,
   type TaskCommand,
@@ -36,7 +37,7 @@ import {
 } from "../contract";
 import { appendEventLine, readEventLog } from "./event-log";
 import { DRAFT_STEP_ID, TaskProjection, argsKey, type Checkpoint } from "./projection";
-import { resolveInput } from "./refs";
+import { replaceString, resolveInput } from "./refs";
 
 /** 测试可注入的内部实现；生产环境不传，使用 ../agent 与 ../qc 的默认实现。 */
 export interface EngineInternals {
@@ -70,7 +71,7 @@ const PAUSED_OR_FINAL: readonly TaskState[] = ["awaiting_initiator", "awaiting_o
 const TOOL_CALL_TIMEOUT_MS = 120_000;
 
 /** 质检输入从这些步骤的输出里取（约定的步骤 id，见 T5 的 workflow.yaml）。 */
-const QC_SOURCE_STEPS = { facts: "compute_metrics", minutes: "parse_minutes", rendered: "render_document" } as const;
+const QC_SOURCE_STEPS = { facts: "compute_metrics", minutes: "parse_minutes", rendered: "render_document" } as const; // facts 以 workflow.factsStep 为准
 
 /** 准入不通过时各暂停原因下发起人可以做的事。 */
 function initiatorOptions(code: PauseCode): TaskCommand["type"][] {
@@ -208,11 +209,32 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     return value;
   }
 
+  /** 某步骤最近一次完成的输出；重做或修正中被回退的步骤，取回退前的那一版。 */
   function stepOutput(rt: Runtime, stepId: string): unknown {
-    const checkpoint = rt.proj.done.get(stepId);
-    if (checkpoint) return readArtifact(rt, checkpoint);
-    if (rt.proj.skipped.has(stepId)) return undefined;
-    throw new Error(`步骤 ${stepId} 尚无输出`);
+    const checkpoint = rt.proj.done.get(stepId) ?? rt.proj.prior.get(stepId);
+    return checkpoint ? readArtifact(rt, checkpoint) : undefined;
+  }
+
+  function factsStepId(rt: Runtime): string {
+    return rt.config.workflow.factsStep ?? QC_SOURCE_STEPS.facts;
+  }
+
+  /** 某步骤输出的报告草稿，用事实步骤的输出做槽位渲染。 */
+  function renderedOutput(rt: Runtime, stepId: string): unknown {
+    const draft = stepOutput(rt, stepId) as DraftReport | undefined;
+    const facts = stepOutput(rt, factsStepId(rt)) as WeeklyFacts | undefined;
+    if (!draft || typeof draft !== "object" || !facts) return undefined;
+    const render = (text: string) => renderSlots(text, facts).text;
+    return {
+      ...draft,
+      title: typeof draft.title === "string" ? render(draft.title) : draft.title,
+      sections: (draft.sections ?? []).map((s) => ({
+        ...s,
+        heading: render(s.heading),
+        paragraphs: s.paragraphs.map(render),
+        ...(s.bullets ? { bullets: s.bullets.map(render) } : {}),
+      })),
+    };
   }
 
   function optionalOutput(rt: Runtime, stepId: string): unknown {
@@ -347,12 +369,20 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     let args: unknown;
     let resolveError: unknown;
     try {
-      args = resolveInput(step.input, {
+      const placeholder = `\u0000idempotencyKey:${step.id}`;
+      const resolved = resolveInput(step.input, {
         form: proj.form,
         taskDir: rt.dir,
+        attachments: proj.attachments,
+        feedback: proj.feedback ?? null,
         qcConfig: rt.config.qc,
         stepOutput: (id) => stepOutput(rt, id),
+        renderedOutput: (id) => renderedOutput(rt, id),
+        idempotencyKey: placeholder,
       });
+      // 幂等键 = 任务 + 步骤 + 重做轮次 + 入参哈希（入参哈希不含键本身）
+      const key = `${rt.id}-${step.id}-r${proj.reworkRound}-${sha256(argsKey(resolved)).slice(0, 16)}`;
+      args = replaceString(resolved, placeholder, key);
     } catch (error) {
       resolveError = error;
     }
@@ -525,6 +555,13 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     }
 
     let output = result.output;
+    if (output && typeof output === "object" && (output as { needsHuman?: unknown }).needsHuman === true) {
+      const reason = (output as { needsHumanReason?: unknown }).needsHumanReason;
+      const message = `步骤「${step.label}」判断需要人工处理：${typeof reason === "string" && reason ? reason : "该意见超出自动处理范围"}。${progressText(rt)}。`;
+      append(rt, { type: "step_failed", stepId: step.id, error: message });
+      pauseOperator(rt, "tool_failed", "rework_needs_human", message, { output });
+      return "paused";
+    }
     if (deps.faults?.corruptTraceability && step.id === DRAFT_STEP_ID && !proj.faultsInjected.has(`${step.id}:corruptTraceability`)) {
       output = corruptFirstParagraph(output);
       append(rt, { type: "fault_injected", target: step.id, mode: "corruptTraceability" });
@@ -550,7 +587,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
         const input: QcInput = {
           config: rt.config.qc,
           draft: optionalOutput(rt, DRAFT_STEP_ID) as DraftReport,
-          facts: optionalOutput(rt, QC_SOURCE_STEPS.facts) as QcInput["facts"],
+          facts: optionalOutput(rt, factsStepId(rt)) as QcInput["facts"],
           minutes: optionalOutput(rt, QC_SOURCE_STEPS.minutes) as QcInput["minutes"],
           rendered:
             rendered && typeof rendered.estimatedPages === "number" && typeof rendered.chartCount === "number"

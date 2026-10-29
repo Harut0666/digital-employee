@@ -1,4 +1,6 @@
 // 测试内自建的小型 MCP 服务器：几个假工具，行为可由测试控制。
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
@@ -41,8 +43,13 @@ function defaults(tool: string, args: Record<string, unknown>): unknown {
       return { rows: Number(args.n ?? 1) };
     case "compute_metrics":
       return { revenueCents: 100_00, source: args.data };
-    case "render_report_docx":
-      return { docxPath: `${String(args.outDir)}/report-${JSON.stringify(args.report).length}.docx`, report: args.report };
+    case "render_report_docx": {
+      // 幂等：同一个键只生成一个文件
+      const docxPath = `${String(args.outDir)}/deliverables-src/${String(args.idempotencyKey ?? "report")}.docx`;
+      mkdirSync(dirname(docxPath), { recursive: true });
+      writeFileSync(docxPath, `docx:${JSON.stringify(args.report)}`);
+      return { docxPath, report: args.report };
+    }
     default:
       throw new ToolFailure("未开放");
   }
