@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { FaultConfig, ToolName } from "@de/core/contract";
 import * as S from "./schemas";
+import { parseMinutesFile } from "./minutes";
 import { validateSubmission } from "./validate";
 
 export interface ToolsServerOptions {
@@ -65,6 +66,18 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       outputSchema: S.validateSubmissionOut,
     },
     wrap("validate_submission", (a) => validateSubmission(a as never) as never) as never,
+  );
+
+  server.registerTool(
+    "parse_minutes",
+    {
+      description: "解析周会纪要：从正文标题识别周次，切分章节与段落，段落 ID 形如 W44-p07。",
+      inputSchema: S.parseMinutesIn,
+      outputSchema: S.parseMinutesOut,
+    },
+    wrap("parse_minutes", async (a: { paths: string[] }) => ({
+      minutes: await Promise.all(a.paths.map((p) => parseMinutesFile(p))),
+    })) as never,
   );
 
   server.registerTool(
