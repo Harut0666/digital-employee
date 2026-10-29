@@ -2,7 +2,7 @@
 // 质检、槽位渲染、Word 生成都是真的；剧本（samples/cases/scripts）里的叙述只含槽位，质检靠它真实通过。
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { SimulatedCrash, type ModelScript, type TaskSnapshot } from "@de/core";
+import { SimulatedCrash, type FaultMode, type ModelScript, type TaskSnapshot, type ToolName } from "@de/core";
 import {
   SAMPLE,
   cleanupE2E,
@@ -14,11 +14,18 @@ import {
   startedSteps,
   stateTrail,
   stepOutputPath,
+  type E2E,
 } from "./helpers";
 
 afterEach(cleanupE2E);
 
-const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "forbidden_terms", "length"];
+/** 演示页“工具故障”的服务端路径：经 MCP 管理工具下发到工具子进程。 */
+async function adminSetFaults(e2e: E2E, tools: Partial<Record<ToolName, FaultMode>>): Promise<void> {
+  const res = await e2e.toolClient.call("admin_set_faults", { tools });
+  if (!res.ok) throw new Error(`下发故障开关失败：${res.error}`);
+}
+
+const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "contradiction_coverage", "forbidden_terms", "length"];
 
 function qcFailures(snapshot: TaskSnapshot): string[] {
   return (snapshot.qc ?? []).filter((c) => !c.passed).map((c) => `${c.label}：${c.issues.join("；")}`);
@@ -64,7 +71,21 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     expect(ofType(events, "tool_denied")).toHaveLength(0);
     expect(stateTrail(events)).toEqual(["draft", "admission", "running", "qc", "awaiting_review", "delivered"]);
     events.forEach((e, i) => expect(e.seq).toBe(i + 1));
-  });
+
+    // 纪要矛盾由程序判定：事件流里有 detect_contradictions 步骤，判出且只判出华南“持平”一条
+    expect(review.steps.find((s) => s.id === "detect_contradictions")?.status).toBe("done");
+    const contradictionsCall = ofType(events, "tool_called").find((e) => e.tool === "detect_contradictions");
+    expect(contradictionsCall?.stepId).toBe("detect_contradictions");
+    const detected = readArtifact<{ contradictions: { id: string; rule: string; subject: { level: string; key: string; name: string } }[] }>(
+      stepOutputPath(events, "detect_contradictions")!,
+    );
+    expect(detected.contradictions).toHaveLength(1);
+    expect(detected.contradictions[0]).toMatchObject({ id: "contradiction:region:华南", rule: "flat", subject: { level: "region", key: "华南", name: "华南" } });
+    // 检验记录里有“纪要矛盾覆盖”，且真实通过
+    const recordJson = JSON.parse(readFileSync(record!.path, "utf8")) as { checks: { id: string; passed: boolean }[] };
+    expect(recordJson.checks.map((c) => c.id)).toContain("contradiction_coverage");
+    expect(recordJson.checks.find((c) => c.id === "contradiction_coverage")).toMatchObject({ passed: true });
+  }, 30_000);
 
   test("渲染步骤收到的是已渲染槽位的草稿，并带任务幂等键", async () => {
     const e2e = await createE2E({ script: loadScript("A-01") });
@@ -75,7 +96,7 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     const all = args.report.sections.flatMap((s) => [...s.paragraphs, ...(s.bullets ?? [])]).join("\n");
     expect(all).not.toContain("{{");
     expect(all).toContain("以数据为准");
-  });
+  }, 30_000);
 
   test("A-01 变体：审核退回 → 重做（只重跑判断步骤）→ 修改说明覆盖意见 → 通过", async () => {
     const e2e = await createE2E({ script: loadScript("A-01-rework") });
@@ -190,7 +211,7 @@ describe("E2E · 工具故障注入", () => {
     expect(paused.state).toBe("awaiting_operator");
     expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
     expect(paused.pause?.message).toContain("compute_metrics");
-    expect(paused.pause?.message).toContain("已完成 2/9 步");
+    expect(paused.pause?.message).toContain("已完成 2/10 步");
     const events = await e2e.events(paused.id);
     expect(ofType(events, "tool_called").filter((e) => e.tool === "compute_metrics").map((e) => e.attempt)).toEqual([1, 2, 3]);
     expect(ofType(events, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
@@ -255,7 +276,7 @@ describe("E2E · 断点恢复", () => {
     const events = await e2e.events(taskId);
     events.forEach((ev, i) => expect(ev.seq).toBe(i + 1));
     const started = startedSteps(events);
-    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "render_document", "qc"]) {
+    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "detect_contradictions", "render_document", "qc"]) {
       expect(started.filter((s) => s === id)).toHaveLength(1);
     }
     expect(started.filter((s) => s === "write_report")).toHaveLength(2);
@@ -269,6 +290,32 @@ describe("E2E · 断点恢复", () => {
       expect(sha(events, id)).toBeDefined();
       expect(sha(events, id)).toBe(sha(cleanEvents, id));
     }
+  }, 30_000);
+});
+
+describe("E2E · 运行时工具故障（设置页演示）", () => {
+  test("运行时经 admin_set_faults 打开 load_sales 超时 → 停在 tool_failed → 关闭后 retry 走完", async () => {
+    const e2e = await createE2E({ script: loadScript("A-01") });
+    await adminSetFaults(e2e, { load_sales: "timeout" });
+
+    const paused = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+    expect(paused.state).toBe("awaiting_operator");
+    expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
+    expect(paused.pause?.message).toContain("load_sales");
+    const failed = await e2e.events(paused.id);
+    expect(ofType(failed, "tool_called").filter((e) => e.tool === "load_sales").map((e) => e.attempt)).toEqual([1, 2, 3]);
+    expect(ofType(failed, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
+
+    await adminSetFaults(e2e, {});
+    expect((await e2e.cmd(paused.id, { type: "retry" }, "initiator")).ok).toBe(false);
+    expect((await e2e.cmd(paused.id, { type: "retry" }, "operator")).ok).toBe(true);
+    const review = await e2e.engine.waitForSettled(paused.id);
+    expect(qcFailures(review)).toEqual([]);
+    expect(review.state).toBe("awaiting_review");
+
+    const after = await e2e.events(paused.id);
+    expect(startedSteps(after).filter((s) => s === "load_data")).toHaveLength(2);
+    expect(startedSteps(after).filter((s) => s === "admission")).toHaveLength(1);
   }, 30_000);
 });
 
@@ -292,6 +339,32 @@ describe("E2E · 越权拦截", () => {
     // 工具根本没有被执行
     expect(ofType(events, "tool_called").some((e) => e.tool === "web_search")).toBe(false);
     expect(ofType(events, "model_called").filter((e) => e.stepId === "match_causes")).toHaveLength(2);
+  });
+
+  test("判断步骤调用 admin_set_faults → 被拦截并留下 tool_denied，故障没有真的下发", async () => {
+    const script = loadScript("A-01");
+    const submit = script.match_causes![0]!;
+    const withAdmin: ModelScript = {
+      ...script,
+      match_causes: [
+        { toolCalls: [{ name: "admin_set_faults", arguments: { tools: { load_sales: "timeout" } } }] },
+        submit,
+      ],
+    };
+    const e2e = await createE2E({ script: withAdmin });
+    const review = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+
+    // 越权调用被拒后模型继续提交，任务照常走完：说明 load_sales 没有被注入超时
+    expect(review.state).toBe("awaiting_review");
+    expect(qcFailures(review)).toEqual([]);
+
+    const events = await e2e.events(review.id);
+    const denied = ofType(events, "tool_denied");
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ stepId: "match_causes", tool: "admin_set_faults" });
+    expect(denied[0]!.reason).toContain("未对本步骤开放");
+    expect(ofType(events, "tool_called").some((e) => e.tool === "admin_set_faults")).toBe(false);
+    expect(ofType(events, "tool_result").some((e) => !e.ok)).toBe(false);
   });
 });
 
@@ -319,6 +392,30 @@ describe("E2E · 质检自动修正", () => {
     expect(started.filter((s) => s === "write_report")).toHaveLength(2);
     expect(started.filter((s) => s === "match_causes")).toHaveLength(1);
     expect(started.filter((s) => s === "render_document")).toHaveLength(2);
+  });
+
+  test("草稿漏写矛盾引用 → 纪要矛盾覆盖不通过 → 自动修正 write_report → 通过；矛盾不重算", async () => {
+    const script = loadScript("A-01");
+    // 第一版草稿正文写了华南矛盾，但忘记在 contradictionRefs 里引用
+    const missingRefs = JSON.parse(JSON.stringify(script.write_report![0]!)) as { toolCalls: { arguments: Record<string, unknown> }[] };
+    delete missingRefs.toolCalls[0]!.arguments["contradictionRefs"];
+    const e2e = await createE2E({ script: { ...script, write_report: [missingRefs as never, script.write_report![0]!] } });
+    const review = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+
+    expect(qcFailures(review)).toEqual([]);
+    expect(review.state).toBe("awaiting_review");
+    const events = await e2e.events(review.id);
+    const results = ofType(events, "qc_result");
+    expect(results.map((r) => r.passed)).toEqual([false, true]);
+    const coverage = results[0]!.checks.find((c) => c.id === "contradiction_coverage")!;
+    expect(coverage.passed).toBe(false);
+    expect(coverage.issues.join("\n")).toContain("contradiction:region:华南");
+    expect(coverage.fixStep).toBe("write_report");
+    // 只重跑写报告的步骤；矛盾由程序算出一次，不随写作修正重算
+    const started = startedSteps(events);
+    expect(started.filter((s) => s === "write_report")).toHaveLength(2);
+    expect(started.filter((s) => s === "detect_contradictions")).toHaveLength(1);
+    expect(started.filter((s) => s === "match_causes")).toHaveLength(1);
   });
 
   test("质检自动修正用尽 → 转给操作员（qc_exhausted）", async () => {

@@ -4,7 +4,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
-import { loadEmployeeConfig, isEmployeeId, resolveWorkspace, type EmployeeConfig, type ModelSettings, type TaskEngine, type ToolClient } from "@de/core";
+import { loadEmployeeConfig, isEmployeeId, resolveWorkspace, type EmployeeConfig, type FaultHooks, type ModelConnectionTest, type ModelConnection, type ModelSettings, type TaskEngine, type ToolClient } from "@de/core";
 import { downloadResponse, staticResponse } from "./files";
 import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
@@ -21,6 +21,18 @@ export interface ServerOptions {
   toolClient?: ToolClient;
   /** 设置保存后重建模型提供者，由启动入口提供 */
   onSettingsSaved?: (settings: ModelSettings) => void | Promise<void>;
+  /** 演示开关的运行时可变对象，与引擎共享同一个引用 */
+  faults?: FaultHooks;
+  /** 默认员工配置目录（“恢复默认员工配置”的来源） */
+  defaultEmployeesDir?: string;
+  /** 测试连接的可注入实现；不传时发真实请求 */
+  probeConnection?: (connection: ModelConnection, model: string) => Promise<ModelConnectionTest>;
+  /** 打开文件夹的可注入实现 */
+  openFolder?: (dir: string) => void | Promise<void>;
+  /** 读取环境变量（DEEPSEEK_API_KEY 等），测试注入 */
+  env?: Record<string, string | undefined>;
+  /** 测试注入时钟 */
+  now?: () => Date;
   /** 前端构建产物目录；不传则不托管静态资源 */
   webDistDir?: string;
   /** 员工配置加载器，默认用 @de/core 的 loadEmployeeConfig；测试时可替换 */
@@ -36,6 +48,12 @@ export function createApp(options: ServerOptions) {
     workspaceDir: options.workspaceDir ?? resolveWorkspace(),
     toolClient: options.toolClient,
     onSettingsSaved: options.onSettingsSaved,
+    faults: options.faults,
+    defaultEmployeesDir: options.defaultEmployeesDir,
+    probeConnection: options.probeConnection,
+    openFolder: options.openFolder,
+    env: options.env,
+    now: options.now,
   };
 
   async function listEmployees() {

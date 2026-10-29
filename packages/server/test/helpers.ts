@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EmployeeConfig } from "@de/core/contract";
+import type { EmployeeConfig, FaultHooks, ModelSettings, ToolClient } from "@de/core/contract";
 import { createApp } from "../src/index";
+import type { ConnectionProbe, FolderOpener } from "../src/routes/deps";
 import { createFakeEngine } from "./fake-engine";
 
 export function tempDir(prefix = "de-server-test-"): string {
@@ -27,18 +28,45 @@ export async function fakeLoadEmployee(dir: string): Promise<EmployeeConfig> {
   };
 }
 
-export function setup(options: { webDistDir?: string } = {}) {
+export interface SetupOptions {
+  webDistDir?: string;
+  /** 工作区；设置路由读写 <workspace>/settings.json、备份到 <workspace>/config-versions */
+  workspaceDir?: string;
+  /** 员工配置目录；默认建一个含 weekly-report / patent-brief 的临时目录 */
+  employeesDir?: string;
+  /** 恢复默认员工配置的来源 */
+  defaultEmployeesDir?: string;
+  toolClient?: ToolClient;
+  onSettingsSaved?: (settings: ModelSettings) => void | Promise<void>;
+  /** 演示开关的运行时可变对象（与引擎共享） */
+  faults?: FaultHooks;
+  probeConnection?: ConnectionProbe;
+  openFolder?: FolderOpener;
+  env?: Record<string, string | undefined>;
+  now?: () => Date;
+}
+
+export function setup(options: SetupOptions = {}) {
   const engine = createFakeEngine();
-  const employeesDir = tempDir();
-  for (const name of ["weekly-report", "patent-brief"]) {
-    mkdirSync(join(employeesDir, name));
-    writeFileSync(join(employeesDir, name, "workflow.yaml"), "id: x\n");
+  const employeesDir = options.employeesDir ?? tempDir();
+  if (!options.employeesDir) {
+    for (const name of ["weekly-report", "patent-brief"]) {
+      mkdirSync(join(employeesDir, name));
+      writeFileSync(join(employeesDir, name, "workflow.yaml"), "id: x\n");
+    }
+    // 没有 workflow.yaml 的目录（如 employees/test）不是员工
+    mkdirSync(join(employeesDir, "test"));
   }
-  // 没有 workflow.yaml 的目录（如 employees/test）不是员工
-  mkdirSync(join(employeesDir, "test"));
-  const app = createApp({ engine, employeesDir, loadEmployee: fakeLoadEmployee, ...options });
+  const workspaceDir = options.workspaceDir ?? tempDir();
+  const app = createApp({
+    engine,
+    employeesDir,
+    loadEmployee: fakeLoadEmployee,
+    ...options,
+    workspaceDir,
+  });
   const call = (path: string, init?: RequestInit) => app.handle(new Request(`http://localhost${path}`, init));
-  return { engine, app, call, employeesDir };
+  return { engine, app, call, employeesDir, workspaceDir };
 }
 
 export function jsonPost(path: string, body: unknown, role?: string): [string, RequestInit] {
@@ -50,4 +78,8 @@ export function jsonPost(path: string, body: unknown, role?: string): [string, R
       body: JSON.stringify(body),
     },
   ];
+}
+
+export function jsonRequest(method: string, body: unknown): RequestInit {
+  return { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
 }

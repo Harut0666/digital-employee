@@ -161,6 +161,7 @@ function buildContent(employee: EmployeeInfo): Content {
         traceability: { enabled: true },
         anomaly_coverage: { enabled: true, threshold: 0.1 },
         quote_integrity: { enabled: true },
+        contradiction_coverage: { enabled: true },
         forbidden_terms: { enabled: true, terms: ["客单价", "同比"] },
         length: { enabled: true, maxPages: 3 },
         feedback_response: { enabled: true },

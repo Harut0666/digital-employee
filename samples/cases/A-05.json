@@ -28,6 +28,13 @@
   ],
   "expect": {
     "state": "awaiting_initiator",
-    "pauseCode": "period_out_of_range"
+    "pauseCode": "period_out_of_range",
+    "checks": {
+      "mustNotContain": ["第 46 周"],
+      "pause": {
+        "code": "period_out_of_range",
+        "messageContains": "数据实际覆盖 2026-08-31 至 2026-11-01"
+      }
+    }
   }
 }

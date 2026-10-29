@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSettings, resolveWorkspace } from "../../src/config";
+import { loadDemoSettings, loadSettings, resolveWorkspace, saveDemoSettings } from "../../src/config";
 
 const tempDir = () => mkdtempSync(join(tmpdir(), "de-core-ws-"));
 describe("resolveWorkspace", () => {
@@ -50,5 +50,54 @@ describe("loadSettings", () => {
     const ws = tempDir();
     writeFileSync(join(ws, "settings.json"), "{oops");
     expect(() => loadSettings(ws, {})).toThrow(/settings\.json/);
+  });
+});
+
+describe("demo settings（settings.json 的 demo 段）", () => {
+  test("missing file or missing demo section yields the defaults", () => {
+    const empty = tempDir();
+    expect(loadDemoSettings(empty)).toEqual({ toolFaults: {}, corruptTraceability: false, crashOnNextStep: false });
+
+    const noDemo = tempDir();
+    writeFileSync(
+      join(noDemo, "settings.json"),
+      JSON.stringify({ connections: [], defaultConnection: "deepseek", defaultModel: "deepseek-chat" }),
+    );
+    expect(loadDemoSettings(noDemo)).toEqual({ toolFaults: {}, corruptTraceability: false, crashOnNextStep: false });
+  });
+
+  test("reads the demo section; saving a patch keeps connections and the other demo fields", () => {
+    const ws = tempDir();
+    const file = join(ws, "settings.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        connections: [{ name: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "sk-secret-1234", models: ["deepseek-chat"] }],
+        defaultConnection: "deepseek",
+        defaultModel: "deepseek-chat",
+        demo: { toolFaults: { load_sales: "timeout" }, corruptTraceability: true, crashOnNextStep: true },
+      }),
+    );
+    expect(loadDemoSettings(ws)).toEqual({
+      toolFaults: { load_sales: "timeout" },
+      corruptTraceability: true,
+      crashOnNextStep: true,
+    });
+
+    const next = saveDemoSettings(ws, { crashOnNextStep: false });
+    expect(next).toEqual({ toolFaults: { load_sales: "timeout" }, corruptTraceability: true, crashOnNextStep: false });
+
+    const raw = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>;
+    expect(raw.connections).toHaveLength(1);
+    expect(raw.connections[0].apiKey).toBe("sk-secret-1234");
+    expect(raw.demo).toEqual({ toolFaults: { load_sales: "timeout" }, corruptTraceability: true, crashOnNextStep: false });
+  });
+
+  test("saving demo settings creates settings.json when it does not exist", () => {
+    const ws = tempDir();
+    saveDemoSettings(ws, { corruptTraceability: true });
+    expect(loadDemoSettings(ws)).toEqual({ toolFaults: {}, corruptTraceability: true, crashOnNextStep: false });
+    const raw = JSON.parse(readFileSync(join(ws, "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(raw.demo).toMatchObject({ corruptTraceability: true });
   });
 });

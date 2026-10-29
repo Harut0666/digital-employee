@@ -18,7 +18,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "heading", "paragraphs"],
+        "required": ["id", "heading"],
+        "anyOf": [
+          { "required": ["paragraphs"], "properties": { "paragraphs": { "type": "array", "items": { "type": "string" } } } },
+          { "required": ["bullets"], "properties": { "bullets": { "type": "array", "items": { "type": "string" } } } }
+        ],
         "properties": {
           "id": { "type": "string", "minLength": 1, "description": "章节编号，取自输入中的 structure.sections。" },
           "heading": { "type": "string", "minLength": 1, "description": "章节标题，与 structure.sections 中的标题一字不差。" },
@@ -66,6 +70,11 @@
           "change": { "type": "string", "minLength": 1, "description": "改了什么。" }
         }
       }
+    },
+    "contradictionRefs": {
+      "type": "array",
+      "description": "引用的纪要矛盾 id：写进“异常与原因”章节的每条矛盾都要列出；没有矛盾时提交空数组。",
+      "items": { "type": "string", "minLength": 1 }
     }
   }
 }

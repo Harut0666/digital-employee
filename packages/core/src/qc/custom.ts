@@ -38,7 +38,7 @@ function strings(value: unknown): string[] | undefined {
 
 function sectionText(draft: DraftReport, id: string): { heading: string; text: string } | undefined {
   const s = draft.sections.find((x) => x.id === id);
-  return s ? { heading: s.heading, text: [s.heading, ...s.paragraphs, ...(s.bullets ?? [])].join("\n") } : undefined;
+  return s ? { heading: s.heading, text: [s.heading, ...(s.paragraphs ?? []), ...(s.bullets ?? [])].join("\n") } : undefined;
 }
 
 function fullText(draft: DraftReport): string {
@@ -79,7 +79,7 @@ export function runCustomRule(rule: Rule, input: QcInput): QcCheckResult {
       if (typeof sectionId !== "string" || typeof max !== "number") return invalid(rule, "需要 section（字符串）和 max（数字）");
       const s = draft.sections.find((x) => x.id === sectionId);
       if (!s) return fail(rule, [`缺少章节 ${sectionId}`]);
-      const n = s.bullets && s.bullets.length > 0 ? s.bullets.length : s.paragraphs.length;
+      const n = s.bullets && s.bullets.length > 0 ? s.bullets.length : (s.paragraphs ?? []).length;
       return n <= max ? pass(rule) : fail(rule, [`「${s.heading}」有 ${n} 条，不得超过 ${max} 条`]);
     }
     case "max_pages": {

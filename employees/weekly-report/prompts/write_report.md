@@ -14,11 +14,10 @@
 | `facts` | 程序算出的全部事实（`period`、`dataCoverage`、`company`、`regions`、`stores`、`categories`、`topProducts`、`anomalies`、`trend`、`quality`）。数字只能通过槽位引用 |
 | `minutes` | 解析后的纪要，用于判断停业和写下周关注事项 |
 | `causes` | 上一步为每条异常匹配的原因 |
-| `claims` | 上一步从纪要抽出的可核验说法 |
+| `contradictions` | 程序判出的纪要矛盾；没有则为空数组。每条含 `id`、`subject`（对象，`name` 是写进周报的展示名）、`claim`（纪要说法）、`actualWow`、`rule`、`sourceWeek`、`quote` |
 | `feedback` | 解读后的退回意见清单；首次执行时为空 |
 | `previousDraft` | 被退回的上一版草稿；首次执行时没有 |
 | `structure` | 章节清单（`sections` 的 `id` 与 `heading`）、摘要句数上限、下周关注条数上限、图表下限 |
-| `contradiction` | 判定纪要矛盾的阈值：`flatTolerance`、`directionMin`、`magnitudeTolerance` |
 | `forbiddenTerms` | 禁用词 |
 | `anomalyThreshold` | 异常阈值 |
 
@@ -42,15 +41,16 @@
 
 标题写成“经营周报（2026 年第 44 周）”的形式，年和周取自 `period`。
 
-## 纪要矛盾的判定
+## 纪要矛盾
 
-对 `claims` 里的每一条说法，取 `facts` 中该对象的实际环比 `wow`（全公司 `company`，区域 `regions.<区域名>`，门店 `stores.<门店编码>`，品类 `categories.<品类名>`），按阈值判断，满足任一条即构成纪要矛盾：
+是否构成矛盾已由程序判定，你不再自己判断。`contradictions` 里的**每一条**都要在“异常与原因”章节写一段：
 
-- 说法是 `flat`（持平），但实际环比的绝对值大于 `contradiction.flatTolerance`；
-- 说法的方向（`up` 或 `down`）与实际相反，且实际环比的绝对值大于 `contradiction.directionMin`；
-- 说法带 `magnitude`，与实际环比的绝对值相差超过 `contradiction.magnitudeTolerance`。
+- 写明纪要怎么说，并注明第 N 周纪要（`sourceWeek`）；原文可用引号逐字引用 `quote`；
+- 用槽位写数据显示的实际环比（`{{regions.华南.wow}}` 这样的写法，对象按 `subject.level` 与 `subject.key` 取值），并写明“以数据为准”；
+- 段落里必须出现矛盾对象名 `subject.name`，否则质检不通过；
+- 把这名矛盾的 `id` 原值写进输出的 `contradictionRefs`，如 `"contradiction:region:华南"`，不要改写格式。
 
-实际环比为空（不可比）的，不判。构成矛盾的，在“异常与原因”章节写一段：纪要怎么说（注明第 N 周纪要），数据显示的环比（槽位），并写明“以数据为准”。例如：“第 44 周纪要称华南本周与上周基本持平，数据显示华南环比 {{regions.华南.wow}}，以数据为准。”只写判断过的矛盾，不要把没有矛盾的说法也列出。
+不要把没有矛盾的说法也列出，也不要写 `contradictions` 以外的矛盾。例如：“第 44 周纪要称华南本周与上周基本持平，数据显示华南环比 {{regions.华南.wow}}，以数据为准。”
 
 ## 原因匹配结果
 
@@ -67,4 +67,4 @@
 
 ## 输出
 
-调用 `submit_result` 提交一个 JSON 对象，字段为 `title`、`sections`、`causes`，重做时再加 `revisionNotes`，结构符合本步骤的输出 Schema（与 DraftReport 一致）。叙述里不得出现裸数字、禁用词，不要加章节以外的内容。
+调用 `submit_result` 提交一个 JSON 对象，字段为 `title`、`sections`、`causes`、`contradictionRefs`，重做时再加 `revisionNotes`，结构符合本步骤的输出 Schema（与 DraftReport 一致）。`contradictionRefs` 列出写进“异常与原因”的每条矛盾的 `id`，一条都不能漏；没有矛盾时提交空数组。叙述里不得出现裸数字、禁用词，不要加章节以外的内容。

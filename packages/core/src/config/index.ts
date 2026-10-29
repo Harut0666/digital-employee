@@ -6,7 +6,17 @@ import { parse as parseYaml } from "yaml";
 import { EmployeeWorkflowSchema, QcConfigSchema, type EmployeeConfig } from "../contract";
 import { workflowConsistencyProblems } from "./consistency";
 
-export { loadSettings, resolveWorkspace } from "./workspace";
+export {
+  DEFAULT_DEMO_SETTINGS,
+  clearCrashOnNextStep,
+  isDeepSeekConnection,
+  loadDemoSettings,
+  loadSettings,
+  readSettingsObject,
+  resolveWorkspace,
+  saveDemoSettings,
+  writeSettingsObject,
+} from "./workspace";
 export { collectWritingRequirements, validateFormSchemaPurposes } from "./form";
 export { CONFIG_ROOT_FILES, describeConfigFiles, isWritableConfigPath, listConfigFiles, normalizeConfigPath, readConfigFileText, readConfigFiles } from "./files";
 export { prepareConfigText, type ConfigFileInput, type PrepareConfigResult } from "./write";

@@ -5,6 +5,7 @@ export const BUILTIN_QC_CHECKS = [
   "traceability",
   "anomaly_coverage",
   "quote_integrity",
+  "contradiction_coverage",
   "forbidden_terms",
   "length",
   "feedback_response",

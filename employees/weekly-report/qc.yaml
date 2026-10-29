@@ -24,15 +24,18 @@ builtin:
   # 4 引用真实：原文摘录必须是所注周次纪要原文的连续片段
   quote_integrity:
     enabled: true
-  # 5 禁用指标：数据里没有的指标不得出现
+  # 5 纪要矛盾覆盖：程序判出的每条矛盾都要写进“异常与原因”，并在草稿里引用矛盾 id
+  contradiction_coverage:
+    enabled: true
+  # 6 禁用指标：数据里没有的指标不得出现
   forbidden_terms:
     enabled: true
     terms: [客单价, 同比, 复购率, 坪效, 人效]
-  # 6 篇幅：按版式估算，正文不超过 3 页
+  # 7 篇幅：按版式估算，正文不超过 3 页
   length:
     enabled: true
     maxPages: 3
-  # 7 意见响应：仅重做时检查
+  # 8 意见响应：仅重做时检查
   feedback_response:
     enabled: true
 

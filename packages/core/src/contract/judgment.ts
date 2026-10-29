@@ -5,7 +5,7 @@ import type { JudgeStepConfig, QcConfig } from "./employee-config";
 import type { ModelProvider, ToolClient } from "./engine";
 import type { WeeklyFacts } from "./facts";
 import type { QcCheckResult } from "./qc";
-import type { ParseMinutesOutput } from "./tools";
+import type { DetectedContradiction, ParseMinutesOutput } from "./tools";
 
 export type JudgmentFailure =
   | "step_rounds"
@@ -51,7 +51,8 @@ export interface JudgmentRunner {
 /** 判断步骤写出的报告草稿：叙述中只含槽位 {{path}}，不含裸数字（ADR-0002）。 */
 export interface DraftReport {
   title: string;
-  sections: { id: string; heading: string; paragraphs: string[]; bullets?: string[] }[];
+  /** 段落；章节可能只有要点（如品类表现、下周关注），此时省略 paragraphs */
+  sections: { id: string; heading: string; paragraphs?: string[]; bullets?: string[] }[];
   /** 原因匹配结果，供“异常覆盖”“引用真实”两项质检使用 */
   causes: {
     anomalyId: string;
@@ -62,6 +63,8 @@ export interface DraftReport {
   }[];
   /** 重做时的修改说明 */
   revisionNotes?: { comment: string; sections: string[]; change: string }[];
+  /** 引用的纪要矛盾 id（来自 detect_contradictions 的输出），供“纪要矛盾覆盖”质检核对 */
+  contradictionRefs?: string[];
 }
 
 export interface QcInput {
@@ -69,6 +72,8 @@ export interface QcInput {
   draft: DraftReport;
   facts: WeeklyFacts;
   minutes: ParseMinutesOutput;
+  /** 程序判出的纪要矛盾（detect_contradictions 步骤的输出）；缺省视为没有矛盾 */
+  contradictions?: DetectedContradiction[];
   /** 渲染后的统计，由 render_report_docx 返回 */
   rendered?: { estimatedPages: number; chartCount: number };
   /** 重做时的上一版草稿和退回意见 */

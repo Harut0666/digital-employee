@@ -288,6 +288,15 @@ export function QcTab({ config, drafts, setData }: TabProps) {
         <Typography.Text type="secondary">仅重做时检查退回意见是否被采纳</Typography.Text>
       </RuleRow>
 
+      <RuleRow
+        label="纪要矛盾覆盖"
+        tag={BUILTIN_TAG}
+        enabled={Boolean(asRecord(builtin.contradiction_coverage).enabled)}
+        onToggle={(checked) => updateBuiltin("contradiction_coverage", (config) => void (config.enabled = checked))}
+      >
+        <Typography.Text type="secondary">程序判出的每条纪要矛盾都要写进「异常与原因」并引用矛盾 id</Typography.Text>
+      </RuleRow>
+
       <RuleRow label="纪要矛盾阈值">
         <Space wrap>
           <span>

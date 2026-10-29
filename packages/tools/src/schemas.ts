@@ -1,7 +1,11 @@
 // 工具的 zod 入参/出参声明。与 @de/core/contract 的类型保持一致（底部有类型断言）。
 import { z } from "zod";
 import type {
+  AdminSetFaultsInput,
+  AdminSetFaultsOutput,
   ComputeMetricsInput,
+  DetectContradictionsInput,
+  DetectContradictionsOutput,
   LoadSalesInput,
   LoadSalesOutput,
   ParseMinutesInput,
@@ -124,6 +128,41 @@ export const computeMetricsOut = {
   }),
 };
 
+// ---- detect_contradictions ----
+const claimSubjectLevel = z.enum(["company", "region", "store", "category"]);
+const claimDirection = z.enum(["flat", "up", "down"]);
+const claim = z.object({
+  subject: z.object({ level: claimSubjectLevel, key: z.string().min(1) }),
+  metric: z.literal("wow"),
+  direction: claimDirection,
+  magnitude: z.number().nonnegative().optional(),
+  sourceWeek: isoWeek,
+  quote: z.string().min(1),
+});
+export const detectContradictionsIn = {
+  claims: z.array(claim),
+  facts: z.object(computeMetricsOut),
+  thresholds: z.object({
+    flatTolerance: z.number().nonnegative(),
+    directionMin: z.number().nonnegative(),
+    magnitudeTolerance: z.number().nonnegative(),
+  }),
+};
+export const detectContradictionsOut = {
+  contradictions: z.array(
+    z.object({
+      id: z.string(),
+      subject: z.object({ level: claimSubjectLevel, key: z.string(), name: z.string() }),
+      claim: z.object({ direction: claimDirection, magnitude: z.number().nonnegative().optional() }),
+      actualWow: z.number(),
+      rule: z.enum(["flat", "direction", "magnitude"]),
+      sourceWeek: isoWeek,
+      quote: z.string(),
+    }),
+  ),
+  skippedCount: z.number().int().nonnegative(),
+};
+
 // ---- parse_minutes ----
 export const parseMinutesIn = { paths: z.array(z.string()) };
 export const parseMinutesOut = {
@@ -145,7 +184,7 @@ export const renderReportIn = {
       z.object({
         id: z.string(),
         heading: z.string(),
-        paragraphs: z.array(z.string()),
+        paragraphs: z.array(z.string()).optional(),
         bullets: z.array(z.string()).optional(),
       }),
     ),
@@ -164,6 +203,11 @@ export const renderReportOut = {
 // ---- web_search（只注册，调用即报错）----
 export const webSearchIn = { query: z.string() };
 
+// ---- admin_set_faults（管理工具，服务端下发，不开放给任何员工）----
+export const faultMode = z.enum(["timeout", "error", "invalid_output"]);
+export const adminSetFaultsIn = { tools: z.record(z.string(), faultMode) };
+export const adminSetFaultsOut = { ok: z.boolean(), tools: z.record(z.string(), faultMode) };
+
 // ---- 与契约类型的一致性断言（编译期）----
 type Eq<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const _assert = <T extends true>(): T | undefined => undefined;
@@ -172,6 +216,8 @@ _assert<Eq<In<typeof loadSalesIn>, LoadSalesInput>>();
 _assert<Eq<In<typeof loadSalesOut>, LoadSalesOutput>>();
 _assert<Eq<In<typeof parseMinutesIn>, ParseMinutesInput>>();
 _assert<Eq<In<typeof renderReportOut>, RenderReportOutput>>();
+_assert<Assignable<In<typeof adminSetFaultsIn>, AdminSetFaultsInput>>();
+_assert<Assignable<In<typeof adminSetFaultsOut>, AdminSetFaultsOutput>>();
 // 其余类型含可选字段/联合，只检查单向可赋值，保证工具产出能被契约类型接收
 type Assignable<A, B> = [A] extends [B] ? true : false;
 _assert<Assignable<ComputeMetricsInput, In<typeof computeMetricsIn>>>();
@@ -181,3 +227,6 @@ _assert<Assignable<WeeklyFacts, In<typeof computeMetricsOut>>>();
 _assert<Assignable<ParseMinutesOutput, In<typeof parseMinutesOut>>>();
 _assert<Assignable<RenderReportInput, In<typeof renderReportIn>>>();
 _assert<Assignable<ValidateSubmissionOutput, In<typeof validateSubmissionOut>>>();
+_assert<Assignable<DetectContradictionsInput, In<typeof detectContradictionsIn>>>();
+_assert<Assignable<DetectContradictionsOutput, In<typeof detectContradictionsOut>>>();
+_assert<Assignable<In<typeof detectContradictionsOut>, DetectContradictionsOutput>>();

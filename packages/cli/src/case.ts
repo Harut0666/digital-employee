@@ -12,6 +12,7 @@ import type {
   TaskSnapshot,
   TaskState,
 } from "@de/core/contract";
+import { parseChecks, type CaseChecks } from "./checks";
 
 export type CaseActor = Exclude<Role, "system">;
 const ACTORS: CaseActor[] = ["initiator", "reviewer", "operator"];
@@ -31,6 +32,8 @@ export interface Expectation {
   pauseCode?: PauseCode;
   /** 快照里必须存在的交付物种类 */
   deliverables?: DeliverableRef["kind"][];
+  /** 判定要点（只在顶层 expect 里写），由 de check / de run-cases 核对交付物 */
+  checks?: CaseChecks;
 }
 
 export interface StepExpectation extends Expectation {
@@ -114,6 +117,8 @@ export function parseCase(raw: unknown, baseDir: string, fileName = "case.json")
       fail(fileName, `${where}.command.type 必须是 ${COMMAND_TYPES.join(" / ")}`);
     if (cmd.type === "return" && (typeof cmd.comment !== "string" || cmd.comment === ""))
       fail(fileName, `${where}.command 的 return 必须有 comment`);
+    if (o.expect !== undefined && typeof o.expect === "object" && o.expect !== null && "checks" in o.expect)
+      fail(fileName, `${where}.expect 不支持 checks：判定要点只写在顶层 expect 里`);
     let command = cmd as unknown as TaskCommand;
     if (cmd.type === "supplement" && cmd.attachments !== undefined) {
       command = { ...(cmd as object), type: "supplement", attachments: parseAttachments(cmd.attachments, baseDir, fileName) } as TaskCommand;
@@ -128,8 +133,17 @@ export function parseCase(raw: unknown, baseDir: string, fileName = "case.json")
     form: (c.form as Record<string, unknown>) ?? {},
     attachments: parseAttachments(c.attachments, baseDir, fileName),
     steps,
-    expect: c.expect as Expectation | undefined,
+    expect: parseExpectation(c.expect, fileName),
   };
+}
+
+/** 顶层 expect：状态类字段原样保留，checks 由 checks.ts 校验（格式错误直接报错）。 */
+function parseExpectation(raw: unknown, fileName: string): Expectation | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail(fileName, "expect 必须是对象");
+  const o = raw as Record<string, unknown>;
+  const checks = parseChecks(o.checks, `用例文件无效（${fileName}）：expect.checks`);
+  return { ...(o as Expectation), ...(o.checks === undefined ? {} : { checks }) };
 }
 
 function check(snapshot: TaskSnapshot, expect: Expectation | undefined): string[] {

@@ -44,7 +44,7 @@ export function estimatePages(report: RenderedReport, facts: WeeklyFacts): numbe
   const tableRows = 1 + 1 + Object.keys(facts.regions).length;
   for (const [i, s] of report.sections.entries()) {
     lines += 2.2 + 0.3; // 章节标题（三号/加粗）与段前后间距
-    for (const p of s.paragraphs) lines += linesOf(p, 2) + 0.4;
+    for (const p of s.paragraphs ?? []) lines += linesOf(p, 2) + 0.4;
     for (const b of s.bullets ?? []) lines += linesOf(b, 2) + 0.2;
     if (i === coreSectionIndex(report)) lines += tableRows * 1.6 + 2 + CHART_COUNT * CHART_LINES;
   }
@@ -153,7 +153,7 @@ async function buildDocx(input: RenderReportInput, opts: RenderOptions): Promise
         children: [run(s.heading, { bold: true, size: 28 })],
       }),
     );
-    for (const p of s.paragraphs) {
+    for (const p of s.paragraphs ?? []) {
       children.push(new Paragraph({ spacing: { after: 80, line: 360 }, indent: { firstLine: 420 }, children: [run(p)] }));
     }
     for (const b of s.bullets ?? []) {

@@ -53,6 +53,7 @@ describe("workflow.yaml", () => {
       "parse_minutes",
       "interpret_feedback",
       "match_causes",
+      "detect_contradictions",
       "write_report",
       "render_document",
       "qc",
@@ -73,6 +74,7 @@ describe("workflow.yaml", () => {
       admission: "validate_submission",
       load_data: "load_sales",
       compute_metrics: "compute_metrics",
+      detect_contradictions: "detect_contradictions",
       parse_minutes: "parse_minutes",
       render_document: "render_report_docx",
     });
@@ -118,6 +120,31 @@ describe("workflow.yaml", () => {
     for (const id of Object.values(workflow.qcSources)) expect(ids).toContain(id);
   });
 
+  test("接线（T8）：detect_contradictions 在 match_causes 之后算矛盾，write_report 消费矛盾清单", () => {
+    const steps = workflow.steps;
+    const causesIndex = steps.findIndex((s) => s.id === "match_causes");
+    const detectIndex = steps.findIndex((s) => s.id === "detect_contradictions");
+    const writeIndex = steps.findIndex((s) => s.id === "write_report");
+    expect(detectIndex).toBeGreaterThan(causesIndex);
+    expect(writeIndex).toBeGreaterThan(detectIndex);
+
+    const detect = steps[detectIndex]!;
+    expect(detect.kind === "compute" && detect.tool).toBe("detect_contradictions");
+    expect(detect.kind === "compute" && detect.input).toEqual({
+      claims: "$steps.match_causes.claims",
+      facts: "$steps.compute_metrics",
+      thresholds: "$config.contradiction",
+    });
+
+    const write = steps.find((s) => s.id === "write_report")!;
+    expect(write.kind === "judge" && write.input).toMatchObject({
+      contradictions: "$steps.detect_contradictions.contradictions",
+    });
+    // 判定规则已经交给程序：写作步骤不再拿 claims 或阈值
+    expect(write.kind === "judge" && write.input).not.toHaveProperty("claims");
+    expect(write.kind === "judge" && write.input).not.toHaveProperty("contradiction");
+  });
+
   test("判断步骤引用的提示词和输出 Schema 文件都存在，Schema 可编译", () => {
     for (const step of judgeSteps) {
       expect(existsSync(join(DIR, step.prompt))).toBe(true);
@@ -161,9 +188,18 @@ describe("workflow.yaml", () => {
 });
 
 describe("qc.yaml", () => {
-  test("七类内置质检齐全且启用", () => {
+  test("八类内置质检齐全且启用", () => {
     const b = qc.builtin;
-    for (const check of [b.structure, b.traceability, b.anomaly_coverage, b.quote_integrity, b.forbidden_terms, b.length, b.feedback_response]) {
+    for (const check of [
+      b.structure,
+      b.traceability,
+      b.anomaly_coverage,
+      b.quote_integrity,
+      b.contradiction_coverage,
+      b.forbidden_terms,
+      b.length,
+      b.feedback_response,
+    ]) {
       expect(check.enabled).toBe(true);
     }
   });
@@ -264,6 +300,29 @@ describe("输出 Schema", () => {
     expect(validate({ ...draft, extra: 1 })).toBe(false);
   });
 
+  test("write_report 接受 contradictionRefs（引用程序判出的矛盾 id），必须是字符串数组", () => {
+    const validate = newAjv().compile(readJson("schemas/write_report.json"));
+    expect(validate({ ...draft, contradictionRefs: ["contradiction:region:华南"] })).toBe(true);
+    expect(validate({ ...draft, contradictionRefs: [] })).toBe(true);
+    expect(validate({ ...draft, contradictionRefs: [1] })).toBe(false);
+    const { contradictionRefs: _refs, ...withoutRefs } = { ...draft, contradictionRefs: [] };
+    expect(validate(withoutRefs)).toBe(true);
+  });
+
+  test("章节可以只写要点（bullets）：提示词要求品类表现、下周关注用要点写", () => {
+    const validate = newAjv().compile(readJson("schemas/write_report.json"));
+    const bulletsOnly = {
+      ...draft,
+      sections: [
+        { id: "categories", heading: "品类表现", bullets: ["饮品环比 {{categories.饮品.wow}}。"] },
+        { id: "next_week", heading: "下周关注事项", bullets: ["跟进华南活动结束后的回落。"] },
+      ],
+    };
+    expect(validate(bulletsOnly)).toBe(true);
+    // 段落和要点都没有的章节仍然不合法
+    expect(validate({ ...bulletsOnly, sections: [{ id: "categories", heading: "品类表现" }] })).toBe(false);
+  });
+
   test("match_causes 给出与 DraftReport.causes 同形的原因，以及可核验说法", () => {
     const validate = newAjv().compile(readJson("schemas/match_causes.json"));
     expect(
@@ -350,6 +409,16 @@ describe("SKILL.md 与提示词", () => {
   test("write_report 提示词列出全部章节标题", () => {
     const text = read("prompts/write_report.md");
     for (const section of qc.builtin.structure.sections) expect(text).toContain(section.heading);
+  });
+
+  test("write_report 提示词只写怎么用程序判出的矛盾，不再写判定规则", () => {
+    const text = read("prompts/write_report.md");
+    // 怎么用：矛盾清单、引用 id、以数据为准、槽位写实际环比
+    for (const phrase of ["contradictions", "contradictionRefs", "以数据为准", "subject.name", "{{"]) expect(text).toContain(phrase);
+    // 判定规则已经交给 detect_contradictions 计算步骤
+    for (const phrase of ["flatTolerance", "directionMin", "magnitudeTolerance", "按阈值判断", "满足任一条"]) {
+      expect(text).not.toContain(phrase);
+    }
   });
 
   test("前台 Agent 人设：不能推进流程，只填表单草稿、回答任务问题", () => {

@@ -44,6 +44,61 @@
     }
   ],
   "expect": {
-    "state": "delivered"
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:全公司/实收（元）", "expected": 573635 },
+        { "path": "table:全公司/环比", "expected": -9.3 },
+        { "path": "table:全公司/毛利率", "expected": 61.1 },
+        { "path": "table:华东/实收（元）", "expected": 197618 },
+        { "path": "table:华东/环比", "expected": -12.0 },
+        { "path": "table:华东/目标达成率", "expected": 84.1 },
+        { "path": "table:华南/实收（元）", "expected": 177306 },
+        { "path": "table:华南/环比", "expected": -12.7 },
+        { "path": "table:华南/目标达成率", "expected": 92.3 },
+        { "path": "table:华北/实收（元）", "expected": 119712 },
+        { "path": "table:华北/环比", "expected": -3.3 },
+        { "path": "table:华北/目标达成率", "expected": 92.1 },
+        { "path": "table:西南/实收（元）", "expected": 78998 },
+        { "path": "table:西南/环比", "expected": -2.6 },
+        { "path": "table:西南/目标达成率", "expected": 96.3 },
+        { "path": "facts:company.deliveryShare", "expected": 31.8 },
+        { "path": "facts:quality.returns.count", "expected": 11 },
+        { "path": "facts:quality.returns.revenueCents", "expected": -260 },
+        { "path": "facts:stores.HZ01.wow", "expected": -38.3 },
+        { "path": "facts:stores.SH02.wow", "expected": -17.9 },
+        { "path": "facts:stores.SZ01.wow", "expected": -15.3 },
+        { "path": "facts:stores.SZ02.wow", "expected": -17.3 }
+      ],
+      "mustContain": [
+        "第 44 周纪要",
+        "商场消防改造停业三天",
+        "竞品",
+        "第二杯半价",
+        "基本持平",
+        "以数据为准",
+        "不是数据缺失",
+        "退货 11 笔",
+        "外卖占比为 31.8%",
+        "杭州湖滨店",
+        "上海静安店",
+        "深圳南山店",
+        "深圳福田店",
+        "拿铁",
+        "生椰拿铁",
+        "美式咖啡",
+        "6寸生日蛋糕",
+        "草莓奶油切块"
+      ],
+      "mustNotContain": ["客单价", "同比"],
+      "anomalies": [
+        "region:华东",
+        "region:华南",
+        "store:HZ01",
+        "store:SH02",
+        "store:SZ01",
+        "store:SZ02"
+      ]
+    }
   }
 }
