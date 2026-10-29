@@ -82,15 +82,23 @@ export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
   const admission = workflow.steps.find((s) => s.id === workflow.admissionStep);
   if (!admission) throw new Error(`admissionStep "${workflow.admissionStep}" 不在 workflow.yaml 的步骤中`);
   if (admission.kind !== "compute") throw new Error(`admissionStep "${admission.id}" 必须是计算步骤`);
-  const rawFix = (workflowRaw as { qcFixSteps?: { write?: unknown; causes?: unknown } } | undefined)?.qcFixSteps;
-  for (const key of ["write", "causes"] as const) {
-    const id = typeof rawFix?.[key] === "string" ? (rawFix[key] as string) : undefined;
-    if (id !== undefined && !ids.includes(id)) throw new Error(`qcFixSteps.${key} "${id}" 不在 workflow.yaml 的步骤中`);
-  }
   const qcSteps = workflow.steps.filter((s) => s.kind === "qc");
   if (qcSteps.length > 1) throw new Error("workflow.yaml 最多只能有一个质检步骤");
   if (qcSteps[0] && workflow.steps[workflow.steps.length - 1] !== qcSteps[0]) {
     throw new Error("质检步骤必须是最后一个步骤");
+  }
+  // 质检修正步骤的解析值（含默认值）必须指向真实步骤：非场景 A 的员工若不显式配置，
+  // 质检问题就落不到可重跑的步骤上，只能一路转人工，因此加载配置时直接报错。
+  if (qcSteps.length > 0) {
+    const fixSteps: Array<["write" | "causes", string]> = [
+      ["write", workflow.qcFixSteps.write ?? workflow.qcSources.draft],
+      ["causes", workflow.qcFixSteps.causes],
+    ];
+    for (const [key, id] of fixSteps) {
+      if (!ids.includes(id)) {
+        throw new Error(`qcFixSteps.${key} 解析为 "${id}"，但不在 workflow.yaml 的步骤中；请显式配置 qcFixSteps.${key}`);
+      }
+    }
   }
 
   const prompts: Record<string, string> = {};

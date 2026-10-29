@@ -102,3 +102,22 @@ describe("员工 id 契约", () => {
     await expect(loadEmployeeConfig(dir)).rejects.toThrow(/员工 id/);
   });
 });
+
+describe("qcFixSteps 的解析值（含默认值）必须指向真实步骤", () => {
+  /** 只改步骤 id：把原因匹配步骤改名，提示词/输出 Schema 的文件路径保持不变。 */
+  function renameCausesStep(dir: string): void {
+    const file = join(dir, "workflow.yaml");
+    const text = readFileSync(file, "utf8").replace("- id: match_causes", "- id: find_causes").replace("$steps.match_causes", "$steps.find_causes");
+    writeFileSync(file, text);
+  }
+
+  test("缺少 causes 默认步骤又没显式配置 → 加载即报错；显式指向改名后的步骤即可", async () => {
+    const dir = copyFixture();
+    renameCausesStep(dir);
+    await expect(loadEmployeeConfig(dir)).rejects.toThrow(/qcFixSteps\.causes/);
+
+    const file = join(dir, "workflow.yaml");
+    writeFileSync(file, readFileSync(file, "utf8") + "\nqcFixSteps:\n  causes: find_causes\n");
+    expect((await loadEmployeeConfig(dir)).workflow.qcFixSteps.causes).toBe("find_causes");
+  });
+});
