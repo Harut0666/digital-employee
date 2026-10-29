@@ -49,7 +49,8 @@ export function estimatePages(report: RenderedReport, facts: WeeklyFacts): numbe
     if (i === coreSectionIndex(report)) lines += tableRows * 1.6 + 2 + CHART_COUNT * CHART_LINES;
   }
   if (report.sections.length === 0) lines += tableRows * 1.6 + 2 + CHART_COUNT * CHART_LINES;
-  return Math.max(1, Math.ceil(lines / PAGE_LINES));
+  // 保留一位小数（向上取）：质检按“3 页 × 90%”判断，取整会让实际上限变成 2 页
+  return Math.max(1, Math.ceil((lines / PAGE_LINES) * 10) / 10);
 }
 
 /** 核心指标表与图表放在哪个章节之后：优先标题含“指标”的章节，否则第一章 */
