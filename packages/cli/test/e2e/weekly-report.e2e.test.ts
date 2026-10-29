@@ -2,7 +2,7 @@
 // 质检、槽位渲染、Word 生成都是真的；剧本（samples/cases/scripts）里的叙述只含槽位，质检靠它真实通过。
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { SimulatedCrash, type ModelScript, type TaskSnapshot } from "@de/core";
+import { SimulatedCrash, type FaultMode, type ModelScript, type TaskSnapshot, type ToolName } from "@de/core";
 import {
   SAMPLE,
   cleanupE2E,
@@ -14,9 +14,16 @@ import {
   startedSteps,
   stateTrail,
   stepOutputPath,
+  type E2E,
 } from "./helpers";
 
 afterEach(cleanupE2E);
+
+/** 演示页“工具故障”的服务端路径：经 MCP 管理工具下发到工具子进程。 */
+async function adminSetFaults(e2e: E2E, tools: Partial<Record<ToolName, FaultMode>>): Promise<void> {
+  const res = await e2e.toolClient.call("admin_set_faults", { tools });
+  if (!res.ok) throw new Error(`下发故障开关失败：${res.error}`);
+}
 
 const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "forbidden_terms", "length"];
 
@@ -64,7 +71,7 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     expect(ofType(events, "tool_denied")).toHaveLength(0);
     expect(stateTrail(events)).toEqual(["draft", "admission", "running", "qc", "awaiting_review", "delivered"]);
     events.forEach((e, i) => expect(e.seq).toBe(i + 1));
-  });
+  }, 30_000);
 
   test("渲染步骤收到的是已渲染槽位的草稿，并带任务幂等键", async () => {
     const e2e = await createE2E({ script: loadScript("A-01") });
@@ -75,7 +82,7 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     const all = args.report.sections.flatMap((s) => [...s.paragraphs, ...(s.bullets ?? [])]).join("\n");
     expect(all).not.toContain("{{");
     expect(all).toContain("以数据为准");
-  });
+  }, 30_000);
 
   test("A-01 变体：审核退回 → 重做（只重跑判断步骤）→ 修改说明覆盖意见 → 通过", async () => {
     const e2e = await createE2E({ script: loadScript("A-01-rework") });
@@ -272,6 +279,32 @@ describe("E2E · 断点恢复", () => {
   }, 30_000);
 });
 
+describe("E2E · 运行时工具故障（设置页演示）", () => {
+  test("运行时经 admin_set_faults 打开 load_sales 超时 → 停在 tool_failed → 关闭后 retry 走完", async () => {
+    const e2e = await createE2E({ script: loadScript("A-01") });
+    await adminSetFaults(e2e, { load_sales: "timeout" });
+
+    const paused = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+    expect(paused.state).toBe("awaiting_operator");
+    expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
+    expect(paused.pause?.message).toContain("load_sales");
+    const failed = await e2e.events(paused.id);
+    expect(ofType(failed, "tool_called").filter((e) => e.tool === "load_sales").map((e) => e.attempt)).toEqual([1, 2, 3]);
+    expect(ofType(failed, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
+
+    await adminSetFaults(e2e, {});
+    expect((await e2e.cmd(paused.id, { type: "retry" }, "initiator")).ok).toBe(false);
+    expect((await e2e.cmd(paused.id, { type: "retry" }, "operator")).ok).toBe(true);
+    const review = await e2e.engine.waitForSettled(paused.id);
+    expect(qcFailures(review)).toEqual([]);
+    expect(review.state).toBe("awaiting_review");
+
+    const after = await e2e.events(paused.id);
+    expect(startedSteps(after).filter((s) => s === "load_data")).toHaveLength(2);
+    expect(startedSteps(after).filter((s) => s === "admission")).toHaveLength(1);
+  }, 30_000);
+});
+
 describe("E2E · 越权拦截", () => {
   test("判断步骤调用 web_search → 被拒绝并留下 tool_denied 事件，任务不受影响", async () => {
     const script = loadScript("A-01");
@@ -292,6 +325,32 @@ describe("E2E · 越权拦截", () => {
     // 工具根本没有被执行
     expect(ofType(events, "tool_called").some((e) => e.tool === "web_search")).toBe(false);
     expect(ofType(events, "model_called").filter((e) => e.stepId === "match_causes")).toHaveLength(2);
+  });
+
+  test("判断步骤调用 admin_set_faults → 被拦截并留下 tool_denied，故障没有真的下发", async () => {
+    const script = loadScript("A-01");
+    const submit = script.match_causes![0]!;
+    const withAdmin: ModelScript = {
+      ...script,
+      match_causes: [
+        { toolCalls: [{ name: "admin_set_faults", arguments: { tools: { load_sales: "timeout" } } }] },
+        submit,
+      ],
+    };
+    const e2e = await createE2E({ script: withAdmin });
+    const review = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+
+    // 越权调用被拒后模型继续提交，任务照常走完：说明 load_sales 没有被注入超时
+    expect(review.state).toBe("awaiting_review");
+    expect(qcFailures(review)).toEqual([]);
+
+    const events = await e2e.events(review.id);
+    const denied = ofType(events, "tool_denied");
+    expect(denied).toHaveLength(1);
+    expect(denied[0]).toMatchObject({ stepId: "match_causes", tool: "admin_set_faults" });
+    expect(denied[0]!.reason).toContain("未对本步骤开放");
+    expect(ofType(events, "tool_called").some((e) => e.tool === "admin_set_faults")).toBe(false);
+    expect(ofType(events, "tool_result").some((e) => !e.ok)).toBe(false);
   });
 });
 
