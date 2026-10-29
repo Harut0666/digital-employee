@@ -115,5 +115,7 @@ export function parseCommand(raw: unknown): { ok: true; command: TaskCommand } |
   }
   if (c.type === "supplement" && c.form !== undefined && (typeof c.form !== "object" || c.form === null || Array.isArray(c.form)))
     return { ok: false, message: "form 必须是对象" };
+  // 附件只能来自 multipart 上传（由服务端落盘）；JSON 里自带的 sourcePath 会让服务端读取任意本地文件
+  if (c.attachments !== undefined) return { ok: false, message: "附件只能通过 multipart 上传，不接受命令 JSON 中的 attachments" };
   return { ok: true, command: c as unknown as TaskCommand };
 }

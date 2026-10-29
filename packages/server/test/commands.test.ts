@@ -106,6 +106,30 @@ describe("POST /api/tasks/:id/commands", () => {
   });
 });
 
+describe("supplement attachments must come from multipart uploads", () => {
+  const evil = { name: "passwd", sourcePath: "C:/Windows/win.ini" };
+
+  test("a JSON body carrying attachments[].sourcePath is rejected before reaching the engine", async () => {
+    const { call, engine } = setup();
+    const id = await newTask(call);
+    const res = await call(...jsonPost(`/api/tasks/${id}/commands`, { type: "supplement", attachments: [evil] }, "initiator"));
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe("invalid_input");
+    expect(engine.commands).toHaveLength(0);
+  });
+
+  test("a multipart command JSON carrying attachments is rejected too", async () => {
+    const { call, engine } = setup();
+    const id = await newTask(call);
+    const fd = new FormData();
+    fd.set("command", JSON.stringify({ type: "supplement", attachments: [evil] }));
+    fd.append("attachments", new File(["x"], "销售明细.xlsx"));
+    const res = await call(`/api/tasks/${id}/commands`, { method: "POST", headers: { "x-role": "initiator" }, body: fd });
+    expect(res.status).toBe(400);
+    expect(engine.commands).toHaveLength(0);
+  });
+});
+
 describe("GET /api/tasks/:id/events", () => {
   test("returns events in order; ?after= skips earlier ones; unknown task is 404", async () => {
     const { call } = setup();
