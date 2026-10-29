@@ -2,7 +2,7 @@
 
 import type { QcCheckResult, QcInput } from "../contract";
 import { renderSlots } from "./slots";
-import { countSentences, findBareNumbers, narrativePieces } from "./text";
+import { countSentences, entityNamesWithDigits, findBareNumbers, narrativePieces } from "./text";
 
 /** 重跑写作步骤 / 重跑原因匹配步骤（步骤 id 来自 employees/weekly-report/workflow.yaml）。 */
 export const FIX_WRITE = "write_report";
@@ -53,9 +53,11 @@ export function checkTraceability({ draft, facts }: QcInput): QcCheckResult {
   const issues: string[] = [];
   const unresolved = new Set<string>();
 
+  const quotes = draft.causes.flatMap((c) => (c.quote?.trim() ? [c.quote.trim()] : []));
+  const names = entityNamesWithDigits(facts);
   for (const piece of narrativePieces(draft)) {
     for (const path of renderSlots(piece.text, facts).unresolved) unresolved.add(path);
-    for (const n of findBareNumbers(piece.text)) {
+    for (const n of findBareNumbers(piece.text, quotes, names)) {
       issues.push(`「${piece.where}」出现未经槽位引用的数字：${n}，请改用 {{路径}} 槽位`);
     }
   }

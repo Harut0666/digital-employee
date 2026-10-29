@@ -1,4 +1,5 @@
 // T3 实现：Elysia 服务。导出 App 类型供前端 Eden 使用。
+import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { cors } from "@elysiajs/cors";
@@ -23,7 +24,10 @@ export function createApp(options: ServerOptions) {
 
   async function listEmployees() {
     const entries = await readdir(employeesDir, { withFileTypes: true }).catch(() => []);
-    const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules");
+    // 只有含 workflow.yaml 的目录才是员工（employees/test 之类的目录不是）
+    const dirs = entries.filter(
+      (e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && existsSync(join(employeesDir, e.name, "workflow.yaml")),
+    );
     const result = [];
     for (const d of dirs.sort((a, b) => a.name.localeCompare(b.name))) {
       const cfg = await loadEmployee(join(employeesDir, d.name));
@@ -32,6 +36,9 @@ export function createApp(options: ServerOptions) {
         name: cfg.workflow.name,
         description: cfg.workflow.description,
         formSchema: cfg.formSchema,
+        formUi: cfg.formUi,
+        /** 退回时可勾选的章节（取自 qc.yaml 的 structure.sections） */
+        reviewSections: cfg.qc.builtin.structure.sections,
       });
     }
     return result;

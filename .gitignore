@@ -7,3 +7,5 @@ settings.json
 *.log
 .DS_Store
 .claude/
+out/
+.scratch/

@@ -73,13 +73,18 @@
 | `A-03.json` | 缺材料 | 只传纪要 → 停在 `missing_sales` → supplement 补传销售明细 → 待审核 → 通过 |
 | `A-04.json` | 数据缺失与退货（第 42 周） | 同 A-01 |
 | `A-05.json` | 超出数据范围（第 46 周） | 停在 `period_out_of_range`，不继续 |
+| `A-01-rework.json` | A-01 变体 | 待审核 → 发起人点“通过”被拒 → 审核人退回（摘要） → 重做 → 通过 → 已交付 |
+
+## 剧本（`scripts/`）
+
+`scripts/<用例 id>.json` 是配套的剧本式假模型：按步骤 id 列出每一轮模型响应，格式见 `@de/core` 的 `ModelScript`。剧本里每一轮都是 `submit_result` 工具调用，叙述只含 `{{path}}` 槽位（ADR-0002），所以质检是真的通过，不是被桩掉。`A-03` 与 `A-01` 同一份内容（补传销售明细后跑的是同一周）；`A-05` 在准入就停下，剧本为空；`A-01-rework` 多出 `interpret_feedback` 和第二轮 `match_causes`、`write_report`，对应重做。
 
 数字类的判定要点（实收、环比、达成率等）由工具与质检的测试覆盖，不放在用例文件里。
 
 ## 运行示例
 
 ```powershell
-# 用剧本式假模型（T7 提供 samples/cases/scripts/A-01.json）
+# 用剧本式假模型（samples/cases/scripts/A-01.json）
 bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out/A-01
 
 # 回放刚才那个任务

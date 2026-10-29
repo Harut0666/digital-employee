@@ -12,10 +12,14 @@ export interface EmployeeInfo {
   description: string;
   /** 发起表单的 JSON Schema，交给 @rjsf/antd 渲染 */
   formSchema: Record<string, unknown>;
+  /** 表单的 uiSchema（form.ui.json）；其中 ui:widget 为 file / files 的字段是上传项 */
+  formUi?: Record<string, unknown>;
+  /** 退回时可勾选的章节（取自 qc.yaml 的 structure.sections） */
+  reviewSections?: { id: string; heading: string }[];
 }
 
-/** 附件所属的上传区；决定放进哪个预检项。 */
-export type UploadSlot = "sales" | "minutes" | "other";
+/** 附件所属的上传项，即 form.schema.json 里文件字段的名字（如 salesFile、minutesFiles）；没有文件字段时为 other。 */
+export type UploadSlot = string;
 
 export interface UploadItem {
   slot: UploadSlot;

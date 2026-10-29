@@ -36,7 +36,7 @@ import {
   type TransitionTrigger,
 } from "../contract";
 import { appendEventLine, readEventLog } from "./event-log";
-import { DRAFT_STEP_ID, TaskProjection, argsKey, type Checkpoint } from "./projection";
+import { TaskProjection, argsKey, type Checkpoint } from "./projection";
 import { replaceString, resolveInput } from "./refs";
 
 /** 测试可注入的内部实现；生产环境不传，使用 ../agent 与 ../qc 的默认实现。 */
@@ -70,8 +70,8 @@ const ACTIVE_STATES: readonly TaskState[] = ["admission", "running", "qc"];
 const PAUSED_OR_FINAL: readonly TaskState[] = ["awaiting_initiator", "awaiting_operator", "awaiting_review", "delivered", "terminated"];
 const TOOL_CALL_TIMEOUT_MS = 120_000;
 
-/** 质检输入从这些步骤的输出里取（约定的步骤 id，见 T5 的 workflow.yaml）。 */
-const QC_SOURCE_STEPS = { facts: "compute_metrics", minutes: "parse_minutes", rendered: "render_document" } as const; // facts 以 workflow.factsStep 为准
+/** 未配置 factsStep 时，事实取自这个步骤（场景 A 的约定）。 */
+const DEFAULT_FACTS_STEP = "compute_metrics";
 
 /** 准入不通过时各暂停原因下发起人可以做的事。 */
 function initiatorOptions(code: PauseCode): TaskCommand["type"][] {
@@ -182,7 +182,12 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
   function transition(rt: Runtime, trigger: TransitionTrigger, actor: Role, pause?: PauseReason): void {
     const from = rt.proj.state;
-    const t = TRANSITIONS.find((x) => x.from === from && x.trigger === trigger);
+    const candidates = TRANSITIONS.filter((x) => x.from === from && x.trigger === trigger);
+    // retry 在 awaiting_operator 下有两个目标：失败的是准入步骤（尚未完成）回到准入，否则回到执行
+    const t =
+      trigger === "retry" && candidates.length > 1
+        ? candidates.find((x) => (x.to === "admission") === !rt.proj.done.has(rt.config.workflow.admissionStep))
+        : candidates[0];
     if (!t) throw new Error(`流转表中没有 ${from} --${trigger}-->`);
     append(rt, { type: "state_changed", from, to: t.to, trigger, actor, pause });
   }
@@ -216,7 +221,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
   }
 
   function factsStepId(rt: Runtime): string {
-    return rt.config.workflow.factsStep ?? QC_SOURCE_STEPS.facts;
+    return rt.config.workflow.factsStep ?? DEFAULT_FACTS_STEP;
   }
 
   /** 某步骤输出的报告草稿，用事实步骤的输出做槽位渲染。 */
@@ -286,11 +291,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     const message = `任务执行时发生内部错误：${errorText(error)}`;
     const state = rt.proj.state;
     if (state === "admission") {
-      transition(rt, "admission_failed", "system", {
-        code: "tool_failed",
-        message,
-        options: initiatorOptions("tool_failed"),
-      });
+      pauseOperator(rt, "tool_failed", "tool_failed", message);
     } else if (state === "running") {
       pauseOperator(rt, "tool_failed", "tool_failed", message);
     } else {
@@ -423,11 +424,8 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
   ): "done" | "paused" {
     append(rt, { type: "step_failed", stepId: step.id, error: message });
     if ("optional" in step && step.optional) return "done";
-    if (rt.proj.state === "admission") {
-      transition(rt, "admission_failed", "system", { code: "tool_failed", message, options: initiatorOptions("tool_failed"), detail });
-    } else {
-      pauseOperator(rt, code, code, message, detail);
-    }
+    // 准入步骤的工具本身故障也是工具故障（转操作员），不是缺材料
+    pauseOperator(rt, rt.proj.state === "admission" ? "tool_failed" : code, code, message, detail);
     return "paused";
   }
 
@@ -559,10 +557,10 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
       const reason = (output as { needsHumanReason?: unknown }).needsHumanReason;
       const message = `步骤「${step.label}」判断需要人工处理：${typeof reason === "string" && reason ? reason : "该意见超出自动处理范围"}。${progressText(rt)}。`;
       append(rt, { type: "step_failed", stepId: step.id, error: message });
-      pauseOperator(rt, "tool_failed", "rework_needs_human", message, { output });
+      pauseOperator(rt, "needs_human", "rework_needs_human", message, { output });
       return "paused";
     }
-    if (deps.faults?.corruptTraceability && step.id === DRAFT_STEP_ID && !proj.faultsInjected.has(`${step.id}:corruptTraceability`)) {
+    if (deps.faults?.corruptTraceability && step.id === rt.config.workflow.qcSources.draft && !proj.faultsInjected.has(`${step.id}:corruptTraceability`)) {
       output = corruptFirstParagraph(output);
       append(rt, { type: "fault_injected", target: step.id, mode: "corruptTraceability" });
     }
@@ -583,12 +581,13 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
       let checks: QcCheckResult[];
       try {
-        const rendered = optionalOutput(rt, QC_SOURCE_STEPS.rendered) as { estimatedPages?: number; chartCount?: number } | undefined;
+        const sources = rt.config.workflow.qcSources;
+        const rendered = optionalOutput(rt, sources.rendered) as { estimatedPages?: number; chartCount?: number } | undefined;
         const input: QcInput = {
           config: rt.config.qc,
-          draft: optionalOutput(rt, DRAFT_STEP_ID) as DraftReport,
+          draft: optionalOutput(rt, sources.draft) as DraftReport,
           facts: optionalOutput(rt, factsStepId(rt)) as QcInput["facts"],
-          minutes: optionalOutput(rt, QC_SOURCE_STEPS.minutes) as QcInput["minutes"],
+          minutes: optionalOutput(rt, sources.minutes) as QcInput["minutes"],
           rendered:
             rendered && typeof rendered.estimatedPages === "number" && typeof rendered.chartCount === "number"
               ? { estimatedPages: rendered.estimatedPages, chartCount: rendered.chartCount }

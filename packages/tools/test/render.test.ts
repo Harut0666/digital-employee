@@ -88,6 +88,12 @@ describe("render_report_docx（接缝 2）", () => {
     expect(big.estimatedPages).toBeGreaterThan(small.estimatedPages);
   });
 
+  test("页数估算带一位小数（质检按 3 页 × 90% = 2.7 页判断，取整会让上限变成 2 页）", async () => {
+    const small = await render("task3/step-render/fraction");
+    expect(Math.round(small.estimatedPages * 10) / 10).toBe(small.estimatedPages);
+    expect(Number.isInteger(small.estimatedPages)).toBe(false);
+  });
+
   test("没有上周数据（第 36 周）也能出图和表", async () => {
     const dir = mkdtempSync(join(tmpdir(), "de-render-w36-"));
     const ds = await h.call("load_sales", { salesPath: sample("销售明细.xlsx"), outDir: dir });

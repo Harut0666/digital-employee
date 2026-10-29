@@ -103,6 +103,21 @@ describe("workflow.yaml", () => {
     ]);
   });
 
+  test("接线（契约 bf6850d）：factsStep、interpret_feedback 只在重做时执行、渲染用 $rendered 与幂等键", () => {
+    expect(workflow.factsStep).toBe("compute_metrics");
+    const feedback = judgeSteps.find((s) => s.id === "interpret_feedback")!;
+    expect(feedback.when).toBe("rework");
+    expect(judgeSteps.filter((s) => s.when === "rework").map((s) => s.id)).toEqual(["interpret_feedback"]);
+    const render = workflow.steps.find((s) => s.id === "render_document")!;
+    expect(render.kind === "compute" && render.input).toMatchObject({
+      report: "$rendered.write_report",
+      idempotencyKey: "$task.idempotencyKey",
+    });
+    // 质检输入源（缺省值）与 workflow 里的步骤 id 一致
+    const ids = workflow.steps.map((s) => s.id);
+    for (const id of Object.values(workflow.qcSources)) expect(ids).toContain(id);
+  });
+
   test("判断步骤引用的提示词和输出 Schema 文件都存在，Schema 可编译", () => {
     for (const step of judgeSteps) {
       expect(existsSync(join(DIR, step.prompt))).toBe(true);
@@ -116,6 +131,7 @@ describe("workflow.yaml", () => {
     const formProps = Object.keys(form.properties ?? {});
     // 重做时才有值的引用：前一版草稿来自 write_report 自己上一轮的输出
     const reworkOnly = new Set(["interpret_feedback:$steps.write_report", "write_report:$steps.write_report"]);
+    const rendered = new Set(["render_document:$rendered.write_report"]);
     for (const [index, step] of workflow.steps.entries()) {
       if (step.kind === "qc") continue;
       for (const ref of collectRefs(step.input)) {
@@ -133,8 +149,11 @@ describe("workflow.yaml", () => {
             node = node?.[key];
           }
           expect(node).toBeDefined();
+        } else if (parts[0] === "rendered") {
+          expect(rendered.has(`${step.id}:${ref}`)).toBe(true);
+          expect(stepIds.indexOf(parts[1] ?? "")).toBeLessThan(index);
         } else {
-          expect(["task.dir", "task.attachments", "task.feedback"]).toContain(parts.join("."));
+          expect(["task.dir", "task.attachments", "task.feedback", "task.idempotencyKey"]).toContain(parts.join("."));
         }
       }
     }
@@ -265,17 +284,37 @@ describe("输出 Schema", () => {
     expect(validate({ causes: [{ anomalyId: "a", cause: "b", level: "galaxy" }], claims: [] })).toBe(false);
   });
 
-  test("interpret_feedback 没有退回意见时可以提交空清单", () => {
+  test("interpret_feedback 没有退回意见时可以提交空清单；needsHuman 在顶层", () => {
     const validate = newAjv().compile(readJson("schemas/interpret_feedback.json"));
-    expect(validate({ items: [] })).toBe(true);
+    expect(validate({ items: [], needsHuman: false })).toBe(true);
     expect(
       validate({
-        items: [
-          { id: "F1", comment: "摘要太长", sections: ["summary"], kind: "narrative", action: "压缩摘要", needsHuman: false },
-        ],
+        items: [{ id: "F1", comment: "摘要太长", sections: ["summary"], kind: "narrative", action: "压缩摘要" }],
+        needsHuman: false,
       }),
     ).toBe(true);
-    expect(validate({ items: [{ id: "F1" }] })).toBe(false);
+    expect(
+      validate({
+        items: [{ id: "F1", comment: "毛利按含税算", sections: [], kind: "calculation_basis", action: "无法自动处理" }],
+        needsHuman: true,
+        needsHumanReason: "意见要求更换毛利口径",
+      }),
+    ).toBe(true);
+    expect(validate({ items: [{ id: "F1" }], needsHuman: false })).toBe(false);
+    // 旧写法：items[].needsHuman 不再接受
+    expect(
+      validate({
+        items: [{ id: "F1", comment: "c", sections: [], kind: "narrative", action: "a", needsHuman: false }],
+        needsHuman: false,
+      }),
+    ).toBe(false);
+    expect(validate({ items: [] })).toBe(false);
+  });
+
+  test("interpret_feedback 提示词写明顶层 needsHuman 与 needsHumanReason", () => {
+    const text = read("prompts/interpret_feedback.md");
+    expect(text).toContain("needsHumanReason");
+    expect(text).not.toContain("- `needsHuman`：`calculation_basis`");
   });
 });
 

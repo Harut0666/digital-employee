@@ -24,9 +24,6 @@ export interface Checkpoint extends ArtifactRef {
 const ACTIVE_STATES: readonly TaskState[] = ["admission", "running", "qc"];
 const PAUSED_STATES: readonly TaskState[] = ["awaiting_initiator", "awaiting_operator", "awaiting_review"];
 
-/** 报告草稿所在的步骤 id；退回时要保留重做前的版本，供“意见响应”质检对比。 */
-export const DRAFT_STEP_ID = "write_report";
-
 export class TaskProjection {
   employee = "";
   configHash = "";
@@ -199,7 +196,8 @@ export class TaskProjection {
         this.resetWindow();
         break;
       case "return": {
-        this.baselineDraft = this.done.get(DRAFT_STEP_ID);
+        // 保留重做前的草稿版本，供“意见响应”质检对比
+        this.baselineDraft = this.done.get(this.config.workflow.qcSources.draft);
         this.rewind(this.firstReworkIndex());
         this.reworkRound += 1;
         this.resetWindow();

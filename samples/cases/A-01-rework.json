@@ -1,0 +1,21 @@
+{
+  "id": "A-01-rework",
+  "title": "A-01 变体：审核退回 → 重做 → 修改说明覆盖意见 → 通过",
+  "employee": "weekly-report",
+  "form": { "period": { "year": 2026, "week": 44 } },
+  "attachments": [
+    { "name": "销售明细.xlsx", "path": "../scenario-a/销售明细.xlsx" },
+    { "name": "周会纪要_2026W44.docx", "path": "../scenario-a/周会纪要_2026W44.docx" }
+  ],
+  "steps": [
+    { "actor": "initiator", "command": { "type": "submit" }, "expect": { "state": "awaiting_review", "pauseCode": "awaiting_review" } },
+    { "actor": "initiator", "command": { "type": "approve" }, "expect": { "ok": false, "error": "forbidden_role", "state": "awaiting_review" } },
+    {
+      "actor": "reviewer",
+      "command": { "type": "return", "comment": "摘要请再精简，突出本周最重要的两个异常。", "sections": ["summary"] },
+      "expect": { "state": "awaiting_review", "pauseCode": "awaiting_review" }
+    },
+    { "actor": "reviewer", "command": { "type": "approve" }, "expect": { "state": "delivered", "deliverables": ["docx", "qc_record"] } }
+  ],
+  "expect": { "state": "delivered" }
+}

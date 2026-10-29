@@ -51,6 +51,16 @@ export function PlaceholderReport({ title = "经营周报 · 2026 年第 44 周"
   );
 }
 
+/** 把整页缩放到容器宽度（右栏比 A4 页面窄很多，不缩放会被裁掉右半边）。 */
+function fitToWidth(host: HTMLElement): void {
+  const wrapper = host.querySelector<HTMLElement>(".docx-wrapper");
+  const page = wrapper?.querySelector<HTMLElement>("section.docx");
+  if (!wrapper || !page) return;
+  wrapper.style.zoom = "1";
+  const need = page.offsetWidth + 2 * 12;
+  wrapper.style.zoom = String(Math.min(1, host.clientWidth / need));
+}
+
 /** Word 预览：用 docx-preview 渲染真实 .docx；没有 url 或加载失败时退回占位。 */
 export function DocxPreview({ url }: { url: string | undefined }) {
   const host = useRef<HTMLDivElement>(null);
@@ -72,7 +82,10 @@ export function DocxPreview({ url }: { url: string | undefined }) {
         if (!alive || !host.current) return;
         host.current.innerHTML = "";
         await renderAsync(buf, host.current, undefined, { className: "docx", inWrapper: true, ignoreWidth: false });
-        if (alive) setState("ready");
+        if (alive) {
+          fitToWidth(host.current);
+          setState("ready");
+        }
       } catch {
         if (alive) setState("failed");
       }
@@ -81,6 +94,15 @@ export function DocxPreview({ url }: { url: string | undefined }) {
       alive = false;
     };
   }, [url]);
+
+  // 面板宽度变化（收起、展开、窗口缩放）时重新适配
+  useEffect(() => {
+    const el = host.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => fitToWidth(el));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const showPlaceholder = state === "idle" || state === "failed";
   return (

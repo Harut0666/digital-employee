@@ -21,8 +21,8 @@ export interface CardActions {
   run: (cmd: TaskCommand) => Promise<void>;
   /** 聚焦右栏的补充表单 */
   openSupplement: () => void;
-  /** 章节标签（审核卡退回时可选） */
-  sections: string[];
+  /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
+  sections: { id: string; heading: string }[];
   downloadUrl: (kind: "docx" | "md" | "qc_record") => string | undefined;
 }
 
@@ -196,7 +196,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
             审核人已退回：{d.comment}
             {d.sections?.map((s) => (
               <Tag key={s} style={{ marginLeft: 6 }}>
-                {s}
+                {actions.sections.find((x) => x.id === s)?.heading ?? s}
               </Tag>
             ))}
           </>
@@ -221,7 +221,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
       </div>
       <div className="card-body">
         <div>退回涉及章节（可选）</div>
-        <Checkbox.Group className="section-grid" options={actions.sections} value={picked} onChange={(v) => setPicked(v as string[])} />
+        <Checkbox.Group className="section-grid" options={actions.sections.map((s) => ({ label: s.heading, value: s.id }))} value={picked} onChange={(v) => setPicked(v as string[])} />
         <div>退回意见</div>
         <Input.TextArea
           rows={3}

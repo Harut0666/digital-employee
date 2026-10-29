@@ -83,7 +83,8 @@ export function useTask(id: string | undefined): TaskState {
       lastSeq.current = ev.seq;
       setEvents((prev) => [...prev, ev]);
       setLoading(false);
-      if (ev.type === "state_changed") reload();
+      // 快照里有引擎判定的预算（模型调用数、用时）和步骤状态，这些事件之后重新拉取
+      if (ev.type === "state_changed" || ev.type === "step_completed" || ev.type === "step_failed") reload();
     });
     const t = setTimeout(() => setLoading(false), 1500);
     return () => {
