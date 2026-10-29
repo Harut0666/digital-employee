@@ -1,0 +1,61 @@
+{
+  "id": "A-03",
+  "title": "缺材料：先缺销售明细，补传后继续",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "missing_sales"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "supplement",
+        "attachments": [
+          {
+            "name": "销售明细.xlsx",
+            "path": "../scenario-a/销售明细.xlsx"
+          }
+        ]
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered"
+  }
+}

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@de/core": "workspace:*",
-    "@de/tools": "workspace:*"
+    "@de/tools": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.32.2"
   }
 }
