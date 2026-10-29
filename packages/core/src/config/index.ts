@@ -59,6 +59,11 @@ function hashDirectory(dir: string): string {
 }
 
 export async function loadEmployeeConfig(dir: string): Promise<EmployeeConfig> {
+  return loadEmployeeConfigSync(dir);
+}
+
+/** 同步版本，供引擎在内部使用（配置文件很小，读取是同步的）。 */
+export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
   const root = resolve(dir);
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`员工配置目录不存在：${root}`);
 
