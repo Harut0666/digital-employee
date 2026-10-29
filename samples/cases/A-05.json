@@ -1,0 +1,33 @@
+{
+  "id": "A-05",
+  "title": "超出数据范围",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 46
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "period_out_of_range"
+      }
+    }
+  ],
+  "expect": {
+    "state": "awaiting_initiator",
+    "pauseCode": "period_out_of_range"
+  }
+}
