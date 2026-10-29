@@ -1,0 +1,68 @@
+{
+  "id": "S-17",
+  "title": "异常：销售明细缺“实收金额”列（实收全部为 0）",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../fixtures/销售明细-缺实收金额列.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        {
+          "path": "table:全公司/实收（元）",
+          "expected": 0
+        },
+        {
+          "path": "facts:company.revenueCents",
+          "expected": 0
+        }
+      ],
+      "mustContain": [
+        "实收金额"
+      ],
+      "mustNotContain": [
+        "客单价",
+        "同比"
+      ]
+    }
+  }
+}

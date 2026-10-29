@@ -1,0 +1,43 @@
+{
+  "id": "S-16",
+  "title": "异常：损坏的 xlsx（截断字节）",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../fixtures/销售明细-损坏.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "invalid_input"
+      }
+    }
+  ],
+  "expect": {
+    "state": "awaiting_initiator",
+    "pauseCode": "invalid_input",
+    "checks": {
+      "pause": {
+        "code": "invalid_input",
+        "messageContains": "无法读取"
+      }
+    }
+  }
+}
