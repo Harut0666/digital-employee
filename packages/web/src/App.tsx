@@ -13,10 +13,10 @@ import { TaskPanel } from "./components/TaskPanel";
 import type { CardActions } from "./components/Cards";
 import { ROLE_LABELS } from "./view/permissions";
 
-const SECTIONS: Record<string, string[]> = {
-  "weekly-report": ["本周摘要", "核心指标", "品类表现", "异常与原因", "数据质量", "下周关注"],
-};
-const DEFAULT_SECTIONS = ["摘要", "正文", "来源清单"];
+const DEFAULT_SECTIONS = [
+  { id: "summary", heading: "摘要" },
+  { id: "body", heading: "正文" },
+];
 
 const PAGE_TITLES = { replay: "事件回放", config: "员工配置", settings: "设置" } as const;
 
@@ -77,7 +77,7 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
       setPanelOpen(true);
       panelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     },
-    sections: SECTIONS[task.snapshot?.employee ?? ""] ?? DEFAULT_SECTIONS,
+    sections: employee?.reviewSections ?? DEFAULT_SECTIONS,
     downloadUrl: (kind) => (taskId ? api.deliverableUrl(taskId, kind) : undefined),
   };
 

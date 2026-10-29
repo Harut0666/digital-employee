@@ -90,8 +90,8 @@ export function createMockApi(getRole: () => UiRole): WebApi {
   function admit(t: MockTask) {
     setTimeout(() => {
       const names = t.uploads.map((u) => u.file.name);
-      const hasSales = t.employee !== "weekly-report" || t.uploads.some((u) => u.slot === "sales");
-      const hasMinutes = t.employee !== "weekly-report" || t.uploads.some((u) => u.slot === "minutes") || t.allowMissingMinutes;
+      const hasSales = t.employee !== "weekly-report" || t.uploads.some((u) => u.slot === "salesFile");
+      const hasMinutes = t.employee !== "weekly-report" || t.uploads.some((u) => u.slot === "minutesFiles") || t.allowMissingMinutes;
       const needDims = t.employee === "weekly-report" && hasSales && !names.some((n) => /\.xlsx?$/i.test(n)) && !(names.some((n) => /门店/.test(n)) && names.some((n) => /目标/.test(n)));
       const options: TaskCommand["type"][] = ["supplement", "terminate"];
       if (!hasSales) {

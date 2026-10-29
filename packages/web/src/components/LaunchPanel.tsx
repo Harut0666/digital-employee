@@ -6,36 +6,21 @@ import type { RJSFSchema } from "@rjsf/utils";
 import { Button, Upload } from "antd";
 import { CheckCircleFilled, CloseCircleFilled, InboxOutlined, SendOutlined, MinusCircleOutlined } from "@ant-design/icons";
 import type { PauseReason } from "@de/core/contract";
-import type { EmployeeInfo, UploadItem, UploadSlot } from "../api";
+import type { EmployeeInfo, UploadItem } from "../api";
 import { computePrecheck, missingKeysOfPause } from "../view/precheck";
+import { stripFileFields, uploadSlots, type UploadSlotDef } from "../view/upload-slots";
 
-interface SlotDef {
-  slot: UploadSlot;
-  title: string;
-  hint: string;
-  accept: string;
-}
-
-/** 各员工的上传区。契约里没有“员工需要哪些附件”，先在前端按员工写死，T5 之后可改为读配置。 */
-const SLOTS: Record<string, SlotDef[]> = {
-  "weekly-report": [
-    { slot: "sales", title: "销售明细", hint: "支持 Excel、CSV，单个文件不超过 50MB", accept: ".xlsx,.xls,.csv" },
-    { slot: "minutes", title: "周会纪要", hint: "支持 Word、PDF，单个文件不超过 50MB", accept: ".docx,.pdf" },
-  ],
-};
-const DEFAULT_SLOTS: SlotDef[] = [{ slot: "other", title: "资料文件", hint: "支持 Word、PDF、Markdown，单个文件不超过 50MB", accept: ".docx,.pdf,.md,.txt" }];
-
-export function UploadBox({ def, files, onChange }: { def: SlotDef; files: File[]; onChange: (f: File[]) => void }) {
+export function UploadBox({ def, files, onChange }: { def: UploadSlotDef; files: File[]; onChange: (f: File[]) => void }) {
   return (
     <div className="panel-card">
       <h4>{def.title}</h4>
       <Upload.Dragger
-        multiple
-        accept={def.accept}
+        multiple={def.multiple}
+        accept={def.accept || undefined}
         showUploadList={{ showRemoveIcon: true }}
         fileList={files.map((f, i) => ({ uid: `${f.name}-${i}`, name: f.name, size: f.size, status: "done" as const, originFileObj: f as never }))}
         beforeUpload={(f) => {
-          onChange([...files, f]);
+          onChange(def.multiple ? [...files, f] : [f]);
           return false;
         }}
         onRemove={(f) => onChange(files.filter((x, i) => `${x.name}-${i}` !== f.uid))}
@@ -84,18 +69,21 @@ export function LaunchPanel({
   disabled?: boolean;
   onSubmit: (form: Record<string, unknown>, uploads: UploadItem[]) => void;
 }) {
-  const schema = employee.formSchema as RJSFSchema;
+  // 文件字段由上传区负责，表单里只渲染其余字段
+  const { schema: formSchema, uiSchema } = useMemo(() => stripFileFields(employee.formSchema, employee.formUi), [employee]);
+  const schema = formSchema as RJSFSchema;
   const [formData, setFormData] = useState<Record<string, unknown>>(
     () => initialForm ?? (getDefaultFormState(validator, schema, {}) as Record<string, unknown>),
   );
-  const slots = SLOTS[employee.id] ?? DEFAULT_SLOTS;
+  const slots = useMemo(() => uploadSlots(employee.formSchema, employee.formUi), [employee]);
   const [files, setFiles] = useState<Record<string, File[]>>({});
   const formRef = useRef<{ validateForm: () => boolean }>(null);
 
   const precheck = useMemo(() => {
-    const all = (s: UploadSlot) => (files[s] ?? []).map((f) => ({ name: f.name }));
+    const all = (s: string) => (files[s] ?? []).map((f) => ({ name: f.name }));
     const period = (formData as { period?: { year: number; week: number } }).period;
-    return computePrecheck({ period, sales: all("sales"), minutes: all("minutes") });
+    // 预检按文件字段名取（经营周报员工：salesFile、minutesFiles）
+    return computePrecheck({ period, sales: all("salesFile"), minutes: all("minutesFiles") });
   }, [files, formData]);
 
   const uploads: UploadItem[] = slots.flatMap((s) => (files[s.slot] ?? []).map((file) => ({ slot: s.slot, file })));
@@ -111,7 +99,7 @@ export function LaunchPanel({
           formData={formData}
           validator={validator}
           onChange={(e) => setFormData((e.formData ?? {}) as Record<string, unknown>)}
-          uiSchema={{ "ui:submitButtonOptions": { norender: true } }}
+          uiSchema={{ ...uiSchema, "ui:submitButtonOptions": { norender: true } }}
           formContext={{ labelAlign: "left", labelCol: { span: 24 }, wrapperCol: { span: 24 } }}
           liveValidate={false}
           showErrorList={false}
