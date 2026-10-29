@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "周报草稿",
+  "description": "撰写周报叙述的结果，结构与契约中的 DraftReport 一致。叙述中的数字只写槽位，如 {{company.wow}}。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "sections", "causes"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "周报标题，如“经营周报（2026 年第 44 周）”。"
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "description": "章节，顺序与 qc.yaml 中的章节一致。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "heading", "paragraphs"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "章节编号，取自输入中的 structure.sections。" },
+          "heading": { "type": "string", "minLength": 1, "description": "章节标题，与 structure.sections 中的标题一字不差。" },
+          "paragraphs": { "type": "array", "items": { "type": "string" }, "description": "正文段落，数字只写槽位。" },
+          "bullets": { "type": "array", "items": { "type": "string" }, "description": "要点列表，数字只写槽位。" }
+        }
+      }
+    },
+    "causes": {
+      "type": "array",
+      "description": "原因匹配结果，原样取自 match_causes 的结果，每条异常一条。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["anomalyId", "cause", "level"],
+        "properties": {
+          "anomalyId": { "type": "string", "minLength": 1, "description": "异常编号，如 store:HZ01、region:华南。" },
+          "cause": { "type": "string", "minLength": 1, "description": "原因摘要；纪要没提到时写“原因待核实”。" },
+          "level": {
+            "type": "string",
+            "enum": ["store", "store_type", "region", "company", "unknown"],
+            "description": "原因层级。"
+          },
+          "sourceWeek": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["year", "week"],
+            "properties": { "year": { "type": "integer" }, "week": { "type": "integer" } },
+            "description": "原因出自哪一周的纪要。"
+          },
+          "quote": { "type": "string", "minLength": 1, "description": "原文摘录，必须是所注周次纪要原文的连续片段。" }
+        }
+      }
+    },
+    "revisionNotes": {
+      "type": "array",
+      "description": "仅重做时提供：逐条退回意见对应的修改说明。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment", "sections", "change"],
+        "properties": {
+          "comment": { "type": "string", "minLength": 1, "description": "对应的退回意见。" },
+          "sections": { "type": "array", "items": { "type": "string" }, "description": "改动的章节编号。" },
+          "change": { "type": "string", "minLength": 1, "description": "改了什么。" }
+        }
+      }
+    }
+  }
+}

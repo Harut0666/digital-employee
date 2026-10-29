@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "退回意见解读结果",
+  "description": "把审核人的退回意见拆成逐条意见，指明每条要改的章节。没有退回意见（首次执行）时提交空清单。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "description": "逐条意见；首次执行或没有退回意见时为空数组。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "comment", "sections", "kind", "action", "needsHuman"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "意见编号，按出现顺序写 F1、F2……" },
+          "comment": { "type": "string", "minLength": 1, "description": "这一条意见的原话或忠实转述。" },
+          "sections": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "要改动的章节编号，取自输入中的 sections；确实无法对应到章节时为空数组。"
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["narrative", "cause", "calculation_basis", "unclear"],
+            "description": "narrative 为改叙述和结构；cause 为改异常原因；calculation_basis 为要求更换计算口径；unclear 为无法判断要求。"
+          },
+          "action": { "type": "string", "minLength": 1, "description": "打算怎么改，一句话。不写数字。" },
+          "needsHuman": {
+            "type": "boolean",
+            "description": "要求更换计算口径，或意见与《周报格式要求》冲突、无法照办时为 true，需转待人工处理。"
+          }
+        }
+      }
+    }
+  }
+}

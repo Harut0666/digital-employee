@@ -1,0 +1,49 @@
+{
+  "id": "A-04",
+  "title": "数据缺失与退货",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 42
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W42.docx",
+      "path": "../scenario-a/周会纪要_2026W42.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered"
+  }
+}
