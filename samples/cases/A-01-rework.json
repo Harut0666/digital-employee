@@ -17,5 +17,19 @@
     },
     { "actor": "reviewer", "command": { "type": "approve" }, "expect": { "state": "delivered", "deliverables": ["docx", "qc_record"] } }
   ],
-  "expect": { "state": "delivered" }
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:全公司/实收（元）", "expected": 573635 },
+        { "path": "table:全公司/环比", "expected": -9.3 },
+        { "path": "table:华东/环比", "expected": -12.0 },
+        { "path": "table:华南/环比", "expected": -12.7 },
+        { "path": "facts:quality.returns.count", "expected": 11 }
+      ],
+      "mustContain": ["以数据为准", "商场消防改造停业三天", "第二杯半价", "退货 11 笔"],
+      "mustNotContain": ["客单价", "同比"],
+      "anomalies": ["region:华东", "region:华南", "store:HZ01", "store:SH02"]
+    }
+  }
 }

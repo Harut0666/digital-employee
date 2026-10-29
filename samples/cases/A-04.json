@@ -44,6 +44,51 @@
     }
   ],
   "expect": {
-    "state": "delivered"
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:全公司/实收（元）", "expected": 605909 },
+        { "path": "table:全公司/环比", "expected": -11.7 },
+        { "path": "table:全公司/毛利率", "expected": 61.0 },
+        { "path": "table:华东/实收（元）", "expected": 230947 },
+        { "path": "table:华东/环比", "expected": -15.8 },
+        { "path": "table:华东/目标达成率", "expected": 98.3 },
+        { "path": "table:华南/实收（元）", "expected": 170692 },
+        { "path": "table:华南/环比", "expected": -12.8 },
+        { "path": "table:华南/目标达成率", "expected": 88.9 },
+        { "path": "table:华北/实收（元）", "expected": 128159 },
+        { "path": "table:华北/环比", "expected": -5.6 },
+        { "path": "table:华北/目标达成率", "expected": 98.6 },
+        { "path": "table:西南/实收（元）", "expected": 76111 },
+        { "path": "table:西南/环比", "expected": -4.9 },
+        { "path": "table:西南/目标达成率", "expected": 92.8 },
+        { "path": "facts:company.deliveryShare", "expected": 31.5 },
+        { "path": "facts:quality.returns.count", "expected": 15 },
+        { "path": "facts:quality.returns.revenueCents", "expected": -656 },
+        { "path": "facts:stores.GZ02.wow", "expected": -24.8 },
+        { "path": "facts:stores.SZ02.wow", "expected": 50.5 },
+        { "path": "facts:stores.CD02.wow", "expected": 44.8 }
+      ],
+      "mustContain": [
+        "第 42 周纪要",
+        "广州海珠店",
+        "10 月 14 日",
+        "手工台账",
+        "北京朝阳店",
+        "草莓奶油切块",
+        "退货",
+        "节后",
+        "写字楼店"
+      ],
+      "mustNotContain": ["客单价", "同比"],
+      "anomalies": [
+        "region:华东",
+        "region:华南",
+        "store:GZ02",
+        "store:SZ02",
+        "store:BJ02",
+        "store:CD02"
+      ]
+    }
   }
 }

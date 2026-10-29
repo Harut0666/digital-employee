@@ -56,6 +56,16 @@
     }
   ],
   "expect": {
-    "state": "delivered"
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:全公司/实收（元）", "expected": 573635 },
+        { "path": "table:全公司/环比", "expected": -9.3 },
+        { "path": "table:华南/目标达成率", "expected": 92.3 }
+      ],
+      "mustContain": ["以数据为准", "本周摘要"],
+      "mustNotContain": ["客单价", "同比"],
+      "pause": { "code": "missing_sales", "messageContains": "销售明细" }
+    }
   }
 }

@@ -4,6 +4,8 @@
 
 本目录给出场景 A 公开样例 A-01 至 A-05 的用例文件。用例只描述“发起什么、按什么顺序发什么命令、期望停在哪”，不含模型输出；需要模型的判断步骤由 `--scripted` 指定的剧本式假模型（T7 放在 `scripts/`）或真实模型完成。
 
+用例文件里还能用 `expect.checks` 写判定要点（数字、必须出现和不得出现的文本、必须判出的异常、期望的暂停），由 `de check` 与 `de run-cases` 自动核对交付物，见下文“判定要点”。
+
 ## 文件结构
 
 ```jsonc
@@ -44,16 +46,71 @@
 | `deliverables` | 快照里必须存在的交付物种类数组，如 `["docx", "qc_record"]` |
 | `ok` | 仅步骤级：命令是否应被接受，缺省 `true`。设为 `false` 可用来验证越权、非法流转被拒绝 |
 | `error` | 仅步骤级且 `ok: false`：期望的错误码，`forbidden_role` / `illegal_transition` / `invalid_input` / `not_found` |
+| `checks` | 仅顶层：判定要点，见下节 |
 
 执行规则：
 
 1. 命令被接受后调用 `waitForSettled`，用返回的快照检查步骤期望；命令被拒绝则用当前快照检查。
 2. 步骤期望不满足就停止，不再执行后面的步骤，用例判为失败；命令被拒绝而 `ok` 不是 `false` 同样失败。
-3. 所有步骤通过后检查顶层 `expect`。
+3. 所有步骤通过后检查顶层 `expect`（`state` / `pauseCode` / `deliverables`）。
+4. `checks` 不在 `run-case` 里核对（它只驱动引擎）；`de check` 与 `de run-cases` 才核对交付物。
+
+## 判定要点（`expect.checks`）
+
+公开样例用例的“判定要点”逐条转写成可自动核对的条目，放在顶层 `expect.checks`。核对器输入是**一次运行的结果目录**（`result.json` + `events.jsonl` + 交付的 Word），逐项给出通过或不通过及原因。
+
+```jsonc
+"expect": {
+  "state": "delivered",
+  "checks": {
+    "numbers": [                                   // 数字，默认允许 ±0.5% 的计算误差
+      { "path": "table:全公司/实收（元）", "expected": 573635 },   // 周报正文表格单元
+      { "path": "table:全公司/环比", "expected": -9.3 },
+      { "path": "facts:company.deliveryShare", "expected": 31.8 }, // 事实 JSON 里的值
+      { "path": "facts:quality.returns.revenueCents", "expected": -260, "tolerance": 0.001 }
+    ],
+    "mustContain": ["以数据为准"],                  // 周报正文必须出现（忽略空白）
+    "mustNotContain": ["客单价", "同比"],            // 周报正文不得出现（忽略空白）
+    "anomalies": ["region:华东", "store:HZ01"],     // 事实里必须判出的异常 id
+    "pause": { "code": "missing_sales",            // 本次运行必须出现过该暂停
+               "messageContains": "销售明细" }      // 提示里必须含的片段（可省略）
+  }
+}
+```
+
+### `numbers` 的两种 `path`
+
+| 写法 | 指向 | 例 |
+|---|---|---|
+| `facts:<点路径>` | `compute_metrics` 输出的事实 JSON | `facts:company.revenueCents`、`facts:regions.华东.wow`、`facts:stores.HZ01.wow`、`facts:quality.duplicates.count`、`facts:topProducts.D02.revenueCents` |
+| `table:<行>/<列>` | 周报 Word 里的表格单元；**行**按首列文字匹配，**列**按表头文字匹配 | `table:全公司/实收（元）`、`table:华南/目标达成率` |
+
+- 数组按业务键取值：门店用编码（`stores.HZ01`）、单品用商品编码（`topProducts.D02`）、品类用品类名（`categories.饮品`）。
+- **`expected` 填“展示口径”的数字**：金额填元，比例填百分数（`-9.3` 表示 `-9.3%`），计数填整数。`facts:` 路径的换算按叶子字段名定，与槽位渲染一致（`revenueCents` 等 → 元，`wow` / `grossMarginRate` / `achievement` / `deliveryShare` → 百分数，`count` → 整数）。
+- 容差是**相对**容差，默认 `0.005`（0.5%），可用 `tolerance` 覆盖（比例多为 1 位小数，0.5% 容差足够吸收取整差）。
+- 单元格里的千分位、正负号、`%` 会被解析成数字；`—`、`不可比` 之类按“不是数字”判不通过。
+
+### 其余字段语义
+
+- **文本比较忽略空白**（含换行与单元格边界）：`mustContain: ["实收 573,635 元"]` 与正文中跨行的同一句话视为相同。
+- **`numbers` 与 `mustContain` 需要交付的 Word**：没有 docx 时这两类记不通过（缺交付物）。
+- **`mustNotContain` 在没交付 Word 时通过**：没有正文就没有违规文本；但一旦交付就会逐字核对，所以它仍能抓住“本该在准入停下却生成了周报”的回归。
+- **`anomalies`**：用事实里稳定的异常 id（`region:<区域>` / `store:<门店编码>`，见 `WeeklyFacts.anomalies`），列出的每一个都必须判出。
+- **`pause`**：在本次运行的**所有暂停**里找 code 等于期望值的最后一条（事件日志里 `state_changed` 的 `pause`），再检查 message 是否含片段。所以 A-03 这种“先暂停、补材料后继续”的用例，仍能核对到中间那次 `missing_sales`。
+- 格式写错（未知字段、`expected` 不是数字、`path` 前缀不认识）时**用例文件直接报错**，不会静默跳过。
+
+### 覆盖说明（已知未覆盖的判定要点）
+
+| 用例 | 判定要点 | 现状 |
+|---|---|---|
+| A-02 | 第 5 条“华南饮品毛利率由 70.4% 降至 60.5%” | 事实里只有品类实收与环比，没有品类毛利率，暂时无法核对；需要先在 `WeeklyFacts` 里加字段 |
+| A-04 | 第 4 条中的“北京朝阳店 15 份、-330 元” | 事实里退货只聚合到笔数与金额（`quality.returns`），单品级退货明细没有进事实，只核对了门店、商品、退货笔数与金额 |
+| A-05 | 第 1 条“不得输出第 46 周的任何销售数字” | 该用例在准入就停下，没有 Word；用 `mustNotContain` 兜住“本不该生成的周报里出现第 46 周”的回归，没有生成周报时按“没有正文”通过 |
+| A-03 | 第 1 条“未上传销售数据时不得生成周报，也不得仅凭纪要编写数字” | 由步骤期望保证（第一次 submit 后停在 `awaiting_initiator`、快照里没有交付物）；`checks` 补的是中间那次 `missing_sales` 暂停与补传后周报的数字 |
 
 ## 输出目录
 
-默认 `out/<id>/`（相对运行命令时的当前目录），可用 `--out` 指定：
+`de run-case` 默认 `out/<id>/`，`de run-cases` 默认 `out/cases/<id>/`（都相对运行命令时的当前目录），可用 `--out` 指定。每条用例一个目录：
 
 | 文件 | 内容 |
 |---|---|
@@ -62,24 +119,26 @@
 | `events.jsonl` | 任务的完整事件日志，每行一个事件 |
 | `workspace/` | 本次运行用的工作区（含 `tasks/<taskId>/`，交付物也在其中）；设置了环境变量 `DE_WORKSPACE` 时改用该目录 |
 
-用 `de replay <out>/workspace <taskId>` 可回放事件。退出码：用例通过为 0，失败为 1，参数或文件错误为 1 或 2。
+`de run-cases` 另外在 `<out>/summary.md` 写汇总：每条用例的结果、核对通过数、模型调用次数、用时，以及未通过项的具体原因；**退出码等于未通过的条数**。
+
+用 `de replay <out>/workspace <taskId>` 可回放事件。`de run-case` 的退出码：用例通过为 0，失败为 1，参数或文件错误为 1 或 2。`de check` 全部通过为 0，有不通过项为 1。
 
 ## 本目录的用例
 
-| 文件 | 类型 | 要点 |
-|---|---|---|
-| `A-01.json` | 正常（第 44 周，纪要与数据不一致） | 发起 → 待审核 → 通过 → 已交付 |
-| `A-02.json` | 正常（第 43 周，重复记录） | 同上 |
-| `A-03.json` | 缺材料 | 只传纪要 → 停在 `missing_sales` → supplement 补传销售明细 → 待审核 → 通过 |
-| `A-04.json` | 数据缺失与退货（第 42 周） | 同 A-01 |
-| `A-05.json` | 超出数据范围（第 46 周） | 停在 `period_out_of_range`，不继续 |
-| `A-01-rework.json` | A-01 变体 | 待审核 → 发起人点“通过”被拒 → 审核人退回（摘要） → 重做 → 通过 → 已交付 |
+| 文件 | 类型 | 要点 | `checks` |
+|---|---|---|---|
+| `A-01.json` | 正常（第 44 周，纪要与数据不一致） | 发起 → 待审核 → 通过 → 已交付 | 核心指标数字 + 文本 + 异常 + 不得出现禁用指标 |
+| `A-02.json` | 正常（第 43 周，重复记录） | 同上 | 数字 + 去重（不得出现未去重的 208,749）+ 文本 + 异常 |
+| `A-03.json` | 缺材料 | 只传纪要 → 停在 `missing_sales` → supplement 补传销售明细 → 待审核 → 通过 | 中间那次 `missing_sales` 暂停 + 补传后周报的数字 |
+| `A-04.json` | 数据缺失与退货（第 42 周） | 同 A-01 | 数字 + 退货/缺失说明 + 文本 + 异常 |
+| `A-05.json` | 超出数据范围（第 46 周） | 停在 `period_out_of_range`，不继续 | 暂停提示里说明实际覆盖范围 |
+| `A-01-rework.json` | A-01 变体 | 待审核 → 发起人点“通过”被拒 → 审核人退回（摘要） → 重做 → 通过 → 已交付 | 与 A-01 相同 |
 
 ## 剧本（`scripts/`）
 
 `scripts/<用例 id>.json` 是配套的剧本式假模型：按步骤 id 列出每一轮模型响应，格式见 `@de/core` 的 `ModelScript`。剧本里每一轮都是 `submit_result` 工具调用，叙述只含 `{{path}}` 槽位（ADR-0002），所以质检是真的通过，不是被桩掉。`A-03` 与 `A-01` 同一份内容（补传销售明细后跑的是同一周）；`A-05` 在准入就停下，剧本为空；`A-01-rework` 多出 `interpret_feedback` 和第二轮 `match_causes`、`write_report`，对应重做。
 
-数字类的判定要点（实收、环比、达成率等）由工具与质检的测试覆盖，不放在用例文件里。
+数字类的判定要点写进用例文件的 `checks`（见上文），由 `de check` / `de run-cases` 核对交付物；`checks` 之外的计算口径（如品类毛利率）仍由工具与质检的测试覆盖。
 
 ## 运行示例
 
@@ -89,4 +148,10 @@ bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples
 
 # 回放刚才那个任务
 bun packages/cli/src/main.ts replay out/A-01/workspace <taskId>
+
+# 只核对一次运行的交付物（不重跑）：第二个参数可以是用例文件，也可以是单独的 {"checks": {...}}
+bun packages/cli/src/main.ts check out/A-01 samples/cases/A-01.json
+
+# 批量跑 + 核对（glob 由命令行自己解析，Windows 下也能用），汇总写到 out/cases/summary.md
+bun packages/cli/src/main.ts run-cases "samples/cases/A-0*.json" --scripted --out out/cases
 ```

@@ -79,6 +79,37 @@ describe("parseCase", () => {
   ])("rejects an invalid case: %s", (_label, raw, pattern) => {
     expect(() => parseCase(raw, tmp())).toThrow(pattern);
   });
+
+  test("parses the top-level expect.checks into check items", () => {
+    const raw = structuredClone(A03) as Record<string, unknown>;
+    raw.expect = {
+      state: "delivered",
+      checks: {
+        numbers: [{ path: "table:全公司/实收（元）", expected: 573635 }],
+        mustContain: ["以数据为准"],
+        mustNotContain: ["客单价"],
+        anomalies: ["region:华东"],
+        pause: { code: "missing_sales", messageContains: "销售明细" },
+      },
+    };
+    const c = parseCase(raw, caseDir());
+    expect(c.expect?.checks?.numbers).toEqual([{ path: "table:全公司/实收（元）", expected: 573635 }]);
+    expect(c.expect?.checks?.mustNotContain).toEqual(["客单价"]);
+    expect(c.expect?.checks?.pause?.code).toBe("missing_sales");
+  });
+
+  test("rejects checks on a step expectation (only the top-level expect may carry them)", () => {
+    const raw = structuredClone(A03) as Record<string, unknown>;
+    const steps = raw.steps as Record<string, unknown>[];
+    steps[0]!.expect = { state: "awaiting_initiator", checks: { anomalies: ["region:华东"] } };
+    expect(() => parseCase(raw, caseDir())).toThrow(/steps\[0\]/);
+  });
+
+  test("rejects a malformed checks block and names the case file", () => {
+    const raw = structuredClone(A03) as Record<string, unknown>;
+    raw.expect = { checks: { numbers: [{ path: "doc:xxx", expected: 1 }] } };
+    expect(() => parseCase(raw, caseDir(), "A-99.json")).toThrow(/A-99\.json.*checks/);
+  });
 });
 
 describe("runCase", () => {
