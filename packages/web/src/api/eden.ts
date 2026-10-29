@@ -1,13 +1,32 @@
 // 真实数据层：Eden treaty 对接 T3 的 Elysia 服务，SSE 订阅任务事件。
 //
-// 注意：packages/server 目前导出的 App 还是空 Elysia（T3 未合并），treaty<App> 推导不出路由类型，
-// 所以这里把 client 收窄成下面的 ApiShape，路由与请求体按 docs/specs/tickets/T3-server-cli.md 约定书写。
-// T3 合并后，如果路由类型可用，可以去掉 ApiShape 直接用 treaty<App> 的推导结果。
+// treaty<App> 的路由类型很深（multipart 联合体、带 `{ id }` 的动态路由），这里先把 client 收窄成下面的
+// ApiShape，路由和请求体按 packages/server/src/index.ts 的实际路由书写；返回值仍然由 Eden 解包。
 
 import { treaty } from "@elysiajs/eden";
-import type { CommandResult, TaskEvent, TaskSnapshot, TaskSummary } from "@de/core/contract";
+import type { CommandResult, TaskEvent, TaskEventType, TaskSnapshot, TaskSummary } from "@de/core/contract";
 import type { App } from "@de/server";
 import type { CreateTaskInput, DeliverableKind, EmployeeInfo, UiRole, UploadItem, WebApi } from "./types";
+
+/** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
+const EVENT_TYPE_SET: Record<TaskEventType, true> = {
+  task_created: true,
+  form_updated: true,
+  state_changed: true,
+  transition_rejected: true,
+  step_started: true,
+  step_completed: true,
+  step_failed: true,
+  tool_called: true,
+  tool_result: true,
+  tool_denied: true,
+  model_called: true,
+  qc_result: true,
+  review_decision: true,
+  deliverable_created: true,
+  fault_injected: true,
+};
+const EVENT_TYPES = Object.keys(EVENT_TYPE_SET) as TaskEventType[];
 
 type Reply<T> = Promise<{ data: T | null; error: { status: unknown; value: unknown } | null }>;
 
@@ -69,16 +88,20 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
     },
     subscribe(id, afterSeq, onEvent) {
       // EventSource 不能带自定义请求头；SSE 只读，不依赖角色。
+      // 服务端为每条事件写了 `event: <type>`，是具名事件，onmessage 收不到，要按类型逐个监听。
       const es = new EventSource(`${origin}/api/tasks/${encodeURIComponent(id)}/stream?after=${afterSeq}`);
-      es.onmessage = (m) => {
+      const handle = (m: MessageEvent<string>) => {
         try {
           onEvent(JSON.parse(m.data) as TaskEvent);
         } catch {
-          /* 忽略心跳等非 JSON 消息 */
+          /* 忽略非 JSON 消息 */
         }
       };
+      for (const type of EVENT_TYPES) es.addEventListener(type, handle as EventListener);
+      es.onmessage = handle;
       return () => es.close();
     },
     deliverableUrl: (id, kind: DeliverableKind) => `${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}`,
   };
 }
+
