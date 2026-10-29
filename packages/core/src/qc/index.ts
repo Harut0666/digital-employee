@@ -2,6 +2,7 @@
 import type { QcCheckResult, QcEngine, QcInput } from "../contract";
 import {
   checkAnomalyCoverage,
+  checkContradictionCoverage,
   checkFeedbackResponse,
   checkForbiddenTerms,
   checkLength,
@@ -22,6 +23,7 @@ export function createQcEngine(): QcEngine {
         builtin.traceability.enabled ? checkTraceability(input) : undefined,
         builtin.anomaly_coverage.enabled ? checkAnomalyCoverage(input) : undefined,
         builtin.quote_integrity.enabled ? checkQuoteIntegrity(input) : undefined,
+        builtin.contradiction_coverage.enabled ? checkContradictionCoverage(input) : undefined,
         builtin.forbidden_terms.enabled ? checkForbiddenTerms(input) : undefined,
         builtin.length.enabled ? checkLength(input) : undefined,
         builtin.feedback_response.enabled ? checkFeedbackResponse(input) : undefined,

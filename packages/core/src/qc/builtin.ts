@@ -119,6 +119,33 @@ export function checkQuoteIntegrity(input: QcInput): QcCheckResult {
   return result("quote_integrity", "引用真实", issues, fixCauses(input));
 }
 
+/** “异常与原因”章节：按场景 A 的约定先找 id=anomalies，再退化为标题含“异常”的章节。 */
+function anomaliesSection(draft: QcInput["draft"]) {
+  return draft.sections.find((s) => s.id === "anomalies") ?? draft.sections.find((s) => s.heading.includes("异常"));
+}
+
+/**
+ * 纪要矛盾覆盖：程序判出的每一条矛盾，草稿都要用 contradictionRefs 引用，
+ * 且“异常与原因”章节里出现矛盾对象名。
+ */
+export function checkContradictionCoverage(input: QcInput): QcCheckResult {
+  const { draft, contradictions } = input;
+  const issues: string[] = [];
+  const refs = new Set(draft.contradictionRefs ?? []);
+  const section = anomaliesSection(draft);
+  const sectionText = section ? [section.heading, ...section.paragraphs, ...(section.bullets ?? [])].join("\n") : undefined;
+  for (const contradiction of contradictions ?? []) {
+    if (!refs.has(contradiction.id)) {
+      issues.push(`纪要矛盾 ${contradiction.id}（${contradiction.subject.name}）没有写进“异常与原因”章节`);
+    }
+    // 缺章节由“结构完整”负责；这里只在章节存在时核对对象名，避免同一个问题报两遍。
+    if (sectionText !== undefined && !sectionText.includes(contradiction.subject.name)) {
+      issues.push(`“异常与原因”章节没有提到矛盾对象“${contradiction.subject.name}”`);
+    }
+  }
+  return result("contradiction_coverage", "纪要矛盾覆盖", issues, fixWrite(input));
+}
+
 /** 意见响应（仅重做时）：修改说明覆盖退回意见，且被要求修改的章节内容确实变了。 */
 export function checkFeedbackResponse(input: QcInput): QcCheckResult | undefined {
   const { draft, previousDraft, feedback } = input;

@@ -5,7 +5,7 @@ import type { JudgeStepConfig, QcConfig } from "./employee-config";
 import type { ModelProvider, ToolClient } from "./engine";
 import type { WeeklyFacts } from "./facts";
 import type { QcCheckResult } from "./qc";
-import type { ParseMinutesOutput } from "./tools";
+import type { DetectedContradiction, ParseMinutesOutput } from "./tools";
 
 export type JudgmentFailure =
   | "step_rounds"
@@ -62,6 +62,8 @@ export interface DraftReport {
   }[];
   /** 重做时的修改说明 */
   revisionNotes?: { comment: string; sections: string[]; change: string }[];
+  /** 引用的纪要矛盾 id（来自 detect_contradictions 的输出），供“纪要矛盾覆盖”质检核对 */
+  contradictionRefs?: string[];
 }
 
 export interface QcInput {
@@ -69,6 +71,8 @@ export interface QcInput {
   draft: DraftReport;
   facts: WeeklyFacts;
   minutes: ParseMinutesOutput;
+  /** 程序判出的纪要矛盾（detect_contradictions 步骤的输出）；缺省视为没有矛盾 */
+  contradictions?: DetectedContradiction[];
   /** 渲染后的统计，由 render_report_docx 返回 */
   rendered?: { estimatedPages: number; chartCount: number };
   /** 重做时的上一版草稿和退回意见 */

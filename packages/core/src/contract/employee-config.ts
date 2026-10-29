@@ -149,6 +149,8 @@ export const QcConfigSchema = z.object({
     traceability: z.object({ enabled: z.boolean().default(true) }),
     anomaly_coverage: z.object({ enabled: z.boolean().default(true), threshold: z.number().positive() }),
     quote_integrity: z.object({ enabled: z.boolean().default(true) }),
+    /** 纪要矛盾覆盖：程序判出的每条矛盾都要写进周报。老配置没有这一节时按开启处理（内置质检不能删除） */
+    contradiction_coverage: z.object({ enabled: z.boolean().default(true) }).prefault({}),
     forbidden_terms: z.object({ enabled: z.boolean().default(true), terms: z.array(z.string()) }),
     length: z.object({ enabled: z.boolean().default(true), maxPages: z.number().positive() }),
     feedback_response: z.object({ enabled: z.boolean().default(true) }),

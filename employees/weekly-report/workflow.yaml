@@ -89,6 +89,16 @@ steps:
       durationSec: 90
     rework: true
 
+  # 纪要矛盾完全由程序判定（design.md §10.3）：模型只在上一步抽取可核验说法，这里按 qc.yaml 的阈值算。
+  - id: detect_contradictions
+    label: 判定纪要矛盾
+    kind: compute
+    tool: detect_contradictions
+    input:
+      claims: $steps.match_causes.claims
+      facts: $steps.compute_metrics
+      thresholds: $config.contradiction
+
   - id: write_report
     label: 撰写周报叙述
     kind: judge
@@ -100,11 +110,10 @@ steps:
       facts: $steps.compute_metrics
       minutes: $steps.parse_minutes.minutes
       causes: $steps.match_causes.causes
-      claims: $steps.match_causes.claims
+      contradictions: $steps.detect_contradictions.contradictions
       feedback: $steps.interpret_feedback.items
       previousDraft: $steps.write_report
       structure: $config.builtin.structure
-      contradiction: $config.contradiction
       forbiddenTerms: $config.builtin.forbidden_terms.terms
       anomalyThreshold: $config.builtin.anomaly_coverage.threshold
     tools: []

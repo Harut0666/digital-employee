@@ -74,6 +74,9 @@ const TOOL_CALL_TIMEOUT_MS = 120_000;
 /** 未配置 factsStep 时，事实取自这个步骤（场景 A 的约定）。 */
 const DEFAULT_FACTS_STEP = "compute_metrics";
 
+/** 用这个工具的计算步骤输出纪要矛盾，供“纪要矛盾覆盖”质检使用。 */
+const CONTRADICTIONS_TOOL = "detect_contradictions";
+
 /** 准入不通过时各暂停原因下发起人可以做的事。 */
 function initiatorOptions(code: PauseCode): TaskCommand["type"][] {
   switch (code) {
@@ -229,6 +232,14 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
   function factsStepId(rt: Runtime): string {
     return rt.config.workflow.factsStep ?? DEFAULT_FACTS_STEP;
+  }
+
+  /** 程序判定纪要矛盾的步骤（工具为 detect_contradictions 的计算步骤）；没有则不检查矛盾覆盖。 */
+  function contradictionsOf(rt: Runtime): QcInput["contradictions"] {
+    const step = rt.config.workflow.steps.find((s) => s.kind === "compute" && s.tool === CONTRADICTIONS_TOOL);
+    if (!step) return undefined;
+    const output = optionalOutput(rt, step.id) as { contradictions?: unknown } | undefined;
+    return Array.isArray(output?.contradictions) ? (output.contradictions as QcInput["contradictions"]) : undefined;
   }
 
   /** 某步骤输出的报告草稿，用事实步骤的输出做槽位渲染。 */
@@ -596,6 +607,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
           config: rt.config.qc,
           draft: optionalOutput(rt, sources.draft) as DraftReport,
           facts: optionalOutput(rt, factsStepId(rt)) as QcInput["facts"],
+          contradictions: contradictionsOf(rt),
           minutes: optionalOutput(rt, sources.minutes) as QcInput["minutes"],
           rendered:
             rendered && typeof rendered.estimatedPages === "number" && typeof rendered.chartCount === "number"

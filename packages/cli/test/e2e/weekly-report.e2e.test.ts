@@ -18,7 +18,7 @@ import {
 
 afterEach(cleanupE2E);
 
-const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "forbidden_terms", "length"];
+const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "contradiction_coverage", "forbidden_terms", "length"];
 
 function qcFailures(snapshot: TaskSnapshot): string[] {
   return (snapshot.qc ?? []).filter((c) => !c.passed).map((c) => `${c.label}：${c.issues.join("；")}`);
@@ -64,6 +64,20 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     expect(ofType(events, "tool_denied")).toHaveLength(0);
     expect(stateTrail(events)).toEqual(["draft", "admission", "running", "qc", "awaiting_review", "delivered"]);
     events.forEach((e, i) => expect(e.seq).toBe(i + 1));
+
+    // 纪要矛盾由程序判定：事件流里有 detect_contradictions 步骤，判出且只判出华南“持平”一条
+    expect(review.steps.find((s) => s.id === "detect_contradictions")?.status).toBe("done");
+    const contradictionsCall = ofType(events, "tool_called").find((e) => e.tool === "detect_contradictions");
+    expect(contradictionsCall?.stepId).toBe("detect_contradictions");
+    const detected = readArtifact<{ contradictions: { id: string; rule: string; subject: { level: string; key: string; name: string } }[] }>(
+      stepOutputPath(events, "detect_contradictions")!,
+    );
+    expect(detected.contradictions).toHaveLength(1);
+    expect(detected.contradictions[0]).toMatchObject({ id: "contradiction:region:华南", rule: "flat", subject: { level: "region", key: "华南", name: "华南" } });
+    // 检验记录里有“纪要矛盾覆盖”，且真实通过
+    const recordJson = JSON.parse(readFileSync(record!.path, "utf8")) as { checks: { id: string; passed: boolean }[] };
+    expect(recordJson.checks.map((c) => c.id)).toContain("contradiction_coverage");
+    expect(recordJson.checks.find((c) => c.id === "contradiction_coverage")).toMatchObject({ passed: true });
   });
 
   test("渲染步骤收到的是已渲染槽位的草稿，并带任务幂等键", async () => {
@@ -190,7 +204,7 @@ describe("E2E · 工具故障注入", () => {
     expect(paused.state).toBe("awaiting_operator");
     expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
     expect(paused.pause?.message).toContain("compute_metrics");
-    expect(paused.pause?.message).toContain("已完成 2/9 步");
+    expect(paused.pause?.message).toContain("已完成 2/10 步");
     const events = await e2e.events(paused.id);
     expect(ofType(events, "tool_called").filter((e) => e.tool === "compute_metrics").map((e) => e.attempt)).toEqual([1, 2, 3]);
     expect(ofType(events, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
@@ -255,7 +269,7 @@ describe("E2E · 断点恢复", () => {
     const events = await e2e.events(taskId);
     events.forEach((ev, i) => expect(ev.seq).toBe(i + 1));
     const started = startedSteps(events);
-    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "render_document", "qc"]) {
+    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "detect_contradictions", "render_document", "qc"]) {
       expect(started.filter((s) => s === id)).toHaveLength(1);
     }
     expect(started.filter((s) => s === "write_report")).toHaveLength(2);
