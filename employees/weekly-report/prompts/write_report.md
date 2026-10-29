@@ -27,8 +27,8 @@
 
 `sections` 必须按 `structure.sections` 的顺序，包含全部六章，`id` 和 `heading` 与其一字不差：
 
-1. **本周摘要**（`summary`）：不超过 `structure.summaryMaxSentences` 句，按句号、问号、感叹号数。依次交代全公司实收（`{{company.revenue}}`）、环比（`{{company.wow}}`）、毛利率、目标达成率，再用 1 至 2 句讲最重要的异常。`partialPeriod` 为真时，第一句先说明数据只到事实 `dataCoverage` 的截止日（写成“10 月 29 日”这样的日期），周报按已有数据编写。
-2. **核心指标**（`metrics`）：1 至 2 句点评，如哪个区域达成最好、哪个区域最需关注，数字用槽位。不要逐项罗列，表格由程序生成。
+1. **本周摘要**（`summary`）：不超过 `structure.summaryMaxSentences` 句，按句号、问号、感叹号数。依次交代全公司实收（`{{company.revenue}}`）、环比（`{{company.wow}}`）、毛利率、目标达成率与**外卖占比**（用槽位），再用 1 至 2 句讲最重要的异常。`partialPeriod` 为真时，第一句先说明数据只到事实 `dataCoverage` 的截止日（写成“10 月 29 日”这样的日期），周报按已有数据编写。
+2. **核心指标**（`metrics`）：1 至 2 句点评，如哪个区域达成最好、哪个区域最需关注，数字用槽位。**点评里必须写出全公司毛利率与外卖占比**（用 `{{company.grossMarginRate}}`、`{{company.deliveryShare}}` 槽位），再讲区域达成情况。不要逐项罗列，表格由程序生成。
 3. **品类表现**（`categories`）：用要点写各品类实收与环比的主要特点，再用一个要点列出本周实收前 5 名单品（单品名按 `facts.topProducts` 的顺序写，实收用槽位）。
 4. **异常与原因**（`anomalies`）：
    - 对 `facts.anomalies` 里的**每一条**异常写一个要点，先区域后门店，同级按环比变化从大到小；一条都不能少。

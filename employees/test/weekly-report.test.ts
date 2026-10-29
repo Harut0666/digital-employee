@@ -448,6 +448,15 @@ describe("SKILL.md 与提示词", () => {
     for (const phrase of ["区域整体原因", "店型整体原因", "不得省略", "causes"]) expect(text).toContain(phrase);
   });
 
+  // 真实模型回归：r2 的 A-01 在“核心指标”只写区域达成率，整篇没有外卖占比（公开样例判定要点 1 要求）。
+  test("核心指标点评必须写到全公司毛利率与外卖占比（缺失时整篇没有这个数）", () => {
+    for (const file of [skill, read("prompts/write_report.md")]) {
+      expect(file).toContain("外卖占比");
+      expect(file).toContain("毛利率");
+    }
+    expect(read("prompts/write_report.md")).toContain("company.deliveryShare");
+  });
+
   // 真实模型回归：数据质量说明只写退货汇总，漏掉纪要里具名的退货/停业事件。
   test("SKILL.md 与 write_report 提示词：数据质量说明逐条写纪要提到的停业与退货事件", () => {
     const write = read("prompts/write_report.md");
