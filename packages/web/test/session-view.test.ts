@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import type { PauseReason } from "@de/core/contract";
 import { deriveSessionView } from "../src/view/session-view";
-import { STEP_DEFS, seqOf } from "./helpers";
+import { STEP_DEFS, seqOf, type EventInput } from "./helpers";
 
-const created = {
+const created: EventInput = {
   type: "task_created",
   employee: "weekly-report",
   configHash: "h",
   form: { period: { year: 2026, week: 44 } },
   attachments: [],
-} as const;
+};
 
 describe("deriveSessionView: 工具故障暂停", () => {
   const events = seqOf([
@@ -101,13 +102,13 @@ describe("deriveSessionView: 暂停被处理后", () => {
   });
 });
 
-const reviewPause = { code: "awaiting_review", message: "质检通过，请审核", options: ["approve", "return"] } as const;
+const reviewPause: PauseReason = { code: "awaiting_review", message: "质检通过，请审核", options: ["approve", "return"] };
 const qcChecks = [
   { id: "structure", label: "结构完整", passed: true, issues: [] },
   { id: "traceability", label: "数据溯源", passed: true, issues: [] },
 ];
 
-const toReview = [
+const toReview: EventInput[] = [
   created,
   { type: "state_changed", from: "draft", to: "admission", trigger: "submit", actor: "initiator" },
   { type: "state_changed", from: "admission", to: "running", trigger: "admission_passed", actor: "system" },
@@ -119,7 +120,7 @@ const toReview = [
   { type: "deliverable_created", kind: "docx", path: "report.docx", sha256: "a" },
   { type: "deliverable_created", kind: "qc_record", path: "qc.md", sha256: "b" },
   { type: "state_changed", from: "qc", to: "awaiting_review", trigger: "qc_passed", actor: "system", pause: reviewPause },
-] as const;
+];
 
 describe("deriveSessionView: 待审核", () => {
   const view = deriveSessionView(seqOf([...toReview]), STEP_DEFS);
@@ -198,3 +199,18 @@ describe("deriveSessionView: 质检不通过与非法操作", () => {
     expect(view.qc?.checks[0]?.issues).toEqual(["数字 12.5 找不到来源"]);
   });
 });
+
+describe("deriveSessionView: 重做后的交付物", () => {
+  test("同类交付物以最新一份为准", () => {
+    const v = deriveSessionView(
+      seqOf([
+        created,
+        { type: "deliverable_created", kind: "docx", path: "v1.docx", sha256: "1" },
+        { type: "deliverable_created", kind: "docx", path: "v2.docx", sha256: "2" },
+      ]),
+      STEP_DEFS,
+    );
+    expect(v.deliverables).toEqual([{ kind: "docx", path: "v2.docx", sha256: "2" }]);
+  });
+});
+

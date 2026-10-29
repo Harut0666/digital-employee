@@ -1,3 +1,5 @@
+import type { PauseCode } from "@de/core/contract";
+
 // 右栏“准入预检”清单：发起前在浏览器里按已选文件做提示，最终以服务端的准入校验为准。
 
 export interface PrecheckInput {
@@ -29,3 +31,22 @@ export function computePrecheck(input: PrecheckInput): PrecheckItem[] {
     { key: "minutes", label: "本周纪要", ok: input.minutes.length > 0 },
   ];
 }
+
+/** 暂停原因 → 需要标红的预检项。 */
+export function missingKeysOfPause(code: PauseCode): PrecheckItem["key"][] {
+  switch (code) {
+    case "missing_sales":
+      return ["sales"];
+    case "missing_dimensions":
+      return ["stores", "targets"];
+    case "minutes_missing":
+    case "minutes_week_mismatch":
+      return ["minutes"];
+    case "period_out_of_range":
+    case "period_incomplete":
+      return ["period"];
+    default:
+      return [];
+  }
+}
+

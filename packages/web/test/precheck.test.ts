@@ -30,3 +30,14 @@ describe("computePrecheck（前端侧的预检提示，最终以服务端准入�
     expect(status(computePrecheck({ period: undefined, sales: [], minutes: [] })).period).toBe(false);
   });
 });
+
+describe("missingKeysOfPause：暂停原因对应的预检项，补充时标红", () => {
+  test("映射", async () => {
+    const { missingKeysOfPause } = await import("../src/view/precheck");
+    expect(missingKeysOfPause("missing_sales")).toEqual(["sales"]);
+    expect(missingKeysOfPause("missing_dimensions")).toEqual(["stores", "targets"]);
+    expect(missingKeysOfPause("minutes_missing")).toEqual(["minutes"]);
+    expect(missingKeysOfPause("period_out_of_range")).toEqual(["period"]);
+    expect(missingKeysOfPause("tool_failed")).toEqual([]);
+  });
+});

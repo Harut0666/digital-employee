@@ -143,12 +143,20 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
         cards.push({ kind: "qc", seq: ev.seq, ts: ev.ts, ...qc });
         break;
       case "deliverable_created":
-        deliverables.push({ kind: ev.kind, path: ev.path, sha256: ev.sha256 });
+        {
+          const next = { kind: ev.kind, path: ev.path, sha256: ev.sha256 };
+          const i = deliverables.findIndex((d) => d.kind === ev.kind);
+          if (i >= 0) deliverables[i] = next;
+          else deliverables.push(next);
+        }
         break;
       case "review_decision": {
-        const review = cards.findLast((c) => c.kind === "review");
-        if (review?.kind === "review") {
-          review.decision = { decision: ev.decision, comment: ev.comment, sections: ev.sections };
+        for (let i = cards.length - 1; i >= 0; i--) {
+          const c = cards[i];
+          if (c?.kind === "review") {
+            c.decision = { decision: ev.decision, comment: ev.comment, sections: ev.sections };
+            break;
+          }
         }
         break;
       }
@@ -184,4 +192,6 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
     lastSeq: last?.seq ?? 0,
   };
 }
+
+
 

@@ -18,7 +18,7 @@ const COMMAND_TRIGGERS: Record<CommandType, string> = {
   return: "return",
 };
 
-export function availableCommands(state: TaskState, role: Role, pause?: Pick<PauseReason, "options">): CommandType[] {
+export function availableCommands(state: TaskState, role: Role, pause?: { readonly options: readonly CommandType[] }): CommandType[] {
   const out = new Set<CommandType>();
   for (const t of TRANSITIONS) {
     if (t.from !== state || t.actor !== role) continue;
@@ -30,7 +30,7 @@ export function availableCommands(state: TaskState, role: Role, pause?: Pick<Pau
   return pause ? all.filter((c) => pause.options.includes(c)) : all;
 }
 
-export function isCommandAllowed(cmd: CommandType, state: TaskState, role: Role, pause?: Pick<PauseReason, "options">): boolean {
+export function isCommandAllowed(cmd: CommandType, state: TaskState, role: Role, pause?: { readonly options: readonly CommandType[] }): boolean {
   return availableCommands(state, role, pause).includes(cmd);
 }
 
@@ -39,3 +39,4 @@ export const ROLE_LABELS: Record<Exclude<Role, "system">, string> = {
   reviewer: "审核人",
   operator: "操作员",
 };
+
