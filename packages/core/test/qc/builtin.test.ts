@@ -224,3 +224,23 @@ describe("篇幅 length", () => {
     expect(get(run({ rendered: { estimatedPages: 2.7, chartCount: 2 } }), "length").passed).toBe(true);
   });
 });
+
+describe("fixStep 可配置（QcInput.fixSteps）", () => {
+  const draftWithBadTerm = () => withSection(makeDraft(), "summary", { paragraphs: ["本周客单价很好。"] });
+
+  test("写作类检查返回 fixSteps.write；原因类检查返回 fixSteps.causes", () => {
+    const fixSteps = { write: "compose_report", causes: "link_causes" };
+    const results = run({ fixSteps, draft: { ...draftWithBadTerm(), causes: [] } });
+    const failed = results.filter((r) => !r.passed);
+    expect(failed.length).toBeGreaterThan(0);
+    for (const r of failed) {
+      expect(r.fixStep).toBe(["anomaly_coverage", "quote_integrity"].includes(r.id) ? "link_causes" : "compose_report");
+    }
+    expect(get(results, "anomaly_coverage").fixStep).toBe("link_causes");
+  });
+
+  test("没有传 fixSteps 时沿用场景 A 的默认 id", () => {
+    const results = run({ draft: { ...draftWithBadTerm(), causes: [] } });
+    expect(get(results, "anomaly_coverage").fixStep).toBe("match_causes");
+  });
+});

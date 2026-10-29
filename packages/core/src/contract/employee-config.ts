@@ -102,6 +102,18 @@ export const EmployeeWorkflowSchema = z.object({
       rendered: z.string().default("render_document"),
     })
     .prefault({}),
+  /**
+   * 质检不通过时“应重跑哪个步骤”（QcCheckResult.fixStep 的取值），按问题类别配置：
+   *   write    写作类问题（结构、溯源、禁用指标、篇幅、意见响应、自定义规则）；缺省为 qcSources.draft
+   *   causes   原因类问题（异常覆盖、引用真实）；缺省 "match_causes"
+   * 显式配置的 id 必须是 workflow 中的步骤。
+   */
+  qcFixSteps: z
+    .object({
+      write: z.string().optional(),
+      causes: z.string().default("match_causes"),
+    })
+    .prefault({}),
   steps: z.array(StepConfigSchema).min(1),
 });
 export type EmployeeWorkflow = z.infer<typeof EmployeeWorkflowSchema>;

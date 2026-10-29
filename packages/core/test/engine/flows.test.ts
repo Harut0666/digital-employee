@@ -470,3 +470,22 @@ describe("接缝 1 · T7 接线：准入工具故障、needs_human、质检输�
 });
 
 void passingChecks;
+
+describe("接缝 1 · QC fixStep 配置", () => {
+  test("QcInput.fixSteps 默认为场景 A 的 id；workflow.qcFixSteps 可改，write 缺省跟随 qcSources.draft", async () => {
+    const qc = createStubQc();
+    const h = await createHarness({ qc: qc.engine });
+    await h.run();
+    expect(qc.inputs[0]!.fixSteps).toEqual({ write: "write_report", causes: "match_causes" });
+
+    const qc2 = createStubQc();
+    const h2 = await createHarness({
+      qc: qc2.engine,
+      patchWorkflow: (w) => {
+        w.qcFixSteps = { causes: "interpret_feedback" };
+      },
+    });
+    await h2.run();
+    expect(qc2.inputs[0]!.fixSteps).toEqual({ write: "write_report", causes: "interpret_feedback" });
+  });
+});

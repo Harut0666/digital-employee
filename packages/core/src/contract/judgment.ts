@@ -74,6 +74,8 @@ export interface QcInput {
   /** 重做时的上一版草稿和退回意见 */
   previousDraft?: DraftReport;
   feedback?: { comment: string; sections?: string[] };
+  /** 各类问题应重跑的步骤 id（来自 workflow.qcFixSteps）；缺省为场景 A 的 write_report / match_causes */
+  fixSteps?: { write: string; causes: string };
 }
 
 export interface QcEngine {

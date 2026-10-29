@@ -188,4 +188,21 @@ describe("自定义规则（6 种模板）", () => {
     expect(r.fixStep).toBeUndefined();
     expect(r.issues.join("\n")).toContain("参数");
   });
+
+  test("自定义规则不通过时的 fixStep 跟随 QcInput.fixSteps.write；参数无效仍不带 fixStep", () => {
+    const config = custom({ ...base, template: "forbidden_terms", params: { terms: ["下降"] } });
+    const draft = makeDraft();
+    draft.sections[3]!.paragraphs = ["华东客流下降。"];
+    const fixSteps = { write: "compose_report", causes: "link_causes" };
+    const configured = get(run({ config, draft, fixSteps }), "c1");
+    expect(configured.passed).toBe(false);
+    expect(configured.fixStep).toBe("compose_report");
+    // 没传 fixSteps 时沿用场景 A 的默认 id
+    expect(get(run({ config, draft }), "c1").fixStep).toBe("write_report");
+    // 参数无效（无 fixStep）不受配置影响，仍然转人工
+    const broken = custom({ ...base, template: "forbidden_terms", params: { terms: [] } });
+    const manual = get(run({ config: broken, draft, fixSteps }), "c1");
+    expect(manual.passed).toBe(false);
+    expect(manual.fixStep).toBeUndefined();
+  });
 });

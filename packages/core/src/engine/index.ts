@@ -598,6 +598,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
           previousDraft:
             proj.reworkRound > 0 && proj.baselineDraft ? (readArtifact(rt, proj.baselineDraft) as DraftReport) : undefined,
           feedback: proj.reworkRound > 0 ? proj.feedback : undefined,
+          fixSteps: { write: rt.config.workflow.qcFixSteps.write ?? sources.draft, causes: rt.config.workflow.qcFixSteps.causes },
         };
         checks = getQc().run(input);
       } catch (error) {

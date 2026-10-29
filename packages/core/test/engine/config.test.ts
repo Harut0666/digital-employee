@@ -76,3 +76,20 @@ describe("loadEmployeeConfig", () => {
     await expect(loadEmployeeConfig(dir)).rejects.toThrow(/workflow\.yaml/);
   });
 });
+
+describe("workflow.qcFixSteps", () => {
+  test("缺省为空映射（由引擎回落到场景 A 的默认 id）；显式配置原样加载", async () => {
+    expect((await loadEmployeeConfig(fixture)).workflow.qcFixSteps).toEqual({ causes: "match_causes" });
+    const dir = copyFixture();
+    const file = join(dir, "workflow.yaml");
+    writeFileSync(file, readFileSync(file, "utf8") + "\nqcFixSteps:\n  write: write_report\n  causes: match_causes\n");
+    expect((await loadEmployeeConfig(dir)).workflow.qcFixSteps).toEqual({ write: "write_report", causes: "match_causes" });
+  });
+
+  test("显式配置指向不存在的步骤时报错", async () => {
+    const dir = copyFixture();
+    const file = join(dir, "workflow.yaml");
+    writeFileSync(file, readFileSync(file, "utf8") + "\nqcFixSteps:\n  write: nope\n");
+    await expect(loadEmployeeConfig(dir)).rejects.toThrow(/qcFixSteps/);
+  });
+});

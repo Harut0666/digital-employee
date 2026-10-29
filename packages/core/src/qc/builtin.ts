@@ -4,9 +4,12 @@ import type { QcCheckResult, QcInput } from "../contract";
 import { renderSlots } from "./slots";
 import { countSentences, entityNamesWithDigits, findBareNumbers, narrativePieces } from "./text";
 
-/** 重跑写作步骤 / 重跑原因匹配步骤（步骤 id 来自 employees/weekly-report/workflow.yaml）。 */
+/** 场景 A 的默认步骤 id；实际取值由引擎按 workflow.qcFixSteps 通过 QcInput.fixSteps 传入。 */
 export const FIX_WRITE = "write_report";
 export const FIX_CAUSES = "match_causes";
+
+export const fixWrite = (input: QcInput): string => input.fixSteps?.write ?? FIX_WRITE;
+export const fixCauses = (input: QcInput): string => input.fixSteps?.causes ?? FIX_CAUSES;
 
 /** 篇幅留约 10% 余量（design.md §10.5）。 */
 export const LENGTH_MARGIN = 0.9;
@@ -15,7 +18,8 @@ function result(id: string, label: string, issues: string[], fixStep: string): Q
   return issues.length === 0 ? { id, label, passed: true, issues: [] } : { id, label, passed: false, issues, fixStep };
 }
 
-export function checkStructure({ config, draft, rendered }: QcInput): QcCheckResult {
+export function checkStructure(input: QcInput): QcCheckResult {
+  const { config, draft, rendered } = input;
   const cfg = config.builtin.structure;
   const issues: string[] = [];
   const draftIds = draft.sections.map((s) => s.id);
@@ -46,10 +50,11 @@ export function checkStructure({ config, draft, rendered }: QcInput): QcCheckRes
   if (rendered && rendered.chartCount < cfg.minCharts) {
     issues.push(`图表只有 ${rendered.chartCount} 张，至少需要 ${cfg.minCharts} 张`);
   }
-  return result("structure", "结构完整", issues, FIX_WRITE);
+  return result("structure", "结构完整", issues, fixWrite(input));
 }
 
-export function checkTraceability({ draft, facts }: QcInput): QcCheckResult {
+export function checkTraceability(input: QcInput): QcCheckResult {
+  const { draft, facts } = input;
   const issues: string[] = [];
   const unresolved = new Set<string>();
 
@@ -67,31 +72,34 @@ export function checkTraceability({ draft, facts }: QcInput): QcCheckResult {
   if (regionSum !== facts.company.revenueCents) {
     issues.push(`区域合计（${regionSum} 分）不等于全公司实收（${facts.company.revenueCents} 分）`);
   }
-  return result("traceability", "数据溯源", issues, FIX_WRITE);
+  return result("traceability", "数据溯源", issues, fixWrite(input));
 }
 
-export function checkForbiddenTerms({ config, draft }: QcInput): QcCheckResult {
+export function checkForbiddenTerms(input: QcInput): QcCheckResult {
+  const { config, draft } = input;
   const issues: string[] = [];
   for (const piece of narrativePieces(draft)) {
     for (const term of config.builtin.forbidden_terms.terms) {
       if (piece.text.includes(term)) issues.push(`「${piece.where}」出现禁用指标“${term}”`);
     }
   }
-  return result("forbidden_terms", "禁用指标", issues, FIX_WRITE);
+  return result("forbidden_terms", "禁用指标", issues, fixWrite(input));
 }
 
 /** 异常覆盖：环比绝对值超过配置阈值的每条异常，都要在 causes 中有对应条目。 */
-export function checkAnomalyCoverage({ config, draft, facts }: QcInput): QcCheckResult {
+export function checkAnomalyCoverage(input: QcInput): QcCheckResult {
+  const { config, draft, facts } = input;
   const threshold = config.builtin.anomaly_coverage.threshold;
   const covered = new Set(draft.causes.map((c) => c.anomalyId));
   const issues = facts.anomalies
     .filter((a) => Math.abs(a.wow) > threshold && !covered.has(a.id))
     .map((a) => `异常 ${a.id}（${a.name}）没有出现在“异常与原因”中`);
-  return result("anomaly_coverage", "异常覆盖", issues, FIX_CAUSES);
+  return result("anomaly_coverage", "异常覆盖", issues, fixCauses(input));
 }
 
 /** 引用真实：原文摘录必须是所注周次纪要中某一段的连续子串。 */
-export function checkQuoteIntegrity({ draft, minutes }: QcInput): QcCheckResult {
+export function checkQuoteIntegrity(input: QcInput): QcCheckResult {
+  const { draft, minutes } = input;
   const issues: string[] = [];
   for (const cause of draft.causes) {
     if (cause.level === "unknown") continue;
@@ -108,11 +116,12 @@ export function checkQuoteIntegrity({ draft, minutes }: QcInput): QcCheckResult 
       issues.push(`${cause.anomalyId} 的摘录“${quote}”不是 ${year} 年第 ${week} 周纪要原文的连续片段`);
     }
   }
-  return result("quote_integrity", "引用真实", issues, FIX_CAUSES);
+  return result("quote_integrity", "引用真实", issues, fixCauses(input));
 }
 
 /** 意见响应（仅重做时）：修改说明覆盖退回意见，且被要求修改的章节内容确实变了。 */
-export function checkFeedbackResponse({ draft, previousDraft, feedback }: QcInput): QcCheckResult | undefined {
+export function checkFeedbackResponse(input: QcInput): QcCheckResult | undefined {
+  const { draft, previousDraft, feedback } = input;
   if (!feedback) return undefined;
   const issues: string[] = [];
   const notes = draft.revisionNotes ?? [];
@@ -140,14 +149,15 @@ export function checkFeedbackResponse({ draft, previousDraft, feedback }: QcInpu
   if (required.length === 0 && previousDraft && !draft.sections.some((s) => changed(s.id))) {
     issues.push("所有章节都与上一版相同，没有按意见修改");
   }
-  return result("feedback_response", "意见响应", issues, FIX_WRITE);
+  return result("feedback_response", "意见响应", issues, fixWrite(input));
 }
 
-export function checkLength({ config, rendered }: QcInput): QcCheckResult {
+export function checkLength(input: QcInput): QcCheckResult {
+  const { config, rendered } = input;
   const issues: string[] = [];
   const limit = config.builtin.length.maxPages * LENGTH_MARGIN;
   if (rendered && rendered.estimatedPages > limit) {
     issues.push(`估算 ${rendered.estimatedPages} 页，超过上限 ${config.builtin.length.maxPages} 页（留 10% 余量即 ${limit} 页），请压缩篇幅`);
   }
-  return result("length", "篇幅", issues, FIX_WRITE);
+  return result("length", "篇幅", issues, fixWrite(input));
 }

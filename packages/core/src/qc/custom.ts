@@ -9,14 +9,14 @@
 // 参数缺失或类型不对时返回“参数无效”，不带 fixStep（无法自动修正，转人工）。
 
 import type { DraftReport, QcCheckResult, QcInput } from "../contract";
-import { FIX_WRITE } from "./builtin";
+import { fixWrite } from "./builtin";
 import { displayValue, resolveSlot } from "./slots";
 import { narrativePieces } from "./text";
 
 type Rule = QcInput["config"]["custom"][number];
 
-function fail(rule: Rule, issues: string[]): QcCheckResult {
-  return { id: rule.id, label: rule.label, passed: false, issues, fixStep: FIX_WRITE };
+function failWith(rule: Rule, issues: string[], fixStep: string): QcCheckResult {
+  return { id: rule.id, label: rule.label, passed: false, issues, fixStep };
 }
 
 /** 无法自动修正（参数有误、事实缺失等），不给 fixStep，由引擎转人工。 */
@@ -47,6 +47,7 @@ function fullText(draft: DraftReport): string {
 
 export function runCustomRule(rule: Rule, input: QcInput): QcCheckResult {
   const { draft, facts, rendered } = input;
+  const fail = (r: Rule, issues: string[]) => failWith(r, issues, fixWrite(input));
   const p = rule.params;
   switch (rule.template) {
     case "forbidden_terms": {

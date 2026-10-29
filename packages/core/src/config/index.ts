@@ -82,6 +82,11 @@ export function loadEmployeeConfigSync(dir: string): EmployeeConfig {
   const admission = workflow.steps.find((s) => s.id === workflow.admissionStep);
   if (!admission) throw new Error(`admissionStep "${workflow.admissionStep}" 不在 workflow.yaml 的步骤中`);
   if (admission.kind !== "compute") throw new Error(`admissionStep "${admission.id}" 必须是计算步骤`);
+  const rawFix = (workflowRaw as { qcFixSteps?: { write?: unknown; causes?: unknown } } | undefined)?.qcFixSteps;
+  for (const key of ["write", "causes"] as const) {
+    const id = typeof rawFix?.[key] === "string" ? (rawFix[key] as string) : undefined;
+    if (id !== undefined && !ids.includes(id)) throw new Error(`qcFixSteps.${key} "${id}" 不在 workflow.yaml 的步骤中`);
+  }
   const qcSteps = workflow.steps.filter((s) => s.kind === "qc");
   if (qcSteps.length > 1) throw new Error("workflow.yaml 最多只能有一个质检步骤");
   if (qcSteps[0] && workflow.steps[workflow.steps.length - 1] !== qcSteps[0]) {
