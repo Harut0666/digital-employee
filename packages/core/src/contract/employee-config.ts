@@ -9,6 +9,16 @@
 
 import { z } from "zod";
 
+/**
+ * 员工 id 即员工目录名：只允许小写字母、数字和连字符。
+ * 引擎的 create、HTTP 层与服务端员工列表共用这一条规则，避免各自为政。
+ */
+export const EMPLOYEE_ID_PATTERN = /^[a-z0-9-]+$/;
+export const EmployeeIdSchema = z.string().regex(EMPLOYEE_ID_PATTERN, "员工 id 只允许小写字母、数字和连字符");
+export function isEmployeeId(value: unknown): value is string {
+  return typeof value === "string" && EMPLOYEE_ID_PATTERN.test(value);
+}
+
 const ModelRefSchema = z.object({
   connection: z.string().default("default"),
   model: z.string().default("default"),
@@ -76,7 +86,7 @@ export type ComputeStepConfig = z.infer<typeof ComputeStepSchema>;
 export type JudgeStepConfig = z.infer<typeof JudgeStepSchema>;
 
 export const EmployeeWorkflowSchema = z.object({
-  id: z.string(),
+  id: EmployeeIdSchema,
   name: z.string(),
   description: z.string().default(""),
   limits: z.object({

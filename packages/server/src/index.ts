@@ -4,7 +4,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
-import { loadEmployeeConfig, type EmployeeConfig, type TaskEngine } from "@de/core";
+import { loadEmployeeConfig, isEmployeeId, type EmployeeConfig, type TaskEngine } from "@de/core";
 import { downloadResponse, staticResponse } from "./files";
 import { eventStream } from "./sse";
 import { apiError, filesOf, parseAfter, parseCommand, parseJsonField, roleOf, ROLE_REQUIRED, saveUploads, statusOfResult } from "./http";
@@ -24,9 +24,14 @@ export function createApp(options: ServerOptions) {
 
   async function listEmployees() {
     const entries = await readdir(employeesDir, { withFileTypes: true }).catch(() => []);
-    // 只有含 workflow.yaml 的目录才是员工（employees/test 之类的目录不是）
+    // 只有含 workflow.yaml、且目录名是合法员工 id 的目录才是员工（employees/test 之类的目录不是）
     const dirs = entries.filter(
-      (e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && existsSync(join(employeesDir, e.name, "workflow.yaml")),
+      (e) =>
+        e.isDirectory() &&
+        !e.name.startsWith(".") &&
+        e.name !== "node_modules" &&
+        isEmployeeId(e.name) &&
+        existsSync(join(employeesDir, e.name, "workflow.yaml")),
     );
     const result = [];
     for (const d of dirs.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -69,6 +74,11 @@ export function createApp(options: ServerOptions) {
           if (typeof employee !== "string" || employee === "") {
             set.status = 400;
             return apiError("invalid_input", "缺少 employee");
+          }
+          // 与契约同一套规则：非法 id 在这里就是 400，而不是等引擎抛错变成 500
+          if (!isEmployeeId(employee)) {
+            set.status = 400;
+            return apiError("invalid_input", "员工 id 不合法：只允许小写字母、数字和连字符");
           }
           const form = parseJsonField(fields.form ?? "{}");
           if (!form.ok || typeof form.value !== "object" || form.value === null || Array.isArray(form.value)) {

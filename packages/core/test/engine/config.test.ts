@@ -93,3 +93,12 @@ describe("workflow.qcFixSteps", () => {
     await expect(loadEmployeeConfig(dir)).rejects.toThrow(/qcFixSteps/);
   });
 });
+
+describe("员工 id 契约", () => {
+  test("workflow.yaml 的 id 必须是员工 id 形式（只允许小写字母、数字和连字符）", async () => {
+    const dir = copyFixture();
+    const file = join(dir, "workflow.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^id: mini$/m, "id: Mini"));
+    await expect(loadEmployeeConfig(dir)).rejects.toThrow(/员工 id/);
+  });
+});
