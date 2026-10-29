@@ -335,6 +335,30 @@ describe("E2E · 质检自动修正", () => {
     expect(started.filter((s) => s === "render_document")).toHaveLength(2);
   });
 
+  test("草稿漏写矛盾引用 → 纪要矛盾覆盖不通过 → 自动修正 write_report → 通过；矛盾不重算", async () => {
+    const script = loadScript("A-01");
+    // 第一版草稿正文写了华南矛盾，但忘记在 contradictionRefs 里引用
+    const missingRefs = JSON.parse(JSON.stringify(script.write_report![0]!)) as { toolCalls: { arguments: Record<string, unknown> }[] };
+    delete missingRefs.toolCalls[0]!.arguments["contradictionRefs"];
+    const e2e = await createE2E({ script: { ...script, write_report: [missingRefs as never, script.write_report![0]!] } });
+    const review = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+
+    expect(qcFailures(review)).toEqual([]);
+    expect(review.state).toBe("awaiting_review");
+    const events = await e2e.events(review.id);
+    const results = ofType(events, "qc_result");
+    expect(results.map((r) => r.passed)).toEqual([false, true]);
+    const coverage = results[0]!.checks.find((c) => c.id === "contradiction_coverage")!;
+    expect(coverage.passed).toBe(false);
+    expect(coverage.issues.join("\n")).toContain("contradiction:region:华南");
+    expect(coverage.fixStep).toBe("write_report");
+    // 只重跑写报告的步骤；矛盾由程序算出一次，不随写作修正重算
+    const started = startedSteps(events);
+    expect(started.filter((s) => s === "write_report")).toHaveLength(2);
+    expect(started.filter((s) => s === "detect_contradictions")).toHaveLength(1);
+    expect(started.filter((s) => s === "match_causes")).toHaveLength(1);
+  });
+
   test("质检自动修正用尽 → 转给操作员（qc_exhausted）", async () => {
     // 剧本里的草稿始终带裸数字，自动修正两次仍不通过
     const script = loadScript("A-01");
