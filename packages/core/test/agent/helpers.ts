@@ -19,6 +19,7 @@ export function makeStep(overrides: Partial<JudgeStepConfig> = {}): JudgeStepCon
     limits: { rounds: 6, durationSec: 90 },
     model: { connection: "default", model: "default" },
     rework: false,
+    when: "always",
     optional: false,
     ...overrides,
   };
