@@ -1,13 +1,14 @@
 // MCP 工具服务器：注册场景 A 的工具，并提供故障注入。
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ComputeMetricsInput, FaultConfig, ToolName } from "@de/core/contract";
+import type { ComputeMetricsInput, FaultConfig, RenderReportInput, ToolName, ValidateSubmissionInput } from "@de/core/contract";
 import * as S from "./schemas";
 import { computeMetrics } from "./compute";
 import { parseMinutesFile } from "./minutes";
+import { renderReportDocx, type RenderOptions } from "./render";
 import { loadSales } from "./sales/dataset";
 import { validateSubmission } from "./validate";
 
-export interface ToolsServerOptions {
+export interface ToolsServerOptions extends RenderOptions {
   /** 故障注入（演示与测试用），可在运行时通过 setFaults 修改 */
   faults?: FaultConfig;
   /** timeout 故障模式下，工具卡住多久后才报超时（毫秒，默认 30000；测试里调小） */
@@ -40,7 +41,7 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
 
   /** 统一包装：故障注入 + 异常转中文 isError + 结果放入 structuredContent */
   const wrap =
-    <A>(name: ToolName, run: (args: A) => Promise<Record<string, unknown>>) =>
+    <A>(name: ToolName, run: (args: A) => Promise<object>) =>
     async (args: A, extra: { signal?: AbortSignal }): Promise<ToolResult> => {
       const mode = faults.tools[name];
       if (mode === "error") return errorResult(`工具 ${name} 执行失败（故障注入：报错）`);
@@ -54,7 +55,7 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       }
       try {
         const out = await run(args);
-        return { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out };
+        return { content: [{ type: "text", text: JSON.stringify(out) }], structuredContent: out as Record<string, unknown> };
       } catch (e) {
         return errorResult(`工具 ${name} 执行失败：${e instanceof Error ? e.message : String(e)}`);
       }
@@ -67,7 +68,7 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       inputSchema: S.validateSubmissionIn,
       outputSchema: S.validateSubmissionOut,
     },
-    wrap("validate_submission", (a) => validateSubmission(a as never) as never) as never,
+    wrap("validate_submission", (a: ValidateSubmissionInput) => validateSubmission(a)) as never,
   );
 
   server.registerTool(
@@ -87,7 +88,7 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       inputSchema: S.computeMetricsIn,
       outputSchema: S.computeMetricsOut,
     },
-    wrap("compute_metrics", async (a: ComputeMetricsInput) => computeMetrics(a) as never) as never,
+    wrap("compute_metrics", async (a: ComputeMetricsInput) => computeMetrics(a)) as never,
   );
 
   server.registerTool(
@@ -100,6 +101,18 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
     wrap("parse_minutes", async (a: { paths: string[] }) => ({
       minutes: await Promise.all(a.paths.map((p) => parseMinutesFile(p))),
     })) as never,
+  );
+
+  server.registerTool(
+    "render_report_docx",
+    {
+      description: "生成 Word 周报（标题、章节、核心指标表、至少 2 张图）；同一幂等键的文件已存在则直接返回。",
+      inputSchema: S.renderReportIn,
+      outputSchema: S.renderReportOut,
+    },
+    wrap("render_report_docx", (a: RenderReportInput) =>
+      renderReportDocx(a, { chartFonts: options.chartFonts, docxFont: options.docxFont }),
+    ) as never,
   );
 
   server.registerTool(
