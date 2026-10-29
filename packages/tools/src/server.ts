@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type {
   AdminSetFaultsInput,
   ComputeMetricsInput,
+  DetectContradictionsInput,
   FaultConfig,
   RenderReportInput,
   ToolName,
@@ -10,6 +11,7 @@ import type {
 } from "@de/core/contract";
 import * as S from "./schemas";
 import { computeMetrics } from "./compute";
+import { detectContradictions } from "./contradictions";
 import { parseMinutesFile } from "./minutes";
 import { renderReportDocx, type RenderOptions } from "./render";
 import { loadSales } from "./sales/dataset";
@@ -96,6 +98,16 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       outputSchema: S.computeMetricsOut,
     },
     wrap("compute_metrics", async (a: ComputeMetricsInput) => computeMetrics(a)) as never,
+  );
+
+  server.registerTool(
+    "detect_contradictions",
+    {
+      description: "判定纪要里的可核验说法与数据是否矛盾：持平、方向相反、幅度偏差三条规则，阈值由调用方给定；对象在事实里找不到的说法跳过并计数。",
+      inputSchema: S.detectContradictionsIn,
+      outputSchema: S.detectContradictionsOut,
+    },
+    wrap("detect_contradictions", async (a: DetectContradictionsInput) => detectContradictions(a)) as never,
   );
 
   server.registerTool(

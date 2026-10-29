@@ -70,6 +70,11 @@
           "change": { "type": "string", "minLength": 1, "description": "改了什么。" }
         }
       }
+    },
+    "contradictionRefs": {
+      "type": "array",
+      "description": "引用的纪要矛盾 id：写进“异常与原因”章节的每条矛盾都要列出；没有矛盾时提交空数组。",
+      "items": { "type": "string", "minLength": 1 }
     }
   }
 }

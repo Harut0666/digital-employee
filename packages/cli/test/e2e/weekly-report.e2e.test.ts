@@ -25,7 +25,7 @@ async function adminSetFaults(e2e: E2E, tools: Partial<Record<ToolName, FaultMod
   if (!res.ok) throw new Error(`下发故障开关失败：${res.error}`);
 }
 
-const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "forbidden_terms", "length"];
+const QC_IDS = ["structure", "traceability", "anomaly_coverage", "quote_integrity", "contradiction_coverage", "forbidden_terms", "length"];
 
 function qcFailures(snapshot: TaskSnapshot): string[] {
   return (snapshot.qc ?? []).filter((c) => !c.passed).map((c) => `${c.label}：${c.issues.join("；")}`);
@@ -71,6 +71,20 @@ describe("E2E · A-01 正常任务（含纪要与数据不一致）", () => {
     expect(ofType(events, "tool_denied")).toHaveLength(0);
     expect(stateTrail(events)).toEqual(["draft", "admission", "running", "qc", "awaiting_review", "delivered"]);
     events.forEach((e, i) => expect(e.seq).toBe(i + 1));
+
+    // 纪要矛盾由程序判定：事件流里有 detect_contradictions 步骤，判出且只判出华南“持平”一条
+    expect(review.steps.find((s) => s.id === "detect_contradictions")?.status).toBe("done");
+    const contradictionsCall = ofType(events, "tool_called").find((e) => e.tool === "detect_contradictions");
+    expect(contradictionsCall?.stepId).toBe("detect_contradictions");
+    const detected = readArtifact<{ contradictions: { id: string; rule: string; subject: { level: string; key: string; name: string } }[] }>(
+      stepOutputPath(events, "detect_contradictions")!,
+    );
+    expect(detected.contradictions).toHaveLength(1);
+    expect(detected.contradictions[0]).toMatchObject({ id: "contradiction:region:华南", rule: "flat", subject: { level: "region", key: "华南", name: "华南" } });
+    // 检验记录里有“纪要矛盾覆盖”，且真实通过
+    const recordJson = JSON.parse(readFileSync(record!.path, "utf8")) as { checks: { id: string; passed: boolean }[] };
+    expect(recordJson.checks.map((c) => c.id)).toContain("contradiction_coverage");
+    expect(recordJson.checks.find((c) => c.id === "contradiction_coverage")).toMatchObject({ passed: true });
   }, 30_000);
 
   test("渲染步骤收到的是已渲染槽位的草稿，并带任务幂等键", async () => {
@@ -197,7 +211,7 @@ describe("E2E · 工具故障注入", () => {
     expect(paused.state).toBe("awaiting_operator");
     expect(paused.pause).toMatchObject({ code: "tool_failed", options: ["retry", "terminate"] });
     expect(paused.pause?.message).toContain("compute_metrics");
-    expect(paused.pause?.message).toContain("已完成 2/9 步");
+    expect(paused.pause?.message).toContain("已完成 2/10 步");
     const events = await e2e.events(paused.id);
     expect(ofType(events, "tool_called").filter((e) => e.tool === "compute_metrics").map((e) => e.attempt)).toEqual([1, 2, 3]);
     expect(ofType(events, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
@@ -262,7 +276,7 @@ describe("E2E · 断点恢复", () => {
     const events = await e2e.events(taskId);
     events.forEach((ev, i) => expect(ev.seq).toBe(i + 1));
     const started = startedSteps(events);
-    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "render_document", "qc"]) {
+    for (const id of ["admission", "load_data", "compute_metrics", "parse_minutes", "match_causes", "detect_contradictions", "render_document", "qc"]) {
       expect(started.filter((s) => s === id)).toHaveLength(1);
     }
     expect(started.filter((s) => s === "write_report")).toHaveLength(2);
@@ -378,6 +392,30 @@ describe("E2E · 质检自动修正", () => {
     expect(started.filter((s) => s === "write_report")).toHaveLength(2);
     expect(started.filter((s) => s === "match_causes")).toHaveLength(1);
     expect(started.filter((s) => s === "render_document")).toHaveLength(2);
+  });
+
+  test("草稿漏写矛盾引用 → 纪要矛盾覆盖不通过 → 自动修正 write_report → 通过；矛盾不重算", async () => {
+    const script = loadScript("A-01");
+    // 第一版草稿正文写了华南矛盾，但忘记在 contradictionRefs 里引用
+    const missingRefs = JSON.parse(JSON.stringify(script.write_report![0]!)) as { toolCalls: { arguments: Record<string, unknown> }[] };
+    delete missingRefs.toolCalls[0]!.arguments["contradictionRefs"];
+    const e2e = await createE2E({ script: { ...script, write_report: [missingRefs as never, script.write_report![0]!] } });
+    const review = await e2e.launch({ week: 44, attachments: [SAMPLE.sales, SAMPLE.minutes(44)] });
+
+    expect(qcFailures(review)).toEqual([]);
+    expect(review.state).toBe("awaiting_review");
+    const events = await e2e.events(review.id);
+    const results = ofType(events, "qc_result");
+    expect(results.map((r) => r.passed)).toEqual([false, true]);
+    const coverage = results[0]!.checks.find((c) => c.id === "contradiction_coverage")!;
+    expect(coverage.passed).toBe(false);
+    expect(coverage.issues.join("\n")).toContain("contradiction:region:华南");
+    expect(coverage.fixStep).toBe("write_report");
+    // 只重跑写报告的步骤；矛盾由程序算出一次，不随写作修正重算
+    const started = startedSteps(events);
+    expect(started.filter((s) => s === "write_report")).toHaveLength(2);
+    expect(started.filter((s) => s === "detect_contradictions")).toHaveLength(1);
+    expect(started.filter((s) => s === "match_causes")).toHaveLength(1);
   });
 
   test("质检自动修正用尽 → 转给操作员（qc_exhausted）", async () => {

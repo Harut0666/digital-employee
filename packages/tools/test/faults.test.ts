@@ -108,7 +108,7 @@ describe("工具清单", () => {
     const { tools } = await h.client.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
-      ["admin_set_faults", "compute_metrics", "load_sales", "parse_minutes", "render_report_docx", "validate_submission", "web_search"].sort(),
+      ["admin_set_faults", "compute_metrics", "detect_contradictions", "load_sales", "parse_minutes", "render_report_docx", "validate_submission", "web_search"].sort(),
     );
     for (const t of tools) if (t.name !== "web_search") expect(t.outputSchema).toBeDefined();
   });

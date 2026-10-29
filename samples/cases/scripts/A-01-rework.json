@@ -203,6 +203,7 @@
           "name": "submit_result",
           "arguments": {
             "title": "经营周报（2026 年第 44 周）",
+            "contradictionRefs": ["contradiction:region:华南"],
             "sections": [
               {
                 "id": "summary",
@@ -341,6 +342,7 @@
           "name": "submit_result",
           "arguments": {
             "title": "经营周报（2026 年第 44 周）",
+            "contradictionRefs": ["contradiction:region:华南"],
             "sections": [
               {
                 "id": "summary",

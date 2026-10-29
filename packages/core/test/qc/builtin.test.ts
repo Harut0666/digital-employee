@@ -20,9 +20,17 @@ function withSection(draft: DraftReport, id: string, patch: Partial<DraftReport[
 }
 
 describe("质检引擎：整体", () => {
-  test("合格草稿：6 项内置检查全部通过（意见响应仅重做时检查）", () => {
+  test("合格草稿：7 项内置检查全部通过（意见响应仅重做时检查）", () => {
     const results = run();
-    expect(results.map((r) => r.id)).toEqual(["structure", "traceability", "anomaly_coverage", "quote_integrity", "forbidden_terms", "length"]);
+    expect(results.map((r) => r.id)).toEqual([
+      "structure",
+      "traceability",
+      "anomaly_coverage",
+      "quote_integrity",
+      "contradiction_coverage",
+      "forbidden_terms",
+      "length",
+    ]);
     for (const r of results) {
       expect(r.issues).toEqual([]);
       expect(r.passed).toBe(true);
