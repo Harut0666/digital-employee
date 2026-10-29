@@ -1,6 +1,6 @@
 // 草稿文本的收集与裸数字扫描。
 
-import type { DraftReport } from "../contract";
+import type { DraftReport, WeeklyFacts } from "../contract";
 import { SLOT_PATTERN } from "./slots";
 
 export interface TextPiece {
@@ -78,12 +78,26 @@ export function maskQuotedSpans(text: string, quotes: readonly string[]): string
   return masked;
 }
 
+/** 事实里名称带数字的实体（如单品“6寸生日蛋糕”），名称本身不是数字事实。长名称在前，避免被短名称截断。 */
+export function entityNamesWithDigits(facts: WeeklyFacts): string[] {
+  const names = [
+    ...facts.topProducts.map((p) => p.name),
+    ...facts.stores.map((s) => s.name),
+    ...facts.categories.map((c) => c.category),
+    ...Object.keys(facts.regions),
+    ...facts.anomalies.map((a) => a.name),
+  ];
+  return [...new Set(names.filter((n) => /\d/.test(n)))].sort((a, b) => b.length - a.length);
+}
+
 /**
  * 返回文本中槽位之外、也不在白名单内的裸数字（原样片段）。
  * quotes 是各条原因的纪要摘录；引号内逐字出自它们的数字视为引用原文，不算裸数字。
+ * entityNames 是事实里带数字的实体名称，出现时整体抹掉。
  */
-export function findBareNumbers(text: string, quotes: readonly string[] = []): string[] {
+export function findBareNumbers(text: string, quotes: readonly string[] = [], entityNames: readonly string[] = []): string[] {
   let masked = maskQuotedSpans(text, quotes).replace(SLOT_PATTERN, " ");
+  for (const name of entityNames) masked = masked.split(name).join(" ");
   for (const pattern of BARE_NUMBER_WHITELIST) masked = masked.replace(pattern, " ");
   return [...masked.matchAll(BARE_NUMBER)].map((m) => m[0].trim());
 }

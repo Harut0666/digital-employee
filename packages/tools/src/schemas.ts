@@ -21,8 +21,9 @@ const attachment = z.object({ name: z.string(), path: z.string() });
 export const validateSubmissionIn = {
   period: isoWeek,
   attachments: z.array(attachment),
-  allowMissingMinutes: z.boolean().optional(),
-  allowPartialPeriod: z.boolean().optional(),
+  // 引擎把不存在的 $form 引用解析为 null（employee-config 契约），所以可选入参同时接受 null
+  allowMissingMinutes: z.boolean().nullish(),
+  allowPartialPeriod: z.boolean().nullish(),
 };
 export const validateSubmissionOut = {
   ok: z.boolean(),

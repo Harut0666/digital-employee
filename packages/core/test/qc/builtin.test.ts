@@ -161,6 +161,17 @@ describe("数据溯源 traceability", () => {
     expect(r.issues.join("\n")).not.toContain("25");
   });
 
+  test("白名单：事实里的实体名称（如单品“6寸生日蛋糕”）自带的数字不算裸数字；事实里没有的仍被抓到", () => {
+    const base = makeFacts();
+    const facts = makeFacts({ topProducts: [...base.topProducts, { code: "C04", name: "6寸生日蛋糕", revenueCents: 3_165_959 }] });
+    const ok = withSection(makeDraft(), "categories", { paragraphs: [], bullets: ["前 5 名单品：6寸生日蛋糕 {{topProducts.C04.revenue}}。"] });
+    expect(get(run({ draft: ok, facts }), "traceability").passed).toBe(true);
+    const bad = withSection(makeDraft(), "categories", { paragraphs: [], bullets: ["8寸生日蛋糕 {{topProducts.C04.revenue}} 卖得很好。"] });
+    const r = get(run({ draft: bad, facts }), "traceability");
+    expect(r.passed).toBe(false);
+    expect(r.issues.join("\n")).toContain("8");
+  });
+
   test("槽位内部的数字不算裸数字；原因摘录（quote）里的数字不扫描", () => {
     const draft = makeDraft();
     draft.causes[0]!.quote = "华东区受连续降雨影响";
