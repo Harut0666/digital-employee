@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { EmployeeWorkflowSchema, QcConfigSchema, type EmployeeConfig } from "../contract";
 
+export { loadSettings, resolveWorkspace } from "./workspace";
+
 function readText(path: string): string {
   return readFileSync(path, "utf8");
 }

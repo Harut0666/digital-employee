@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EmployeeConfig } from "@de/core/contract";
@@ -19,8 +19,9 @@ export async function fakeLoadEmployee(dir: string): Promise<EmployeeConfig> {
     skill: "",
     frontdesk: "",
     workflow: { id, name: `员工-${id}`, description: `描述-${id}` } as EmployeeConfig["workflow"],
-    qc: {} as EmployeeConfig["qc"],
+    qc: { builtin: { structure: { sections: [{ id: "summary", heading: `摘要-${id}` }] } } } as unknown as EmployeeConfig["qc"],
     formSchema: { type: "object", title: id },
+    formUi: { "ui:order": ["a"] },
     prompts: {},
     outputSchemas: {},
   };
@@ -29,8 +30,12 @@ export async function fakeLoadEmployee(dir: string): Promise<EmployeeConfig> {
 export function setup(options: { webDistDir?: string } = {}) {
   const engine = createFakeEngine();
   const employeesDir = tempDir();
-  mkdirSync(join(employeesDir, "weekly-report"));
-  mkdirSync(join(employeesDir, "patent-brief"));
+  for (const name of ["weekly-report", "patent-brief"]) {
+    mkdirSync(join(employeesDir, name));
+    writeFileSync(join(employeesDir, name, "workflow.yaml"), "id: x\n");
+  }
+  // 没有 workflow.yaml 的目录（如 employees/test）不是员工
+  mkdirSync(join(employeesDir, "test"));
   const app = createApp({ engine, employeesDir, loadEmployee: fakeLoadEmployee, ...options });
   const call = (path: string, init?: RequestInit) => app.handle(new Request(`http://localhost${path}`, init));
   return { engine, app, call, employeesDir };

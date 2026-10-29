@@ -4,9 +4,9 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { createMcpToolClient, createModelProvider, createTaskEngine } from "@de/core";
+import { createMcpToolClient, createModelProvider, createTaskEngine, loadSettings, resolveWorkspace } from "@de/core";
 import { runStdioServer } from "@de/tools";
-import { loadSettings, resolveWorkspace, toolServerCommand } from "./bootstrap";
+import { toolServerCommand } from "./bootstrap";
 import { createApp } from "./index";
 
 async function start() {

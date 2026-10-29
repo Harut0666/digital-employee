@@ -9,11 +9,12 @@ import {
   createModelProvider,
   createScriptedModelProvider,
   createTaskEngine,
+  loadSettings,
+  resolveWorkspace,
   type ModelScript,
 } from "@de/core";
 import { createToolsServer } from "@de/tools";
 import { parseCase, runCase } from "./case";
-import { loadSettings, resolveWorkspace } from "./workspace";
 
 export interface RunCaseCommandArgs {
   caseFile: string;
