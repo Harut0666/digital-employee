@@ -15,12 +15,22 @@ const ModelRefSchema = z.object({
 });
 
 /**
- * 计算步骤的入参映射。值以 "$" 开头时按引用解析：
- *   $form.<path>            表单字段
- *   $steps.<stepId>.<path>  某步骤输出
- *   $task.dir               任务目录
- *   $config.<path>          qc.yaml 中的值
+ * 步骤的入参映射。值以 "$" 开头时按引用解析：
+ *   $form.<path>             表单字段。continue_without_minutes / continue_with_partial 命令
+ *                            会由引擎把 form.allowMissingMinutes / form.allowPartialPeriod 置为 true
+ *   $steps.<stepId>.<path>   某步骤最近一次完成的输出（重做时即上一版）
+ *   $rendered.<stepId>       该步骤输出的 DraftReport，已用 factsStep 的事实做完槽位渲染
+ *   $task.dir                任务目录
+ *   $task.attachments        AttachmentRef[]
+ *   $task.feedback           最近一次退回的 { comment, sections }，没有则为 null
+ *   $task.idempotencyKey     任务 + 步骤 + 重做轮次 + 入参哈希，供写文件类工具使用
+ *   $config.<path>           qc.yaml 中的值
+ * 路径段 "[*]" 表示对数组逐项取值，如 $steps.admission.minutes[*].path。
+ * 引用不存在（含步骤尚未执行）时解析为 null，不抛错。
  * 其余值原样传入。
+ *
+ * 判断步骤的输出若在顶层带 needsHuman: true（及 needsHumanReason），
+ * 引擎转入 awaiting_operator，pause.code = "rework_needs_human"。
  */
 const InputMappingSchema = z.record(z.string(), z.unknown());
 
@@ -49,6 +59,8 @@ const JudgeStepSchema = z.object({
   model: ModelRefSchema.default({ connection: "default", model: "default" }),
   /** 退回重做时是否重跑本步骤 */
   rework: z.boolean().default(false),
+  /** always：每轮都执行；rework：只在重做轮次（reworkRound > 0）执行，首轮记为 skipped */
+  when: z.enum(["always", "rework"]).default("always"),
   optional: z.boolean().default(false),
 });
 
@@ -74,6 +86,8 @@ export const EmployeeWorkflowSchema = z.object({
   }),
   /** 准入校验步骤的 id，必须是第一个 compute 步骤 */
   admissionStep: z.string(),
+  /** 产出 WeeklyFacts 的步骤 id，$rendered.* 与质检用它的输出作为事实 */
+  factsStep: z.string().optional(),
   steps: z.array(StepConfigSchema).min(1),
 });
 export type EmployeeWorkflow = z.infer<typeof EmployeeWorkflowSchema>;
@@ -90,6 +104,7 @@ export const QcConfigSchema = z.object({
   builtin: z.object({
     structure: z.object({
       enabled: z.boolean().default(true),
+      /** 顺序即周报章节顺序；约定第一个为摘要（受 summaryMaxSentences 约束），最后一个为下周关注（受 nextWeekMaxItems 约束） */
       sections: z.array(z.object({ id: z.string(), heading: z.string() })),
       summaryMaxSentences: z.number().int().positive(),
       nextWeekMaxItems: z.number().int().positive(),
@@ -122,6 +137,8 @@ export interface EmployeeConfig {
   workflow: EmployeeWorkflow;
   qc: QcConfig;
   formSchema: Record<string, unknown>;
+  /** form.ui.json（@rjsf 的 uiSchema），没有则为 undefined */
+  formUi?: Record<string, unknown>;
   prompts: Record<string, string>;
   outputSchemas: Record<string, Record<string, unknown>>;
 }
