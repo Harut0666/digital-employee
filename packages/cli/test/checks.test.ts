@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateChecks, parseChecks, readRunEvidence, type CaseChecks, type CheckOutcome } from "../src/checks";
 import { makeRunDir, mutateDocx } from "./checks-fixture";
+import type { RenderedReport } from "@de/core/contract";
 
 const tmp = (): string => mkdtempSync(join(tmpdir(), "de-checks-"));
 
@@ -46,6 +47,11 @@ describe("parseChecks", () => {
     expect(parseChecks(undefined)).toEqual({});
   });
 
+  test("mustContainAny 接受“多组等价说法”，每组是一个至少一处的候选集合", () => {
+    const checks = parseChecks({ mustContainAny: [["不是数据缺失", "不计为数据缺失"], ["外卖占比 31.8%"]] });
+    expect(checks.mustContainAny).toEqual([["不是数据缺失", "不计为数据缺失"], ["外卖占比 31.8%"]]);
+  });
+
   test.each([
     ["未知字段", { number: [] }, /未知/],
     ["numbers 不是数组", { numbers: "x" }, /numbers/],
@@ -54,6 +60,9 @@ describe("parseChecks", () => {
     ["path 缺表格单元", { numbers: [{ path: "table:全公司", expected: 1 }] }, /path/],
     ["tolerance 不是数字", { numbers: [{ path: "facts:company.revenueCents", expected: 1, tolerance: "1" }] }, /tolerance/],
     ["mustContain 含非字符串", { mustContain: [1] }, /mustContain/],
+    ["mustContainAny 不是数组的数组", { mustContainAny: ["不是数据缺失"] }, /mustContainAny/],
+    ["mustContainAny 有一组是空数组", { mustContainAny: [[]] }, /mustContainAny/],
+    ["mustContainAny 组内没有字符串", { mustContainAny: [["不是数据缺失", 1]] }, /mustContainAny/],
     ["pause 缺 code", { pause: { messageContains: "x" } }, /pause/],
     ["pause 的 code 不认识", { pause: { code: "whatever" } }, /pause/],
   ])("格式错误直接报错：%s", (_label, raw, pattern) => {
@@ -182,6 +191,51 @@ describe("mustContain / mustNotContain", () => {
     expect(outcomes[0]!.passed).toBe(false);
     expect(outcomes[0]!.detail).toContain("docx");
     expect(outcomes[1]!.passed).toBe(true);
+  });
+});
+
+describe("mustContainAny", () => {
+  test("每组至少命中一处等价说法即可；全部落空才判不通过并列出候选", async () => {
+    const outcomes = await evaluate({
+      mustContainAny: [
+        ["不是数据缺失", "不计为数据缺失"],
+        ["外卖占比 31.8%", "外卖占比为 31.8%"],
+        ["退货 11 笔", "退货 11 笔，合计 -260 元"],
+      ],
+    });
+    expect(failing(outcomes)).toEqual([]);
+    expect(outcomes).toHaveLength(3);
+
+    const missing = await evaluate({ mustContainAny: [["不算数据缺失"], ["重复记录不计入"]] });
+    expect(failing(missing)).toHaveLength(2);
+    expect(missing[0]!.target).toBe("不算数据缺失");
+    // 原因里列出这一组尝试过的全部等价说法
+    expect(missing[0]!.detail).toContain("不算数据缺失");
+  });
+
+  test("真实模型常见的等价说法算通过：A-01「不计为数据缺失」「外卖占比 31.8%」、A-02「已只保留第一条」", async () => {
+    const report: RenderedReport = {
+      title: "经营周报（2026 年第 44 周）",
+      sections: [
+        { id: "summary", heading: "本周摘要", paragraphs: ["本周全公司实收 100,000 元，环比 -20.0%。"] },
+        { id: "metrics", heading: "核心指标", paragraphs: ["外卖占比 31.8%。"] },
+        {
+          id: "data_quality",
+          heading: "数据质量说明",
+          paragraphs: ["杭州湖滨店停业期间没有销售数据，不计为数据缺失。", "重复上传 29 条，涉及金额 5,629 元，已只保留第一条。"],
+        },
+      ],
+    };
+    const made = await makeRunDir(mkdtempSync(join(tmpdir(), "de-checks-real-")), { report });
+    const outcomes = evaluateChecks(await readRunEvidence(made.dir), {
+      mustContainAny: [
+        ["不是数据缺失", "不计为数据缺失", "不算数据缺失"],
+        ["外卖占比 31.8%", "外卖占比为 31.8%"],
+        ["去重", "只保留第一条"],
+        ["29 条记录", "重复上传 29 条", "29 条"],
+      ],
+    });
+    expect(failing(outcomes)).toEqual([]);
   });
 });
 

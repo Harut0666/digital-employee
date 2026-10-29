@@ -30,6 +30,11 @@ export interface RenderOptions {
 
 const CHART_COUNT = 2;
 const DEFAULT_DOCX_FONT = "Microsoft YaHei";
+/** 图表宽度：A4 正文宽 17cm（21cm − 2×2cm 页边距），600px @96dpi ≈ 15.9cm，两侧留白 */
+const IMG_WIDTH_PX = 600;
+/** 首页“数据不完整”标注的颜色与折合行数（计入页数估算） */
+const WARN_COLOR = "C00000";
+const WARN_LINES = 2;
 
 // ---- 页数估算（A4，2cm 页边距，五号字 10.5pt，1.5 倍行距）----
 const PAGE_LINES = 46; // 每页可排的正文行数
@@ -41,6 +46,7 @@ const linesOf = (s: string, indent = 0) => Math.max(1, Math.ceil((textWidth(s) +
 
 export function estimatePages(report: RenderedReport, facts: WeeklyFacts): number {
   let lines = 3; // 标题与副标题
+  if (coverageGap(facts) !== undefined) lines += WARN_LINES; // 首页“数据不完整”标注
   const tableRows = 1 + 1 + Object.keys(facts.regions).length;
   for (const [i, s] of report.sections.entries()) {
     lines += 2.2 + 0.3; // 章节标题（三号/加粗）与段前后间距
@@ -53,11 +59,29 @@ export function estimatePages(report: RenderedReport, facts: WeeklyFacts): numbe
   return Math.max(1, Math.ceil((lines / PAGE_LINES) * 10) / 10);
 }
 
+/**
+ * 数据不完整：数据覆盖范围没盖住整个统计周期（周中截止，经“按已有数据继续”进入）。
+ * 只比较日期，不比较时间；覆盖范围超出周期不算不完整。返回展示用的日期范围，完整时为 undefined。
+ */
+function coverageGap(facts: WeeklyFacts): { from: string; to: string } | undefined {
+  const { dataCoverage, period } = facts;
+  return dataCoverage.from > period.from || dataCoverage.to < period.to ? { from: dataCoverage.from, to: dataCoverage.to } : undefined;
+}
+
+/** ISO 日期转“10 月 29 日”（与提示词里的日期写法一致） */
+export function fmtMonthDay(iso: string): string {
+  const [, month, day] = iso.split("-");
+  return `${Number(month)} 月 ${Number(day)} 日`;
+}
+
 /** 核心指标表与图表放在哪个章节之后：优先标题含“指标”的章节，否则第一章 */
 function coreSectionIndex(report: RenderedReport): number {
   const i = report.sections.findIndex((s) => /指标|metrics/i.test(s.heading + s.id));
   return i >= 0 ? i : 0;
 }
+
+/** 章节标题本身是“核心指标”时，不再插入同名的表格标题，避免正文里重复出现两次 */
+const isCoreHeading = (heading: string): boolean => heading.replace(/\s+/g, "") === "核心指标";
 
 // ---- 文档构建 ----
 const thin = { style: BorderStyle.SINGLE, size: 4, color: "BFBFBF" };
@@ -111,8 +135,8 @@ async function buildDocx(input: RenderReportInput, opts: RenderOptions): Promise
     renderChartPng(regionBarOption(facts), opts.chartFonts),
     renderChartPng(trendLineOption(facts), opts.chartFonts),
   ]);
-  // 图宽 16cm 左右（约 600px @96dpi），按图表比例定高
-  const imgW = 600;
+  // 图宽约 16cm（600px @96dpi），按图表比例定高
+  const imgW = IMG_WIDTH_PX;
   const imgH = Math.round((imgW * CHART_SIZE.height) / CHART_SIZE.width);
   const image = (data: Uint8Array, name: string) =>
     new Paragraph({
@@ -137,13 +161,33 @@ async function buildDocx(input: RenderReportInput, opts: RenderOptions): Promise
       children: [run(report.title, { bold: true, size: 36 })],
     }),
   ];
-  const addCore = () => {
+  // 数据不完整时首页醒目标注：放在标题之后、第一段正文之前，红字加粗
+  const gap = coverageGap(facts);
+  if (gap) {
+    const period = `统计周期为 ${fmtMonthDay(facts.period.from)} 至 ${fmtMonthDay(facts.period.to)}`;
+    const covered =
+      gap.from === gap.to ? `仅覆盖 ${fmtMonthDay(gap.from)} 一天` : `仅覆盖 ${fmtMonthDay(gap.from)} 至 ${fmtMonthDay(gap.to)}`;
     children.push(
-      new Paragraph({ spacing: { before: 120, after: 80 }, children: [run("核心指标", { bold: true, size: 24 })] }),
-      metricsTable(facts, font),
-      image(bar, "各区域实收对比图"),
-      image(trend, "近 4 周实收趋势图"),
+      new Paragraph({
+        spacing: { after: 120, line: 300 },
+        children: [
+          new TextRun({
+            text: `数据不完整：本报告数据${covered}（${period}），周报按已有数据编写。`,
+            bold: true,
+            size: 24,
+            color: WARN_COLOR,
+            font: fontSpec,
+          }),
+        ],
+      }),
     );
+  }
+  const addCore = (sectionHeading?: string) => {
+    // 章节标题本身已是“核心指标”时不再插入同名标题，否则正文里会出现两次
+    if (sectionHeading === undefined || !isCoreHeading(sectionHeading)) {
+      children.push(new Paragraph({ spacing: { before: 120, after: 80 }, children: [run("核心指标", { bold: true, size: 24 })] }));
+    }
+    children.push(metricsTable(facts, font), image(bar, "各区域实收对比图"), image(trend, "近 4 周实收趋势图"));
   };
   report.sections.forEach((s, i) => {
     children.push(
@@ -159,7 +203,7 @@ async function buildDocx(input: RenderReportInput, opts: RenderOptions): Promise
     for (const b of s.bullets ?? []) {
       children.push(new Paragraph({ bullet: { level: 0 }, spacing: { after: 40, line: 340 }, children: [run(b)] }));
     }
-    if (i === core) addCore();
+    if (i === core) addCore(s.heading);
   });
   if (report.sections.length === 0) addCore();
 

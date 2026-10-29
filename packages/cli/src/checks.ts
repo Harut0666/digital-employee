@@ -8,7 +8,7 @@ import { join } from "node:path";
 import mammoth from "mammoth";
 import { SLOT_FORMATS, type PauseCode, type TaskState, type WeeklyFacts } from "@de/core/contract";
 
-export type CheckKind = "numbers" | "mustContain" | "mustNotContain" | "anomalies" | "pause";
+export type CheckKind = "numbers" | "mustContain" | "mustContainAny" | "mustNotContain" | "anomalies" | "pause";
 
 /** 数字核对项。`path` 指向事实（facts:）或周报正文的表格单元（table:）。 */
 export interface NumberCheck {
@@ -28,6 +28,8 @@ export interface PauseCheck {
 export interface CaseChecks {
   numbers?: NumberCheck[];
   mustContain?: string[];
+  /** 每组是同一判定要点的一组等价说法，正文命中其中任意一处即通过 */
+  mustContainAny?: string[][];
   mustNotContain?: string[];
   /** 事实里必须判出的异常 id，如 region:华东、store:HZ01 */
   anomalies?: string[];
@@ -90,7 +92,7 @@ const PAUSE_CODES = [
   "awaiting_review",
 ] as const satisfies readonly PauseCode[];
 
-const CHECK_KEYS = ["numbers", "mustContain", "mustNotContain", "anomalies", "pause"] as const;
+const CHECK_KEYS = ["numbers", "mustContain", "mustContainAny", "mustNotContain", "anomalies", "pause"] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -105,6 +107,17 @@ function nonEmptyStrings(value: unknown, where: string, field: string): string[]
   return value.map((item, i) => {
     if (typeof item !== "string" || item.trim() === "") bad(where, `${field}[${i}] 必须是非空字符串`);
     return item;
+  });
+}
+
+/** mustContainAny：[["说法 A", "说法 B"], …]，每组至少一个非空字符串。 */
+function alternativeGroups(value: unknown, where: string, field: string): string[][] {
+  if (!Array.isArray(value)) bad(where, `${field} 必须是数组，数组里每一项是一组等价说法`);
+  return value.map((group, i) => {
+    const at = `${field}[${i}]`;
+    if (!Array.isArray(group)) bad(where, `${at} 必须是数组（同一判定要点的一组等价说法）`);
+    if (group.length === 0) bad(where, `${at} 不能是空数组`);
+    return nonEmptyStrings(group, where, at);
   });
 }
 
@@ -155,6 +168,7 @@ export function parseChecks(raw: unknown, where = "checks"): CaseChecks {
     checks.numbers = raw.numbers.map((item, i) => parseNumberCheck(item, where, i));
   }
   if (raw.mustContain !== undefined) checks.mustContain = nonEmptyStrings(raw.mustContain, where, "mustContain");
+  if (raw.mustContainAny !== undefined) checks.mustContainAny = alternativeGroups(raw.mustContainAny, where, "mustContainAny");
   if (raw.mustNotContain !== undefined) checks.mustNotContain = nonEmptyStrings(raw.mustNotContain, where, "mustNotContain");
   if (raw.anomalies !== undefined) checks.anomalies = nonEmptyStrings(raw.anomalies, where, "anomalies");
   if (raw.pause !== undefined) checks.pause = parsePauseCheck(raw.pause, where);
@@ -395,6 +409,16 @@ function checkMustContain(evidence: RunEvidence, text: string): CheckOutcome {
   return { kind: "mustContain", target: text, passed: hit, detail: hit ? "正文里有" : `正文里没有「${text}」` };
 }
 
+function checkMustContainAny(evidence: RunEvidence, alternatives: string[]): CheckOutcome {
+  const target = alternatives.join(" / ");
+  if (!evidence.docx) return { kind: "mustContainAny", target, passed: false, detail: "没有交付的 Word（docx），无法核对正文" };
+  const body = squash(evidence.docx.text);
+  const hit = alternatives.find((alternative) => body.includes(squash(alternative)));
+  return hit === undefined
+    ? { kind: "mustContainAny", target, passed: false, detail: `正文里没有以下任一说法：「${alternatives.join("」「")}」` }
+    : { kind: "mustContainAny", target, passed: true, detail: `正文里有「${hit}」` };
+}
+
 function checkMustNotContain(evidence: RunEvidence, text: string): CheckOutcome {
   // 没有交付 Word 就没有正文，也就没有违规文本：这一项按通过
   if (!evidence.docx) return { kind: "mustNotContain", target: text, passed: true, detail: "没有交付的 Word，视为正文里没有" };
@@ -437,6 +461,7 @@ export function evaluateChecks(evidence: RunEvidence, checks: CaseChecks): Check
   const outcomes: CheckOutcome[] = [];
   for (const check of checks.numbers ?? []) outcomes.push(checkNumber(evidence, check));
   for (const text of checks.mustContain ?? []) outcomes.push(checkMustContain(evidence, text));
+  for (const alternatives of checks.mustContainAny ?? []) outcomes.push(checkMustContainAny(evidence, alternatives));
   for (const text of checks.mustNotContain ?? []) outcomes.push(checkMustNotContain(evidence, text));
   for (const id of checks.anomalies ?? []) outcomes.push(checkAnomaly(evidence, id));
   if (checks.pause) outcomes.push(checkPause(evidence, checks.pause));

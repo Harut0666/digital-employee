@@ -125,4 +125,60 @@ describe("render_report_docx（接缝 2）", () => {
     expect(text).toContain("静安店会员日活动方案");
     expect(out.estimatedPages).toBeGreaterThanOrEqual(1);
   });
+
+  test("核心指标：章节标题本身是核心指标时，渲染器不再插入同名表格标题（只出现一次）", async () => {
+    const r: RenderedReport = {
+      title: "青禾烘焙经营周报（2026 年第 44 周）",
+      sections: [
+        { id: "summary", heading: "本周摘要", paragraphs: ["本周全公司实收 573,635 元。"] },
+        { id: "metrics", heading: "核心指标", paragraphs: ["西南目标达成率最高。"] },
+        { id: "next", heading: "下周关注事项", bullets: ["静安店会员日活动方案"] },
+      ],
+    };
+    const out = await render("task6/step-render/metrics-heading", r);
+    const text = (await mammoth.extractRawText({ path: out.docxPath })).value;
+    expect(text.split("核心指标").length - 1).toBe(1);
+    // 章节顺序不变：摘要 → 核心指标（表格与图表跟在这一章里）→ 下周关注
+    expect(text.indexOf("本周摘要")).toBeLessThan(text.indexOf("核心指标"));
+    expect(text.indexOf("核心指标")).toBeLessThan(text.indexOf("下周关注事项"));
+  });
+
+  test("章节不是核心指标时，渲染器仍插入一次表格标题", async () => {
+    const r: RenderedReport = {
+      title: "青禾烘焙经营周报（2026 年第 44 周）",
+      sections: [{ id: "summary", heading: "本周摘要", paragraphs: ["本周全公司实收 573,635 元。"] }],
+    };
+    const out = await render("task6/step-render/metrics-inserted", r);
+    const text = (await mammoth.extractRawText({ path: out.docxPath })).value;
+    expect(text.split("核心指标").length - 1).toBe(1);
+  });
+
+  test("数据不完整：正文开头醒目标注只覆盖到哪一天，且排在本周摘要之前", async () => {
+    const partial: WeeklyFacts = {
+      ...facts,
+      period: { ...facts.period, to: "2026-11-01" },
+      dataCoverage: { from: "2026-08-31", to: "2026-10-29" },
+    };
+    const out = await h.call("render_report_docx", {
+      report: report(),
+      facts: partial,
+      outDir: mkdtempSync(join(tmpdir(), "de-render-partial-")),
+      idempotencyKey: "task7/step-render/partial",
+    });
+    const text = (await mammoth.extractRawText({ path: out.docxPath })).value;
+    expect(text).toContain("数据不完整");
+    expect(text).toContain("10 月 29 日");
+    // 标注在标题之后、第一段正文（本周摘要）之前：打开第一页就能看到
+    expect(text.indexOf("数据不完整")).toBeGreaterThan(text.indexOf("青禾烘焙经营周报"));
+    expect(text.indexOf("数据不完整")).toBeLessThan(text.indexOf("本周摘要"));
+    // 标注本身也计入版式估算，仍不超过 3 页
+    expect(out.estimatedPages).toBeGreaterThanOrEqual(1);
+    expect(out.estimatedPages).toBeLessThanOrEqual(3);
+  });
+
+  test("数据覆盖完整时首页不出现“数据不完整”标注", async () => {
+    const out = await render("task7/step-render/complete");
+    const text = (await mammoth.extractRawText({ path: out.docxPath })).value;
+    expect(text).not.toContain("数据不完整");
+  });
 });

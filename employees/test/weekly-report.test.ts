@@ -425,6 +425,38 @@ describe("SKILL.md 与提示词", () => {
     const text = read("frontdesk.md");
     for (const phrase of ["前台 Agent", "表单草稿", "不能", "流程卡片", "按钮"]) expect(text).toContain(phrase);
   });
+
+  // 真实模型回归（2026-10-29 冒烟）：模型把华南/深圳门店判成“原因待核实”，
+  // 漏掉纪要里“第二杯半价活动 10/25 结束”这类区域整体原因。规则留在提示词里，防止被后续改动删掉。
+  test("match_causes 提示词：区域/店型原因必须向门店传播，不得因为门店没有专门说法就写“原因待核实”", () => {
+    const text = read("prompts/match_causes.md");
+    for (const phrase of ["区域整体原因", "店型整体原因", "不得写“原因待核实”", "所属区域", "所属店型"]) {
+      expect(text).toContain(phrase);
+    }
+  });
+
+  test("match_causes 提示词：列出容易漏掉的纪要要点（活动结束、停业、竞品开业、新店爬坡、节后回落）", () => {
+    const text = read("prompts/match_causes.md");
+    for (const phrase of ["活动结束", "停业", "竞品开业", "新店爬坡", "节后回落", "不要漏"]) expect(text).toContain(phrase);
+    // 纪要说“持平”是可核验说法（进 claims），不是原因
+    expect(text).toContain("持平");
+    expect(text).toContain("claims");
+  });
+
+  test("write_report 提示词：区域/店型整体原因必须写进对应门店的异常要点", () => {
+    const text = read("prompts/write_report.md");
+    for (const phrase of ["区域整体原因", "店型整体原因", "不得省略", "causes"]) expect(text).toContain(phrase);
+  });
+
+  // 真实模型回归：数据质量说明只写退货汇总，漏掉纪要里具名的退货/停业事件。
+  test("SKILL.md 与 write_report 提示词：数据质量说明逐条写纪要提到的停业与退货事件", () => {
+    const write = read("prompts/write_report.md");
+    for (const file of [skill, write]) {
+      for (const phrase of ["逐条", "退货", "停业", "不要只写"]) expect(file).toContain(phrase);
+    }
+    // 停业的判定用词要稳定：写“系停业，不是数据缺失”，不要写成数据缺失
+    expect(skill).toContain("系停业，不是数据缺失");
+  });
 });
 
 describe("术语", () => {
