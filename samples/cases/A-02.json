@@ -1,0 +1,49 @@
+{
+  "id": "A-02",
+  "title": "正常任务（含重复记录）",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 43
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W43.docx",
+      "path": "../scenario-a/周会纪要_2026W43.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered"
+  }
+}
