@@ -177,3 +177,26 @@ describe("faults.corruptTraceability", () => {
     expect(events.filter((e) => e.type === "fault_injected" && e.mode === "corruptTraceability")).toHaveLength(1);
   });
 });
+
+describe("接缝 1 · 判断步骤重放时重复执行工具", () => {
+  test("判断步骤中断后重新执行，同一个工具调用留下重复的 tool_called 事件，引擎照常完成，seq 连续", async () => {
+    // 模拟：判断执行器在恢复后重新执行了白名单工具（模型响应按日志重放，工具调用没有被重放）
+    let attempt = 0;
+    const judgment = createStubJudgment({
+      override: async (input) => {
+        if (input.step.id !== "match_causes") return undefined;
+        attempt += 1;
+        await input.onToolCalled({ tool: "query_task", args: { id: "a" }, ok: true });
+        if (attempt === 1) await input.onToolCalled({ tool: "query_task", args: { id: "a" }, ok: true });
+        return { ok: true, output: { causes: [] }, modelCalls: 0 };
+      },
+    });
+    const h = await createHarness({ judgment: judgment.runner });
+    const settled = await h.run();
+    expect(settled.state).toBe("awaiting_review");
+    const events = await h.engine.events(settled.id);
+    expect(events.filter((e) => e.type === "tool_called" && e.tool === "query_task")).toHaveLength(2);
+    expectContiguousSeq(events);
+    expect(settled.steps.find((s) => s.id === "match_causes")?.status).toBe("done");
+  });
+});
