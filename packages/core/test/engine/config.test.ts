@@ -39,6 +39,13 @@ describe("loadEmployeeConfig", () => {
     expect(config.formSchema).toMatchObject({ type: "object" });
   });
 
+  test("可选的 form.ui.json 加载为 formUi；没有则为 undefined", async () => {
+    expect((await loadEmployeeConfig(fixture)).formUi).toBeUndefined();
+    const dir = copyFixture();
+    writeFileSync(join(dir, "form.ui.json"), JSON.stringify({ "ui:order": ["period"] }));
+    expect((await loadEmployeeConfig(dir)).formUi).toEqual({ "ui:order": ["period"] });
+  });
+
   test("哈希只取决于文件内容：同内容同哈希，改一个字就变", async () => {
     const a = copyFixture();
     const b = copyFixture();
