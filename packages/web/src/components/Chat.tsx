@@ -8,11 +8,13 @@ import {
   RobotOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { useEffect, useRef } from "react";
-import { STATE_LABELS, type TaskState } from "@de/core/contract";
+import { useEffect, useMemo, useRef } from "react";
+import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { EmployeeInfo } from "../api";
-import type { ChatCard, SessionView } from "../view/session-view";
+import type { ChatCard, SessionView, StepDef } from "../view/session-view";
+import { deriveTrajectory } from "../view/trajectory";
 import { renderCard, type CardActions } from "./Cards";
+import { Trajectory } from "./Trajectory";
 
 const STATE_COLOR: Record<TaskState, string> = {
   draft: "default",
@@ -60,8 +62,29 @@ function ChatInput({ placeholder }: { placeholder: string }) {
   );
 }
 
-export function TaskChat({ title, view, subtitle, actions }: { title: string; view: SessionView; subtitle?: string; actions: CardActions }) {
+export function TaskChat({
+  sessionId,
+  title,
+  view,
+  subtitle,
+  actions,
+  events,
+  stepDefs,
+  elapsedMs,
+  modelCalls,
+}: {
+  sessionId: string;
+  title: string;
+  view: SessionView;
+  subtitle?: string;
+  actions: CardActions;
+  events: TaskEvent[];
+  stepDefs: StepDef[];
+  elapsedMs: number;
+  modelCalls: { used: number; limit: number };
+}) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const trajectory = useMemo(() => deriveTrajectory(events, stepDefs), [events, stepDefs]);
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [view.lastSeq]);
@@ -76,6 +99,7 @@ export function TaskChat({ title, view, subtitle, actions }: { title: string; vi
           {subtitle && <div className="chat-sub">{subtitle}</div>}
         </div>
       </div>
+      <Trajectory key={sessionId} view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} />
       <div className="chat-body" ref={bodyRef}>
         {view.cards.map((card) =>
           card.kind === "user" || card.kind === "agent" ? <Message key={`${card.kind}-${card.seq}`} card={card} /> : renderCard(card, actions),

@@ -9,3 +9,4 @@ settings.json
 .claude/
 out/
 .scratch/
+.playwright-cli/

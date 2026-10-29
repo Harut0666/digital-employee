@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, ConfigProvider, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
@@ -18,7 +18,7 @@ const DEFAULT_SECTIONS = [
   { id: "body", heading: "正文" },
 ];
 
-const PAGE_TITLES = { replay: "事件回放", config: "员工配置", settings: "设置" } as const;
+const PAGE_TITLES = { config: "员工配置", settings: "设置" } as const;
 
 function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   const api = useApi();
@@ -37,6 +37,13 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   const taskId = selection.kind === "task" ? selection.id : undefined;
   const task = useTask(taskId);
   const employee = employees.find((e) => e.id === (selection.kind === "new" ? selection.employee : task.snapshot?.employee));
+  const sessionTitle =
+    selection.kind === "task" ? (tasks.find((t) => t.id === selection.id)?.title ?? task.snapshot?.id ?? "任务") : undefined;
+
+  // 浏览器标签页跟随当前会话标题（新对话时回到产品名）
+  useEffect(() => {
+    document.title = sessionTitle ? `${sessionTitle} · 迷你数字员工` : "迷你数字员工";
+  }, [sessionTitle]);
 
   const run = useCallback(
     async (cmd: TaskCommand, uploads?: UploadItem[]) => {
@@ -107,10 +114,15 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   } else {
     center = (
       <TaskChat
-        title={tasks.find((t) => t.id === selection.id)?.title ?? task.snapshot?.id ?? "任务"}
+        sessionId={selection.id}
+        title={sessionTitle ?? "任务"}
         subtitle={employee ? `由 ${employee.name} 处理` : undefined}
         view={task.view}
         actions={actions}
+        events={task.events}
+        stepDefs={task.snapshot?.steps ?? []}
+        elapsedMs={task.view.elapsedMs}
+        modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
       />
     );
     const supplement = task.view.state === "awaiting_initiator" && employee && task.snapshot;

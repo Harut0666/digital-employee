@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Select } from "antd";
 import {
-  ClockCircleOutlined,
   DownOutlined,
   PlusOutlined,
   RightOutlined,
@@ -20,10 +19,10 @@ import { groupSessions } from "../view/session-groups";
 export type Selection =
   | { kind: "new"; employee: string }
   | { kind: "task"; id: string }
-  | { kind: "page"; page: "replay" | "config" | "settings" };
+  | { kind: "page"; page: "config" | "settings" };
 
+// 事件回放界面已取消（回放保留在命令行 `de replay`）；任务的执行过程改由对话框顶部的“轨迹”展示。
 const PAGES = [
-  { page: "replay", label: "事件回放", icon: <ClockCircleOutlined /> },
   { page: "config", label: "员工配置", icon: <ToolOutlined /> },
   { page: "settings", label: "设置", icon: <SettingOutlined /> },
 ] as const;

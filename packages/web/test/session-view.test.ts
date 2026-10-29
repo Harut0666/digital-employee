@@ -48,8 +48,8 @@ describe("deriveSessionView: 工具故障暂停", () => {
     expect(view.steps.find((s) => s.id === "load")?.error).toBe("读取数据工具超时");
   });
 
-  test("对话流依次是：用户提交、系统开始执行、执行进度、暂停卡", () => {
-    expect(view.cards.map((c) => c.kind)).toEqual(["user", "agent", "progress", "pause"]);
+  test("对话流依次是：用户提交、系统开始执行、暂停卡（执行过程在轨迹里）", () => {
+    expect(view.cards.map((c) => c.kind)).toEqual(["user", "agent", "pause"]);
   });
 
   test("暂停卡带原因和命令选项，且处于待处理", () => {
@@ -126,7 +126,7 @@ describe("deriveSessionView: 待审核", () => {
   const view = deriveSessionView(seqOf([...toReview]), STEP_DEFS);
 
   test("出现质检卡和审核卡，审核卡待处理", () => {
-    expect(view.cards.map((c) => c.kind)).toEqual(["user", "agent", "progress", "qc", "review"]);
+    expect(view.cards.map((c) => c.kind)).toEqual(["user", "agent", "qc", "review"]);
     expect(view.cards.at(-1)).toMatchObject({ kind: "review", active: true });
   });
 
@@ -155,7 +155,7 @@ describe("deriveSessionView: 待审核", () => {
     expect(v.state).toBe("delivered");
   });
 
-  test("退回：保留意见和章节，开新一轮执行进度卡", () => {
+  test("退回：保留意见和章节，步骤取最新一轮", () => {
     const v = deriveSessionView(
       seqOf([
         ...toReview,
@@ -170,8 +170,6 @@ describe("deriveSessionView: 待审核", () => {
       active: false,
       decision: { decision: "return", comment: "华南异常原因不够具体", sections: ["异常与原因"] },
     });
-    const progress = v.cards.filter((c) => c.kind === "progress");
-    expect(progress.map((c) => (c as { round: number }).round)).toEqual([0, 1]);
     // 右栏步骤取最新一轮：只有被重跑的步骤
     expect(v.steps.map((s) => [s.id, s.status])).toEqual([["write", "running"]]);
   });

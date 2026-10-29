@@ -24,7 +24,6 @@ interface CardBase {
 export type ChatCard =
   | (CardBase & { kind: "user"; text: string })
   | (CardBase & { kind: "agent"; text: string })
-  | (CardBase & { kind: "progress"; round: number; steps: StepView[] })
   | (CardBase & { kind: "pause"; state: TaskState; pause: PauseReason; active: boolean })
   | (CardBase & { kind: "qc"; attempt: number; passed: boolean; checks: QcCheckResult[] })
   | (CardBase & { kind: "review"; active: boolean; decision?: ReviewDecision })
@@ -76,28 +75,28 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
   let state: TaskState | undefined;
   let pause: PauseReason | undefined;
 
-  // 每一轮（reworkRound）一张执行进度卡，卡内的步骤状态随事件更新。
-  const rounds = new Map<number, { card: Extract<ChatCard, { kind: "progress" }>; byId: Map<string, StepView> }>();
+  // 每一轮（reworkRound）一组步骤状态。对话里不再插入执行进度卡片：
+  // 执行过程由轨迹（view/trajectory.ts）在对话框顶部展示，这里只保留右栏要用的最新一轮步骤。
+  const rounds = new Map<number, { steps: StepView[]; byId: Map<string, StepView> }>();
   const defById = new Map(defs.map((d) => [d.id, d]));
 
-  const roundOf = (round: number, ev: TaskEvent) => {
+  const roundOf = (round: number) => {
     let r = rounds.get(round);
     if (!r) {
       const steps: StepView[] = round === 0 ? defs.map((d) => ({ ...d, status: "pending" as const })) : [];
-      r = { card: { kind: "progress", seq: ev.seq, ts: ev.ts, round, steps }, byId: new Map(steps.map((s) => [s.id, s])) };
+      r = { steps, byId: new Map(steps.map((s) => [s.id, s])) };
       rounds.set(round, r);
-      cards.push(r.card);
     }
     return r;
   };
-  const stepIn = (round: number, stepId: string, ev: TaskEvent) => {
-    const r = roundOf(round, ev);
+  const stepIn = (round: number, stepId: string) => {
+    const r = roundOf(round);
     let s = r.byId.get(stepId);
     if (!s) {
       const def = defById.get(stepId) ?? { id: stepId, label: stepId, kind: "compute" as const };
       s = { ...def, status: "pending" };
       r.byId.set(stepId, s);
-      r.card.steps.push(s);
+      r.steps.push(s);
     }
     return s;
   };
@@ -132,17 +131,17 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
       }
       case "step_started": {
         currentRound = ev.reworkRound;
-        stepIn(ev.reworkRound, ev.stepId, ev).status = "running";
+        stepIn(ev.reworkRound, ev.stepId).status = "running";
         break;
       }
       case "step_completed": {
-        const s = stepIn(ev.reworkRound, ev.stepId, ev);
+        const s = stepIn(ev.reworkRound, ev.stepId);
         s.status = "done";
         delete s.error;
         break;
       }
       case "step_failed": {
-        const s = stepIn(currentRound, ev.stepId, ev);
+        const s = stepIn(currentRound, ev.stepId);
         s.status = "failed";
         s.error = ev.error;
         break;
@@ -191,7 +190,7 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
   return {
     state,
     cards,
-    steps: latestRound?.card.steps ?? defs.map((d) => ({ ...d, status: "pending" as const })),
+    steps: latestRound?.steps ?? defs.map((d) => ({ ...d, status: "pending" as const })),
     pause,
     qc,
     deliverables,

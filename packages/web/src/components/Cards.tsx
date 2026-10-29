@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Button, Checkbox, Input, message, Space, Tag, Tooltip } from "antd";
-import { ThoughtChain } from "@ant-design/x";
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -26,39 +25,7 @@ export interface CardActions {
   downloadUrl: (kind: "docx" | "md" | "qc_record") => string | undefined;
 }
 
-const STEP_KIND_TAG = {
-  compute: { text: "计算", color: "default" },
-  judge: { text: "判断", color: "purple" },
-  qc: { text: "质检", color: "cyan" },
-} as const;
-
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-
-export function ProgressCard({ card }: { card: Extract<ChatCard, { kind: "progress" }> }) {
-  const items = card.steps.map((s) => {
-    const tag = STEP_KIND_TAG[s.kind];
-    return {
-      key: s.id,
-      status: s.status === "done" ? ("success" as const) : s.status === "running" ? ("loading" as const) : s.status === "failed" ? ("error" as const) : s.status === "skipped" ? ("abort" as const) : undefined,
-      icon: s.status === "pending" ? <span className="step-pending" /> : undefined,
-      title: (
-        <span className="step-row">
-          <span className="name">{s.label}</span>
-          <Tag color={tag.color} variant="filled" style={{ margin: 0 }}>
-            {tag.text}
-          </Tag>
-          {s.status === "failed" && <span className="err">{s.error ?? "执行失败"}</span>}
-        </span>
-      ),
-    };
-  });
-  return (
-    <div className="card">
-      {card.round > 0 && <div className="msg-time" style={{ textAlign: "left", marginBottom: 6 }}>第 {card.round} 轮重做</div>}
-      <ThoughtChain items={items} line="solid" />
-    </div>
-  );
-}
 
 const CMD_LABEL: Record<CommandType, string> = {
   submit: "提交",
@@ -275,8 +242,6 @@ export function NoticeCard({ card }: { card: Extract<ChatCard, { kind: "notice" 
 
 export function renderCard(card: ChatCard, actions: CardActions) {
   switch (card.kind) {
-    case "progress":
-      return <ProgressCard key={`${card.kind}-${card.seq}`} card={card} />;
     case "pause":
       return <PauseCard key={`${card.kind}-${card.seq}`} card={card} actions={actions} />;
     case "qc":
