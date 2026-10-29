@@ -1,7 +1,7 @@
 // T1 实现：任务引擎（状态机、事件日志、编排器、断点恢复）。
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, copyFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createJudgmentRunner } from "../agent";
 import { loadEmployeeConfigSync } from "../config";
 import { createQcEngine, renderSlots } from "../qc";
@@ -54,6 +54,9 @@ export class SimulatedCrash extends Error {
 }
 
 // ---- 常量 ----
+
+/** 员工 id 即员工配置目录名：只允许小写字母、数字、连字符。 */
+const EMPLOYEE_ID = /^[a-z0-9-]+$/;
 
 const COMMAND_TRIGGER: Record<TaskCommand["type"], TransitionTrigger> = {
   submit: "submit",
@@ -713,8 +716,15 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
   const engine: TaskEngine = {
     async create({ employee, form, attachments, actor }) {
       if (actor !== "initiator" && actor !== "system") throw new Error(`角色 ${actor} 不能创建任务`);
-      const source = join(resolve(deps.employeesDir), employee);
+      // employee 来自不可信输入（HTTP 请求）：先校验再做任何文件操作
+      if (typeof employee !== "string" || !EMPLOYEE_ID.test(employee)) {
+        throw new Error(`员工 id 不合法：${JSON.stringify(employee)}（只允许小写字母、数字和连字符）`);
+      }
+      const employeesRoot = resolve(deps.employeesDir);
+      const source = resolve(employeesRoot, employee);
+      if (dirname(source) !== employeesRoot) throw new Error(`员工 id 不合法：${employee}（超出员工配置目录）`);
       if (!existsSync(source) || !statSync(source).isDirectory()) throw new Error(`员工配置目录不存在：${source}`);
+      if (!existsSync(join(source, "workflow.yaml"))) throw new Error(`员工配置目录缺少 workflow.yaml：${source}`);
       for (const a of attachments) if (!existsSync(a.sourcePath)) throw new Error(`附件不存在：${a.sourcePath}`);
 
       const stamp = now().toISOString().replace(/[-:T]/g, "").slice(0, 14);
