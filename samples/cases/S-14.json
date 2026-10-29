@@ -1,0 +1,47 @@
+{
+  "id": "S-14",
+  "title": "缺材料：缺销售明细 → 发起人终止任务",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "missing_sales"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "terminate"
+      },
+      "expect": {
+        "state": "terminated"
+      }
+    }
+  ],
+  "expect": {
+    "state": "terminated",
+    "checks": {
+      "pause": {
+        "code": "missing_sales",
+        "messageContains": "销售明细"
+      }
+    }
+  }
+}

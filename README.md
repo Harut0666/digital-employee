@@ -54,7 +54,7 @@ digital-employee/
 $env:DE_SCRIPTED="$env:APPDATA\digital-employee\samples\cases\scripts\A-01.json"; .\dist\digital-employee.exe
 ```
 
-实测（Windows 11、Bun 1.4.2）：exe **105.6MB**；冷启动到接口可用约 **1.0 秒**（3 次测量 0.94–1.13s）；剧本模式跑完 A-01 到 delivered 约 3.9 秒。
+实测（Windows 11、Bun 1.4.2）：exe **105.8MB**（含 24 条 S 系列用例后）；冷启动到接口可用约 **1.0 秒**（3 次测量 0.83–1.10s）；剧本模式跑完 A-01 到 delivered 约 3.4 秒。
 
 exe 也能当命令行用：`digital-employee.exe init`（只准备工作区）、`mcp-server`（工具服务器），以及和 `de` 一样的 `run-case` / `run-cases` / `check` / `replay`。
 
@@ -223,8 +223,9 @@ employees/weekly-report/
 
 - 场景 A（经营周报）已端到端跑通：契约、工具、引擎、服务端/CLI、前端、质检与集成测试均已实现。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
-- 单文件 exe 已落地（设计 §14）：`bun run build:exe` → `dist/digital-employee.exe`（约 105.6MB），首次启动释放工作区，欢迎页可一键载入公开样例；`scripts/smoke-exe.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面”。
+- 单文件 exe 已落地（设计 §14）：`bun run build:exe` → `dist/digital-employee.exe`（约 105.8MB），首次启动释放工作区，欢迎页可一键载入公开样例；`scripts/smoke-exe.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面”。
 - 已知限制：
   - 字体未嵌入。ticket 里的“思源黑体子集（OFL）”需要仓库里不存在、也没找到可合法分发来源的字体文件，因此**跳过字体嵌入**并保留回退：图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（`noto` 等缺失时由阅读端回退），不嵌入字体二进制。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
-  - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时用源码运行 `de fixtures` 生成。
+  - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时跑 `digital-employee.exe fixtures`（源数据已嵌入，输出到工作区 `samples/fixtures/`，约 31 秒）或源码 `de fixtures`；8 条依赖夹具的 S 用例要先这样生成夹具才能跑。
+  - 源码模式（`bun run dev:server`）不会释放工作区样例：欢迎页「载入公开样例」只在 exe 首次启动（或工作区里已有 `samples/`）时可用；源码演示请直接用 exe，或把 `samples/` 复制进工作区。
   - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。

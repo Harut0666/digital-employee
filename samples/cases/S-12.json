@@ -1,0 +1,43 @@
+{
+  "id": "S-12",
+  "title": "缺材料：缺少“销售目标”工作表",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../fixtures/销售明细-缺销售目标表.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "missing_dimensions"
+      }
+    }
+  ],
+  "expect": {
+    "state": "awaiting_initiator",
+    "pauseCode": "missing_dimensions",
+    "checks": {
+      "pause": {
+        "code": "missing_dimensions",
+        "messageContains": "销售目标"
+      }
+    }
+  }
+}

@@ -123,6 +123,39 @@
 
 用 `de replay <out>/workspace <taskId>` 可回放事件。`de run-case` 的退出码：用例通过为 0，失败为 1，参数或文件错误为 1 或 2。`de check` 全部通过为 0，有不通过项为 1。
 
+## 自测用例集（`S-xx`）
+
+`S-01`～`S-24` 按 [design §15](../../docs/design.md) 的场景 A 清单补齐，覆盖正常、边界、缺材料、异常、流程五类；标题以类别开头，方便在汇总里分类看。每条都有配套剧本与 `expect.checks`。
+
+| 用例 | 类别 | 覆盖点 | 终止状态 |
+|---|---|---|---|
+| `S-01` / `S-02` | 正常 | 第 40、41 周没有纪要，选“无纪要继续”后交付 | `delivered` |
+| `S-03` / `S-04` | 正常 | 第 44、43 周纪要与数据一致，没有矛盾要引用（`contradictionRefs` 为空也能过质检） | `delivered` |
+| `S-05` | 边界 | 第 36 周是数据首周，无上周、环比“不可比” | `delivered` |
+| `S-06` | 边界 | 只传 CSV → 缺维表 → 补传 xlsx 后继续 | `delivered` |
+| `S-07` | 边界 | 第 44 周配第 43 周纪要 → 周次不符 → 补传本周纪要 | `delivered` |
+| `S-08` | 边界 | 同时上传第 43、44 两份纪要 | `delivered` |
+| `S-09` | 边界 | 数据在周中截止 → 选“按已有数据继续”，报告标注数据不完整 | `delivered` |
+| `S-10` | 边界 | 数据在周中截止 → 补传完整销售明细后继续 | `delivered` |
+| `S-11` | 边界 | 周中截止且无纪要 → 两次继续（按已有数据 + 无纪要） | `delivered` |
+| `S-12` | 缺材料 | 缺“销售目标”工作表 → `missing_dimensions` | `awaiting_initiator` |
+| `S-13` | 缺材料 | 缺本周纪要 → 选“无纪要继续”后交付 | `delivered` |
+| `S-14` | 缺材料 | 缺销售明细 → 发起人终止任务 | `terminated` |
+| `S-15` | 异常 | 第 35 周早于数据覆盖范围 → `period_out_of_range` | `awaiting_initiator` |
+| `S-16` | 异常 | 损坏的 xlsx（截断字节）→ `invalid_input` | `awaiting_initiator` |
+| `S-17` | 异常 | 销售明细缺“实收金额”列：能通过准入，但实收全为 0（不编造） | `delivered` |
+| `S-18` | 异常 | 含未知门店编码的记录：不计入合计，数据质量说明里报数量 | `delivered` |
+| `S-19` | 异常 | 记录 ID 冲突：剔除后计算，数据质量说明里报数量 | `delivered` |
+| `S-20` | 流程 | 审核人退回摘要意见 → 重做（`revisionNotes`）→ 通过 | `delivered` |
+| `S-21` | 流程 | 连续两次退回（摘要、核心指标各一次）→ 两轮重做 → 通过 | `delivered` |
+| `S-22` | 流程 | 发起人越权点“通过”被拒（`forbidden_role`），审核人才能通过 | `delivered` |
+| `S-23` | 流程 | 漏引用纪要矛盾 → 质检 `contradiction_coverage` 不通过 → 自动修正后通过 | `delivered` |
+| `S-24` | 流程 | 质检自动修正用尽 → 转人工（`qc_exhausted`）→ 操作员终止 | `terminated` |
+
+边界与异常用例优先用 `samples/fixtures/` 的变异数据（周中截止、缺销售目标表、缺实收金额列、损坏文件、未知门店编码、记录 ID 冲突），夹具说明见 [fixtures/README.md](../fixtures/README.md)。
+
+三类**进程级**流程（工具故障后重试、模型调用超限、崩溃后断点恢复）无法用用例文件表达（要注入故障或重启进程），由 `packages/cli/test/e2e/weekly-report.e2e.test.ts` 覆盖；`S-22`/`S-24` 覆盖可在进程内表达的“越权拦截、非法流转、转人工、终止”。
+
 ## 本目录的用例
 
 | 文件 | 类型 | 要点 | `checks` |
@@ -137,6 +170,13 @@
 ## 剧本（`scripts/`）
 
 `scripts/<用例 id>.json` 是配套的剧本式假模型：按步骤 id 列出每一轮模型响应，格式见 `@de/core` 的 `ModelScript`。剧本里每一轮都是 `submit_result` 工具调用，叙述只含 `{{path}}` 槽位（ADR-0002），所以质检是真的通过，不是被桩掉。`A-03` 与 `A-01` 同一份内容（补传销售明细后跑的是同一周）；`A-05` 在准入就停下，剧本为空；`A-01-rework` 多出 `interpret_feedback` 和第二轮 `match_causes`、`write_report`，对应重做。
+
+T8 之后剧本要贴合九步流程：`match_causes` 除了 `causes` 还要给 `claims`（可核验说法，没有就提交空数组），
+
+- 有矛盾时 `write_report` 要带 `contradictionRefs`（id 形如 `contradiction:region:华南`），并在“异常与原因”章节提到矛盾对象；
+- 没有矛盾时可以不写 `contradictionRefs`（等同于空数组）；
+- 重做轮次的 `write_report` 要带 `revisionNotes`，且被退回章节的内容必须真的变了（`S-20`、`S-21`）；
+- 质检不通过会自动修正：`S-23` 第一版故意漏引用矛盾，`write_report` 第二次才补上；`S-24` 连续三版都不合格，自动修正用尽后转人工。
 
 数字类的判定要点写进用例文件的 `checks`（见上文），由 `de check` / `de run-cases` 核对交付物；`checks` 之外的计算口径（如品类毛利率）仍由工具与质检的测试覆盖。
 
@@ -153,5 +193,7 @@ bun packages/cli/src/main.ts replay out/A-01/workspace <taskId>
 bun packages/cli/src/main.ts check out/A-01 samples/cases/A-01.json
 
 # 批量跑 + 核对（glob 由命令行自己解析，Windows 下也能用），汇总写到 out/cases/summary.md
-bun packages/cli/src/main.ts run-cases "samples/cases/A-0*.json" --scripted --out out/cases
+bun packages/cli/src/main.ts run-cases "samples/cases/*.json" --scripted --out out/self-test
 ```
+
+全量跑（A-0x + S-xx 共 30 条）的结果存档在 [docs/results/self-test-scripted.md](../../docs/results/self-test-scripted.md)。

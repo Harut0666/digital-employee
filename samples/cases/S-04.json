@@ -1,0 +1,94 @@
+{
+  "id": "S-04",
+  "title": "正常：第 43 周纪要与数据一致（没有矛盾要引用）",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 43
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W43.docx",
+      "path": "../scenario-a/周会纪要_2026W43.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "approve"
+      },
+      "expect": {
+        "state": "delivered",
+        "deliverables": [
+          "docx",
+          "qc_record"
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        {
+          "path": "table:全公司/实收（元）",
+          "expected": 632486
+        },
+        {
+          "path": "table:全公司/环比",
+          "expected": 4.4
+        },
+        {
+          "path": "table:全公司/目标达成率",
+          "expected": 99
+        },
+        {
+          "path": "facts:company.deliveryShare",
+          "expected": 31.3
+        },
+        {
+          "path": "facts:quality.returns.count",
+          "expected": 6
+        },
+        {
+          "path": "facts:quality.duplicates.count",
+          "expected": 29
+        }
+      ],
+      "mustContain": [
+        "29 条记录",
+        "5,629",
+        "去重"
+      ],
+      "mustNotContain": [
+        "客单价",
+        "同比"
+      ],
+      "anomalies": [
+        "region:华南",
+        "store:SZ01",
+        "store:SZ02",
+        "store:GZ01",
+        "store:GZ02",
+        "store:CD02"
+      ]
+    }
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "id": "S-24",
+  "title": "流程：质检自动修正用尽 → 转人工 → 操作员终止",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_operator",
+        "pauseCode": "qc_exhausted"
+      }
+    },
+    {
+      "actor": "operator",
+      "command": {
+        "type": "terminate"
+      },
+      "expect": {
+        "state": "terminated"
+      }
+    }
+  ],
+  "expect": {
+    "state": "terminated",
+    "checks": {
+      "pause": {
+        "code": "qc_exhausted",
+        "messageContains": "质检未通过"
+      }
+    }
+  }
+}

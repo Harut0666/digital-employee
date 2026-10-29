@@ -63,11 +63,13 @@ export function findCaseFiles(pattern: string): string[] {
     .filter((file) => file.endsWith(".json"))
     .sort((a, b) => {
       const name = (file: string) => caseNameOf(file);
+      const group = (file: string) => /^([A-Za-z]+)/.exec(name(file))?.[1] ?? "";
       const number = (file: string) => {
         const match = /(\d+)/.exec(name(file));
         return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
       };
-      return number(a) - number(b) || name(a).length - name(b).length || name(a).localeCompare(name(b));
+      // 先按系列（A-xx 在 S-xx 前面），再按编号，再按名字长短（A-01 在 A-01-rework 前）
+      return group(a).localeCompare(group(b)) || number(a) - number(b) || name(a).length - name(b).length || name(a).localeCompare(name(b));
     });
 }
 
