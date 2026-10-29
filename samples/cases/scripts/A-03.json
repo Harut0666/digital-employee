@@ -1,0 +1,230 @@
+{
+  "match_causes": [
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "causes": [
+              {
+                "anomalyId": "region:华东",
+                "level": "region",
+                "cause": "华东受门店停业和竞品开业影响下滑较多",
+                "quote": "本周华东受门店停业和竞品开业影响下滑较多",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "region:华南",
+                "level": "region",
+                "cause": "“第二杯半价”活动于 10 月 25 日结束，活动后回落",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SH02",
+                "level": "store",
+                "cause": "对面竞品于 10 月 24 日开业并推出买一送一，客流下滑",
+                "quote": "上海静安店对面竞品 10 月 24 日开业，开业期间推出买一送一",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:HZ01",
+                "level": "store",
+                "cause": "10 月 27 日至 29 日因商场消防改造停业三天",
+                "quote": "杭州湖滨店 10 月 27 日至 29 日因商场消防改造停业三天",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ01",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ02",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              }
+            ],
+            "claims": [
+              {
+                "subject": {
+                  "level": "region",
+                  "key": "华南"
+                },
+                "metric": "wow",
+                "direction": "flat",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                },
+                "quote": "本周华南整体销售与上周基本持平"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "write_report": [
+    {
+      "toolCalls": [
+        {
+          "name": "submit_result",
+          "arguments": {
+            "title": "经营周报（2026 年第 44 周）",
+            "sections": [
+              {
+                "id": "summary",
+                "heading": "本周摘要",
+                "paragraphs": [
+                  "本周全公司实收 {{company.revenue}}，环比 {{company.wow}}，毛利率 {{company.grossMarginRate}}，目标达成率 {{company.achievement}}。",
+                  "华东环比 {{regions.华东.wow}}、华南环比 {{regions.华南.wow}}，是本周的两个异常区域。",
+                  "门店层面，杭州湖滨店因商场消防改造停业三天，环比 {{stores.HZ01.wow}}，降幅最大。"
+                ]
+              },
+              {
+                "id": "metrics",
+                "heading": "核心指标",
+                "paragraphs": [
+                  "各区域中西南目标达成率最高，为 {{regions.西南.achievement}}；华东最低，为 {{regions.华东.achievement}}，需要重点关注。外卖占比为 {{company.deliveryShare}}。"
+                ]
+              },
+              {
+                "id": "categories",
+                "heading": "品类表现",
+                "paragraphs": [],
+                "bullets": [
+                  "饮品：实收 {{categories.饮品.revenue}}，环比 {{categories.饮品.wow}}。",
+                  "蛋糕：实收 {{categories.蛋糕.revenue}}，环比 {{categories.蛋糕.wow}}。",
+                  "预包装食品：实收 {{categories.预包装食品.revenue}}，环比 {{categories.预包装食品.wow}}。",
+                  "面包：实收 {{categories.面包.revenue}}，环比 {{categories.面包.wow}}。",
+                  "西点：实收 {{categories.西点.revenue}}，环比 {{categories.西点.wow}}。",
+                  "实收前 5 名单品依次为：拿铁 {{topProducts.D02.revenue}}、生椰拿铁 {{topProducts.D03.revenue}}、美式咖啡 {{topProducts.D01.revenue}}、6寸生日蛋糕 {{topProducts.C04.revenue}}、草莓奶油切块 {{topProducts.C01.revenue}}。"
+                ]
+              },
+              {
+                "id": "anomalies",
+                "heading": "异常与原因",
+                "paragraphs": [
+                  "纪要矛盾：第 44 周纪要称华南本周整体销售与上周基本持平，但数据显示华南环比 {{regions.华南.wow}}，以数据为准。"
+                ],
+                "bullets": [
+                  "华南：环比 {{regions.华南.wow}}，实收 {{regions.华南.revenue}}。原因：“第二杯半价”活动于 10 月 25 日结束，活动后回落（第 44 周纪要）。",
+                  "华东：环比 {{regions.华东.wow}}，实收 {{regions.华东.revenue}}。原因：华东受门店停业和竞品开业影响下滑较多（第 44 周纪要）。",
+                  "杭州湖滨店（HZ01）：环比 {{stores.HZ01.wow}}，实收 {{stores.HZ01.revenue}}。原因：10 月 27 日至 29 日因商场消防改造停业三天（第 44 周纪要）。",
+                  "上海静安店（SH02）：环比 {{stores.SH02.wow}}，实收 {{stores.SH02.revenue}}。原因：对面竞品于 10 月 24 日开业并推出买一送一，客流下滑（第 44 周纪要）。",
+                  "深圳福田店（SZ02）：环比 {{stores.SZ02.wow}}，实收 {{stores.SZ02.revenue}}。原因：“第二杯半价”活动结束后回落（区域整体原因）（第 44 周纪要）。",
+                  "深圳南山店（SZ01）：环比 {{stores.SZ01.wow}}，实收 {{stores.SZ01.revenue}}。原因：“第二杯半价”活动结束后回落（区域整体原因）（第 44 周纪要）。"
+                ]
+              },
+              {
+                "id": "data_quality",
+                "heading": "数据质量说明",
+                "paragraphs": [
+                  "本周退货 {{quality.returns.count}} 笔，合计 {{quality.returns.revenueCents}}，已按负数冲减实收。",
+                  "杭州湖滨店 10 月 27 日至 29 日没有销售数据，对照第 44 周纪要，系商场消防改造停业三天，不是数据缺失。",
+                  "本周重复记录 {{quality.duplicates.count}} 笔，无需剔除。"
+                ]
+              },
+              {
+                "id": "next_week",
+                "heading": "下周关注事项",
+                "paragraphs": [],
+                "bullets": [
+                  "跟进华东的应对方案，静安店会员日活动方案 11/03 前提交。",
+                  "华南促销活动投入产出复盘报告 11/06 前提交，并关注活动结束后的销售走势。",
+                  "“栗子蒙布朗”11 月 2 日全国上市，11/08 前提交首周销售跟踪。",
+                  "持续观察杭州湖滨店恢复营业后的销售表现。"
+                ]
+              }
+            ],
+            "causes": [
+              {
+                "anomalyId": "region:华东",
+                "level": "region",
+                "cause": "华东受门店停业和竞品开业影响下滑较多",
+                "quote": "本周华东受门店停业和竞品开业影响下滑较多",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "region:华南",
+                "level": "region",
+                "cause": "“第二杯半价”活动于 10 月 25 日结束，活动后回落",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SH02",
+                "level": "store",
+                "cause": "对面竞品于 10 月 24 日开业并推出买一送一，客流下滑",
+                "quote": "上海静安店对面竞品 10 月 24 日开业，开业期间推出买一送一",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:HZ01",
+                "level": "store",
+                "cause": "10 月 27 日至 29 日因商场消防改造停业三天",
+                "quote": "杭州湖滨店 10 月 27 日至 29 日因商场消防改造停业三天",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ01",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              },
+              {
+                "anomalyId": "store:SZ02",
+                "level": "region",
+                "cause": "“第二杯半价”活动结束后回落（区域整体原因）",
+                "quote": "“第二杯半价”活动已于 10 月 25 日结束",
+                "sourceWeek": {
+                  "year": 2026,
+                  "week": 44
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

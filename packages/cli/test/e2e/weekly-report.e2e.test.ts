@@ -193,7 +193,7 @@ describe("E2E · 工具故障注入", () => {
     expect(paused.pause?.message).toContain("已完成 2/9 步");
     const events = await e2e.events(paused.id);
     expect(ofType(events, "tool_called").filter((e) => e.tool === "compute_metrics").map((e) => e.attempt)).toEqual([1, 2, 3]);
-    expect(ofType(events, "fault_injected").length + ofType(events, "tool_result").filter((e) => !e.ok).length).toBeGreaterThanOrEqual(3);
+    expect(ofType(events, "tool_result").filter((e) => !e.ok)).toHaveLength(3);
 
     e2e.tools.setFaults({ tools: {} });
     expect(await e2e.cmd(paused.id, { type: "retry" }, "initiator")).toMatchObject({ ok: false, error: "forbidden_role" });
@@ -263,9 +263,9 @@ describe("E2E · 断点恢复", () => {
     expect(ofType(events, "model_called").filter((e) => e.stepId === "write_report")).toHaveLength(1);
     expect(ofType(events, "model_called")).toHaveLength(2);
 
-    // 结果一致：关键步骤的输出哈希与不崩溃的运行相同
+    // 结果一致：关键步骤的输出哈希与不崩溃的运行相同（含文件路径的步骤，如 parse_minutes，两次运行的工作区不同，不比较）
     const sha = (evs: typeof events, id: string) => ofType(evs, "step_completed").find((e) => e.stepId === id)?.outputSha256;
-    for (const id of ["compute_metrics", "parse_minutes", "match_causes", "write_report"]) {
+    for (const id of ["compute_metrics", "match_causes", "write_report"]) {
       expect(sha(events, id)).toBeDefined();
       expect(sha(events, id)).toBe(sha(cleanEvents, id));
     }

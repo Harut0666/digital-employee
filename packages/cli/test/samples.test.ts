@@ -21,6 +21,19 @@ describe("samples/cases", () => {
     for (const a of all) expect(existsSync(a.sourcePath)).toBe(true);
   });
 
+  test("每个用例都有对应的剧本（scripts/<id>.json），剧本只含判断步骤的提交", () => {
+    const stepIds = new Set(["interpret_feedback", "match_causes", "write_report"]);
+    for (const id of [...FILES.map((f) => f.replace(".json", "")), "A-01-rework"]) {
+      const script = JSON.parse(readFileSync(join(CASES_DIR, "scripts", `${id}.json`), "utf8")) as Record<string, { toolCalls?: { name: string }[] }[]>;
+      for (const [step, turns] of Object.entries(script)) {
+        expect(stepIds.has(step)).toBe(true);
+        for (const turn of turns) expect(turn.toolCalls?.some((c) => c.name === "submit_result")).toBe(true);
+      }
+    }
+    // A-05 在准入就停下，不需要模型
+    expect(JSON.parse(readFileSync(join(CASES_DIR, "scripts", "A-05.json"), "utf8"))).toEqual({});
+  });
+
   test("A-03 pauses on missing_sales and then supplements the workbook; A-05 stops at period_out_of_range", () => {
     const a03 = parseCase(JSON.parse(readFileSync(join(CASES_DIR, "A-03.json"), "utf8")), CASES_DIR);
     expect(a03.steps[0]!.expect?.pauseCode).toBe("missing_sales");
