@@ -247,11 +247,18 @@ body {
   background: var(--primary);
   color: #fff;
 }
+.msg-col {
+  max-width: 70%;
+}
 .bubble {
   padding: 10px 16px;
   border-radius: 14px;
   background: #f1f4f6;
-  max-width: 70%;
+  width: fit-content;
+  white-space: pre-wrap;
+}
+.msg-row.me .bubble {
+  margin-left: auto;
 }
 .msg-row.me .bubble {
   background: #dff2ec;
@@ -524,3 +531,50 @@ body {
   border-radius: 8px;
   max-height: 560px;
 }
+
+/* X 组件微调 */
+.welcome .ant-welcome {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+}
+.welcome .ant-welcome-title {
+  font-size: 32px;
+}
+.welcome .ant-welcome-description {
+  font-size: 18px;
+}
+.welcome .ant-prompts-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.welcome .ant-prompts-item {
+  height: auto;
+  align-items: flex-start;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line);
+  padding: 16px;
+}
+.welcome .ant-prompts-item:hover {
+  border-color: var(--primary);
+}
+.panel-card fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.panel-card legend {
+  display: none;
+}
+.welcome .ant-welcome-icon {
+  width: auto;
+  height: auto;
+}
+.welcome .welcome-icon {
+  margin-bottom: 12px;
+}
+

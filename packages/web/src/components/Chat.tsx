@@ -41,7 +41,7 @@ function Message({ card }: { card: Extract<ChatCard, { kind: "user" | "agent" }>
   return (
     <div className={`msg-row ${me ? "me" : ""}`}>
       <div className="msg-avatar">{me ? <UserOutlined /> : <RobotOutlined />}</div>
-      <div>
+      <div className="msg-col">
         <div className="bubble">{card.text}</div>
         <div className="msg-time">{clock(card.ts)}</div>
       </div>
@@ -125,6 +125,7 @@ export function NewConversation({ employee, onPrompt }: { employee: EmployeeInfo
     </>
   );
 }
+
 
 
 

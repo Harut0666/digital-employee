@@ -177,7 +177,7 @@ export function App() {
   const roleRef = useRef<UiRole>(initialRole());
   const api = useMemo(() => createApi(() => roleRef.current), []);
   return (
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: "#1F8A70", borderRadius: 10 } }}>
+    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: "#1F8A70", borderRadius: 10 } }} button={{ autoInsertSpace: false }}>
       <XProvider>
         <AntApp style={{ height: "100%" }}>
           <ApiContext.Provider value={api}>
@@ -188,3 +188,4 @@ export function App() {
     </ConfigProvider>
   );
 }
+

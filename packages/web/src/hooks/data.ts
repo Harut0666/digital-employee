@@ -95,3 +95,5 @@ export function useTask(id: string | undefined): TaskState {
   const view = useMemo(() => deriveSessionView(events, snapshot?.steps ?? []), [events, snapshot?.steps]);
   return { snapshot, view, events, loading, reload };
 }
+
+

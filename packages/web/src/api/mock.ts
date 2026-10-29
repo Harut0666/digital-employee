@@ -53,7 +53,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       allowMissingMinutes: false,
       allowPartial: false,
     };
-    const base = Date.now() + seed.startedAgoMs;
+    const base = Date.now() - seed.startedAgoMs;
     for (const [offset, input] of seed.script) emit(t, input, new Date(base + offset * 1000));
     tasks.set(t.id, t);
     if (seed.autoplay) setTimeout(() => runSteps(t, defs(t).slice(seed.autoplay!.fromStepIndex, -1).map((s) => s.id), 0), 2500);
@@ -261,4 +261,5 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     deliverableUrl: (_id, _kind: DeliverableKind) => undefined,
   };
 }
+
 

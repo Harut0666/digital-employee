@@ -67,8 +67,8 @@ describe("deriveSessionView: 工具故障暂停", () => {
     expect(view.counts).toEqual({ modelCalls: 0, toolCalls: 1, toolFailures: 1 });
   });
 
-  test("用时取首尾事件时间差", () => {
-    expect(view.elapsedMs).toBe(9000);
+  test("用时只计自动执行阶段：从提交到进入暂停", () => {
+    expect(view.elapsedMs).toBe(8000);
   });
 });
 
@@ -214,3 +214,18 @@ describe("deriveSessionView: 重做后的交付物", () => {
   });
 });
 
+
+describe("deriveSessionView: 用时不含暂停等待", () => {
+  test("暂停期间的时间不计入", () => {
+    const events = seqOf([
+      created,
+      { type: "state_changed", from: "draft", to: "admission", trigger: "submit", actor: "initiator" },
+      { type: "state_changed", from: "admission", to: "running", trigger: "admission_passed", actor: "system" },
+      { type: "state_changed", from: "running", to: "awaiting_operator", trigger: "tool_failed", actor: "system", pause: { code: "tool_failed", message: "x", options: ["retry"] } },
+      { type: "state_changed", from: "awaiting_operator", to: "running", trigger: "retry", actor: "operator" },
+      { type: "state_changed", from: "running", to: "qc", trigger: "steps_completed", actor: "system" },
+    ]).map((e, i) => (i >= 4 ? { ...e, ts: new Date(Date.parse(e.ts) + 3_600_000).toISOString() } : e));
+    // 提交(1s) → 暂停(3s)：2s；一小时后重试 → 质检：1s
+    expect(deriveSessionView(events, STEP_DEFS).elapsedMs).toBe(3000);
+  });
+});

@@ -112,6 +112,7 @@ export function LaunchPanel({
           validator={validator}
           onChange={(e) => setFormData((e.formData ?? {}) as Record<string, unknown>)}
           uiSchema={{ "ui:submitButtonOptions": { norender: true } }}
+          formContext={{ labelAlign: "left", labelCol: { span: 24 }, wrapperCol: { span: 24 } }}
           liveValidate={false}
           showErrorList={false}
         />
@@ -137,4 +138,5 @@ export function LaunchPanel({
     </div>
   );
 }
+
 

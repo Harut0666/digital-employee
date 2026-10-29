@@ -66,6 +66,8 @@ const USER_TRIGGER_TEXT: Partial<Record<string, string>> = {
   retry: "重试",
 };
 
+const ACTIVE_STATES: readonly TaskState[] = ["admission", "running", "qc"];
+
 export function deriveSessionView(events: readonly TaskEvent[], defs: readonly StepDef[] = []): SessionView {
   const cards: ChatCard[] = [];
   const counts = { modelCalls: 0, toolCalls: 0, toolFailures: 0 };
@@ -101,7 +103,14 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
   };
   let currentRound = 0;
 
+  // 用时：只累计系统自动执行的阶段（准入 / 执行 / 质检），暂停等人处理的时间不算
+  let elapsedMs = 0;
+  let prevTs: number | undefined;
+
   for (const ev of events) {
+    const ts = Date.parse(ev.ts);
+    if (prevTs !== undefined && state && ACTIVE_STATES.includes(state)) elapsedMs += ts - prevTs;
+    prevTs = ts;
     switch (ev.type) {
       case "state_changed": {
         state = ev.to;
@@ -177,7 +186,6 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
     }
   }
 
-  const first = events[0];
   const last = events.at(-1);
   const latestRound = rounds.size === 0 ? undefined : rounds.get(Math.max(...rounds.keys()));
   return {
@@ -188,10 +196,11 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
     qc,
     deliverables,
     counts,
-    elapsedMs: first && last ? Date.parse(last.ts) - Date.parse(first.ts) : 0,
+    elapsedMs,
     lastSeq: last?.seq ?? 0,
   };
 }
+
 
 
 
