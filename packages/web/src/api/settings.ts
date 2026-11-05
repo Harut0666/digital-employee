@@ -132,6 +132,8 @@ export interface SettingsApi {
   getDiagnostics(): Promise<DiagnosticsInfo>;
   /** 导出诊断包到工作区，返回路径 */
   exportDiagnostics(): Promise<DiagnosticsExportResult>;
+  /** 用系统文件管理器打开诊断包所在目录 */
+  openDiagnosticsFolder(): Promise<{ ok: true; path: string }>;
   /** 用系统编辑器打开 settings.json */
   openSettingsFile(): Promise<{ ok: true; path: string }>;
 }
@@ -171,6 +173,7 @@ interface SettingsShape {
       diagnostics: {
         get(): Reply<DiagnosticsInfo>;
         export: { post(body?: unknown): Reply<DiagnosticsExportResult> };
+        open: { post(body?: unknown): Reply<{ ok: true; path: string }> };
       };
       "open-file": {
         post(body?: unknown): Reply<{ ok: true; path: string }>;
@@ -242,6 +245,9 @@ function createEdenSettingsApi(origin: string): SettingsApi {
     getDiagnostics: async () => unwrap(await settings.diagnostics.get()),
     async exportDiagnostics() {
       return unwrap(await settings.diagnostics.export.post({}));
+    },
+    async openDiagnosticsFolder() {
+      return unwrap(await settings.diagnostics.open.post({}));
     },
     async openSettingsFile() {
       return unwrap(await settings["open-file"].post({}));
@@ -476,6 +482,7 @@ function createMockSettingsApi(): SettingsApi {
         path: `${workspace}\\diagnostics\\diagnostic-20261105120000.json`,
         generatedAt: new Date().toISOString(),
       }),
+    openDiagnosticsFolder: () => later({ ok: true as const, path: `${workspace}\\diagnostics` }),
     openSettingsFile: () => later({ ok: true as const, path: `${workspace}\\settings.json` }),
   };
 }

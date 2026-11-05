@@ -168,7 +168,10 @@ export const FONT_SIZE_MAX = 18;
 export const STEP_TIMEOUT_MIN_MS = 1_000;
 export const STEP_TIMEOUT_MAX_MS = 3_600_000;
 export const MODEL_RETRIES_MAX = 10;
+/** 退避数组最多几项（第 N 次重试取第 N 项）。 */
 export const RETRY_BACKOFF_MAX = 10;
+/** 单项退避的上限：10 分钟。 */
+export const RETRY_BACKOFF_ITEM_MAX_MS = 600_000;
 export const QC_AUTOFIX_MAX = 10;
 export const CONTEXT_WINDOW_MIN = 1_000;
 export const CONTEXT_WINDOW_MAX = 4_000_000;
@@ -201,7 +204,7 @@ export const ExecutionSettingsSchema = z.strictObject({
     .default(DEFAULT_EXECUTION_SETTINGS.stepTimeoutMs),
   modelMaxRetries: percentLike(MODEL_RETRIES_MAX).default(DEFAULT_EXECUTION_SETTINGS.modelMaxRetries),
   retryBackoffMs: z
-    .array(percentLike(600_000))
+    .array(percentLike(RETRY_BACKOFF_ITEM_MAX_MS))
     .max(RETRY_BACKOFF_MAX)
     .default([...DEFAULT_EXECUTION_SETTINGS.retryBackoffMs]),
   qcAutofix: percentLike(QC_AUTOFIX_MAX).default(DEFAULT_EXECUTION_SETTINGS.qcAutofix),
