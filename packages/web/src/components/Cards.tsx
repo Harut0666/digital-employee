@@ -12,6 +12,7 @@ import type { TaskCommand, TaskState } from "@de/core/contract";
 import { availableCommands, ROLE_LABELS, type CommandType } from "../view/permissions";
 import type { ChatCard } from "../view/session-view";
 import type { UiRole } from "../api";
+import { useLinkProps } from "./Preferences";
 
 export interface CardActions {
   role: UiRole;
@@ -152,6 +153,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
   const [picked, setPicked] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const docx = actions.downloadUrl("docx");
+  const linkProps = useLinkProps();
 
   if (!card.active) {
     const d = card.decision;
@@ -181,7 +183,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
           <div className="chat-sub" style={{ fontWeight: 400 }}>{clock(card.ts)}</div>
         </span>
         {docx && (
-          <Button style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={docx}>
+          <Button style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={docx} {...linkProps(docx)}>
             下载
           </Button>
         )}
@@ -220,6 +222,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
 
 export function DeliveredCard({ card, actions }: { card: Extract<ChatCard, { kind: "delivered" }>; actions: CardActions }) {
   const names: Record<string, string> = { docx: "周报 Word", md: "Markdown 报告", qc_record: "检验记录" };
+  const linkProps = useLinkProps();
   return (
     <div className="card ok">
       <div className="card-title" style={{ color: "var(--primary)" }}>
@@ -227,7 +230,7 @@ export function DeliveredCard({ card, actions }: { card: Extract<ChatCard, { kin
       </div>
       <div className="card-actions">
         {card.deliverables.map((d) => (
-          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind)} disabled={!actions.downloadUrl(d.kind)}>
+          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind)} disabled={!actions.downloadUrl(d.kind)} {...linkProps(actions.downloadUrl(d.kind))}>
             {names[d.kind] ?? d.kind}
           </Button>
         ))}

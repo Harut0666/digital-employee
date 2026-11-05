@@ -4,6 +4,7 @@ import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, FileTextOutline
 import type { TaskSnapshot } from "@de/core/contract";
 import type { SessionView } from "../view/session-view";
 import { DocxPreview } from "./DocxPreview";
+import { useLinkProps } from "./Preferences";
 
 const fmt = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -32,6 +33,7 @@ export function TaskPanel({
   const hasDoc = view.deliverables.some((d) => d.kind === "docx");
   const reviewing = view.state === "awaiting_review" || view.state === "delivered";
   const [tab, setTab] = useState<"overview" | "preview">("overview");
+  const linkProps = useLinkProps();
   // 到了待审核 / 已交付自动切到预览；其他状态回到概览
   useEffect(() => setTab(reviewing && hasDoc ? "preview" : "overview"), [reviewing, hasDoc, snapshot?.id]);
 
@@ -60,7 +62,7 @@ export function TaskPanel({
           <DocxPreview url={downloadUrl("docx")} />
           <div style={{ marginTop: 12 }}>
             {downloadUrl("docx") ? (
-              <Button block icon={<DownloadOutlined />} href={downloadUrl("docx")}>下载</Button>
+              <Button block icon={<DownloadOutlined />} href={downloadUrl("docx")} {...linkProps(downloadUrl("docx"))}>下载</Button>
             ) : (
               <Button block icon={<DownloadOutlined />} disabled>下载（模拟模式无文件）</Button>
             )}
@@ -110,7 +112,7 @@ export function TaskPanel({
               view.deliverables.map((d) => (
                 <div key={d.kind} className="check-row">
                   {DELIVERABLE_NAMES[d.kind] ?? d.kind}
-                  <Button size="small" style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={downloadUrl(d.kind)} disabled={!downloadUrl(d.kind)}>
+                  <Button size="small" style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={downloadUrl(d.kind)} disabled={!downloadUrl(d.kind)} {...linkProps(downloadUrl(d.kind))}>
                     下载
                   </Button>
                 </div>

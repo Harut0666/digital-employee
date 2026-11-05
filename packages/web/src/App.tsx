@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Button, ConfigProvider, Tooltip } from "antd";
+import { App as AntApp, Button, ConfigProvider, theme, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
 import type { TaskCommand } from "@de/core/contract";
 import { createApi, IS_MOCK, type UiRole, type UploadItem } from "./api";
+import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { ApiContext, useApi, useEmployees, useTask, useTaskList } from "./hooks/data";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, TaskChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { TaskPanel } from "./components/TaskPanel";
 import type { CardActions } from "./components/Cards";
+import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
 import { EmployeeConfigPage } from "./pages/EmployeeConfig";
 import { SettingsPage } from "./pages/Settings";
 import { ROLE_LABELS } from "./view/permissions";
@@ -20,7 +22,7 @@ const DEFAULT_SECTIONS = [
   { id: "body", heading: "正文" },
 ];
 
-function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
+function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; settingsApi: SettingsApi }) {
   const api = useApi();
   const { message } = AntApp.useApp();
   const employees = useEmployees();
@@ -119,7 +121,7 @@ function Shell({ roleRef }: { roleRef: { current: UiRole } }) {
   let panel: React.ReactNode;
   if (selection.kind === "page") {
     // 页面组件各自一个文件，T10/T11 并行填充时互不冲突。
-    center = selection.page === "settings" ? <SettingsPage /> : <EmployeeConfigPage employees={employees} />;
+    center = selection.page === "settings" ? <SettingsPage api={settingsApi} /> : <EmployeeConfigPage employees={employees} />;
     panel = null;
   } else if (selection.kind === "new") {
     center = (
@@ -227,20 +229,43 @@ function initialRole(): UiRole {
   return q === "reviewer" || q === "operator" ? q : "initiator";
 }
 
-export function App() {
-  // 角色放在 ref 里，数据层每次请求时读取，用于 x-role 请求头
-  const roleRef = useRef<UiRole>(initialRole());
-  const api = useMemo(() => createApi(() => roleRef.current), []);
+function ThemedShell({ roleRef, api, settingsApi }: { roleRef: { current: UiRole }; api: ReturnType<typeof createApi>; settingsApi: SettingsApi }) {
+  const { ui, resolvedTheme } = useUiPreferences();
   return (
-    <ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: "#1F8A70", borderRadius: 10 } }} button={{ autoInsertSpace: false }}>
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        // 主题按解析后的实际值切换（`system` 已由 provider 跟随系统偏好解析）
+        algorithm: resolvedTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        token: {
+          colorPrimary: resolvedTheme === "dark" ? "#37A98C" : "#1F8A70",
+          borderRadius: 10,
+          fontSize: ui.fontSize,
+        },
+      }}
+      button={{ autoInsertSpace: false }}
+    >
       <XProvider>
         <AntApp style={{ height: "100%" }}>
           <ApiContext.Provider value={api}>
-            <Shell roleRef={roleRef} />
+            <Shell roleRef={roleRef} settingsApi={settingsApi} />
           </ApiContext.Provider>
         </AntApp>
       </XProvider>
     </ConfigProvider>
+  );
+}
+
+export function App() {
+  // 角色放在 ref 里，数据层每次请求时读取，用于 x-role 请求头
+  const roleRef = useRef<UiRole>(initialRole());
+  const api = useMemo(() => createApi(() => roleRef.current), []);
+  // 设置页与外观偏好共用一个设置客户端（模拟模式下也共享同一份内存状态）
+  const settingsApi = useMemo(() => createSettingsApi(), []);
+  return (
+    <UiPreferencesProvider api={settingsApi}>
+      <ThemedShell roleRef={roleRef} api={api} settingsApi={settingsApi} />
+    </UiPreferencesProvider>
   );
 }
 
