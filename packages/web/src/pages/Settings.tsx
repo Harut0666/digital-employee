@@ -1,5 +1,4 @@
-// 设置页（T10/T21/T22）：模型连接、外观与交互、执行与预算、演示与调试、诊断与关于、工作区。
-// 后续 ticket（T23 权限与审批）在同一份 NAV 里各加一项。
+// 设置页（T10/T21/T22/T23）：模型连接、外观与交互、执行与预算、权限与审批、演示与调试、诊断与关于、工作区。
 import { useMemo, useState } from "react";
 import {
   BgColorsOutlined,
@@ -8,6 +7,7 @@ import {
   FolderOutlined,
   InfoCircleOutlined,
   PlayCircleOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { createSettingsApi, type SettingsApi } from "../api/settings";
 import { AppearanceSection } from "./settings/Appearance";
@@ -15,14 +15,16 @@ import { DemoDebug } from "./settings/DemoDebug";
 import { DiagnosticsSection } from "./settings/DiagnosticsSection";
 import { ExecutionSection } from "./settings/ExecutionSection";
 import { ModelConnections } from "./settings/ModelConnections";
+import { PermissionsSection } from "./settings/PermissionsSection";
 import { WorkspaceSection } from "./settings/WorkspaceSection";
 
-type Section = "models" | "appearance" | "execution" | "demo" | "diagnostics" | "workspace";
+type Section = "models" | "appearance" | "execution" | "permissions" | "demo" | "diagnostics" | "workspace";
 
 const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: "models", label: "模型连接", icon: <DatabaseOutlined /> },
   { key: "appearance", label: "外观与交互", icon: <BgColorsOutlined /> },
   { key: "execution", label: "执行与预算", icon: <ClockCircleOutlined /> },
+  { key: "permissions", label: "权限与审批", icon: <SafetyCertificateOutlined /> },
   { key: "demo", label: "演示与调试", icon: <PlayCircleOutlined /> },
   { key: "diagnostics", label: "诊断与关于", icon: <InfoCircleOutlined /> },
   { key: "workspace", label: "工作区", icon: <FolderOutlined /> },
@@ -66,6 +68,7 @@ export function SettingsPage({ api: providedApi }: { api?: SettingsApi } = {}) {
         {section === "models" && <ModelConnections api={api} />}
         {section === "appearance" && <AppearanceSection />}
         {section === "execution" && <ExecutionSection api={api} />}
+        {section === "permissions" && <PermissionsSection api={api} />}
         {section === "demo" && <DemoDebug api={api} />}
         {section === "diagnostics" && <DiagnosticsSection api={api} />}
         {section === "workspace" && <WorkspaceSection api={api} />}

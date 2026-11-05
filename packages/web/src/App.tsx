@@ -224,9 +224,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   );
 }
 
-function initialRole(): UiRole {
+function initialRole(): UiRole | undefined {
   const q = new URLSearchParams(location.search).get("role");
-  return q === "reviewer" || q === "operator" ? q : "initiator";
+  return q === "initiator" || q === "reviewer" || q === "operator" ? q : undefined;
 }
 
 function ThemedShell({ roleRef, api, settingsApi }: { roleRef: { current: UiRole }; api: ReturnType<typeof createApi>; settingsApi: SettingsApi }) {
@@ -257,11 +257,39 @@ function ThemedShell({ roleRef, api, settingsApi }: { roleRef: { current: UiRole
 }
 
 export function App() {
-  // 角色放在 ref 里，数据层每次请求时读取，用于 x-role 请求头
-  const roleRef = useRef<UiRole>(initialRole());
+  // 启动身份：显式的 ?role= 优先（演示用）；否则读 permissions.defaultRole。
+  // 侧栏手动切换角色只改 roleRef，不写回默认值（要写回由设置页“设为默认”负责）。
+  const queryRole = useMemo(initialRole, []);
+  const roleRef = useRef<UiRole>(queryRole ?? "initiator");
+  const [roleReady, setRoleReady] = useState(queryRole !== undefined);
   const api = useMemo(() => createApi(() => roleRef.current), []);
-  // 设置页与外观偏好共用一个设置客户端（模拟模式下也共享同一份内存状态）
-  const settingsApi = useMemo(() => createSettingsApi(), []);
+  // 设置页与外观偏好共用一个设置客户端（模拟模式下也共享同一份内存状态）；
+  // 带上角色头发给服务端，审计记录“谁”做了危险操作。
+  const settingsApi = useMemo(() => createSettingsApi(undefined, () => roleRef.current), []);
+
+  useEffect(() => {
+    if (queryRole !== undefined) return;
+    let alive = true;
+    settingsApi.getAppSettings().then(
+      (view) => {
+        if (!alive) return;
+        roleRef.current = view.permissions.defaultRole;
+        setRoleReady(true);
+      },
+      () => {
+        // 读取失败不阻塞应用：回落到发起人
+        if (alive) setRoleReady(true);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [queryRole, settingsApi]);
+
+  if (!roleReady) {
+    return <div style={{ padding: 24, color: "#888" }}>正在读取默认角色…</div>;
+  }
+
   return (
     <UiPreferencesProvider api={settingsApi}>
       <ThemedShell roleRef={roleRef} api={api} settingsApi={settingsApi} />
