@@ -11,7 +11,7 @@
     "gen:assets": "bun scripts/gen-embedded.ts",
     "build:exe": "bun scripts/build-exe.ts",
     "build:desktop": "bun scripts/build-desktop.ts",
-    "dev:desktop": "hutch electrobun dev --env=stable --watch",
+    "dev:desktop": "hutch electrobun dev --watch",
     "smoke:exe": "powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1",
     "smoke:desktop": "powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1"
   },
