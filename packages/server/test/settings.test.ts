@@ -685,3 +685,91 @@ describe("POST /api/settings/open-file", () => {
     expect(storedSettings(ws)).toMatchObject({ version: 2, revision: 1 });
   });
 });
+
+// T20：连接卡片“高级”区（每模型上下文窗口/输出上限/档位 + 连接级超时/重试）。
+describe("PUT /api/settings/connections · 高级参数", () => {
+  const advanced = {
+    baseUrl: "https://api.deepseek.com",
+    models: ["deepseek-chat", "deepseek-reasoner"],
+    modelOptions: {
+      "deepseek-reasoner": { contextWindow: 65_536, maxTokens: 4_096, defaultReasoningEffort: "high", reasoningEfforts: ["off", "low", "high"] },
+      "deepseek-chat": { maxTokens: 2_048 },
+    },
+    timeoutMs: 45_000,
+    maxRetries: 4,
+  };
+
+  test("保存每模型参数与连接级超时/重试，可经 /app 视图读回", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call("/api/settings/connections/deepseek", jsonRequest("PUT", advanced));
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body.connection).toMatchObject({ name: "deepseek", timeoutMs: 45_000, maxRetries: 4 });
+    expect(body.connection.modelOptions["deepseek-reasoner"]).toMatchObject({ contextWindow: 65_536, maxTokens: 4_096 });
+
+    const stored = readJson(join(ws, "settings.json")).connections.find((c: any) => c.name === "deepseek");
+    expect(stored.timeoutMs).toBe(45_000);
+    expect(stored.maxRetries).toBe(4);
+    expect(stored.modelOptions["deepseek-reasoner"].defaultReasoningEffort).toBe("high");
+
+    const readBack = (await bodyOf(await call("/api/settings/app"))).connections.find((c: any) => c.name === "deepseek");
+    expect(readBack).toMatchObject({ timeoutMs: 45_000, maxRetries: 4 });
+    expect(readBack.modelOptions["deepseek-chat"]).toMatchObject({ maxTokens: 2_048 });
+  });
+
+  test("再保存时没传高级字段就保持原值，不因改模型列表而丢掉", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    await call("/api/settings/connections/deepseek", jsonRequest("PUT", advanced));
+
+    const res = await call("/api/settings/connections/deepseek", jsonRequest("PUT", { models: ["deepseek-chat"] }));
+    expect(res.status).toBe(200);
+    const stored = readJson(join(ws, "settings.json")).connections.find((c: any) => c.name === "deepseek");
+    expect(stored.models).toEqual(["deepseek-chat"]);
+    expect(stored.timeoutMs).toBe(45_000);
+    expect(stored.maxRetries).toBe(4);
+    expect(stored.modelOptions["deepseek-reasoner"].contextWindow).toBe(65_536);
+  });
+
+  test("传 null 清除连接级参数与每模型参数", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    await call("/api/settings/connections/deepseek", jsonRequest("PUT", advanced));
+
+    const res = await call("/api/settings/connections/deepseek", jsonRequest("PUT", { timeoutMs: null, maxRetries: null, modelOptions: null }));
+    expect(res.status).toBe(200);
+    const stored = readJson(join(ws, "settings.json")).connections.find((c: any) => c.name === "deepseek");
+    expect(stored.timeoutMs).toBeUndefined();
+    expect(stored.maxRetries).toBeUndefined();
+    expect(stored.modelOptions).toBeUndefined();
+  });
+
+  test("非法高级参数返回 400 且文件不动", async () => {
+    const cases: Record<string, unknown>[] = [
+      { modelOptions: { "deepseek-chat": { contextWindow: 0 } } },
+      { modelOptions: { "deepseek-chat": { maxTokens: -1 } } },
+      { modelOptions: { "deepseek-chat": { defaultReasoningEffort: "turbo" } } },
+      { modelOptions: { "deepseek-chat": { reasoningEfforts: ["hyper"] } } },
+      { modelOptions: { "deepseek-chat": { contextWindow: "大" } } },
+      { modelOptions: ["不是对象"] },
+      { timeoutMs: 0 },
+      { timeoutMs: -100 },
+      { timeoutMs: 3_600_001 },
+      { timeoutMs: 1.5 },
+      { maxRetries: 11 },
+      { maxRetries: -1 },
+      { maxRetries: 1.5 },
+      { maxRetries: "两次" },
+    ];
+    for (const patch of cases) {
+      const ws = settingsWorkspace();
+      const before = readFileSync(join(ws, "settings.json"), "utf8");
+      const { call } = setup({ workspaceDir: ws, env: {} });
+      const res = await call("/api/settings/connections/deepseek", jsonRequest("PUT", { models: ["deepseek-chat"], ...patch }));
+      expect({ patch, status: res.status }).toEqual({ patch, status: 400 });
+      expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+    }
+  });
+});
