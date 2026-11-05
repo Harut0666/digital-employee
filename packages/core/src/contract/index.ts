@@ -9,3 +9,5 @@ export * from "./form";
 export * from "./frontdesk";
 export * from "./config-api";
 export * from "./judgment";
+export * from "./settings";
+export * from "./settings-api";

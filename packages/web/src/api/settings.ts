@@ -2,6 +2,21 @@
 // 页面只依赖这里的接口；共享的 WebApi 不动，避免 T10/T11/T12 并行改同一个类型文件。
 import { treaty } from "@elysiajs/eden";
 import type { App } from "@de/server";
+import {
+  DEFAULT_DIAGNOSTICS_SETTINGS,
+  DEFAULT_EXECUTION_SETTINGS,
+  DEFAULT_PERMISSION_SETTINGS,
+  DEFAULT_UI_SETTINGS,
+  SETTINGS_VERSION,
+  type AppSettingsPatch,
+  type AppSettingsView,
+  type DefaultRole,
+  type DiagnosticsExportResult,
+  type DiagnosticsInfo,
+  type SettingsExportResult,
+  type SettingsImportResult,
+  type SettingsRoleResult,
+} from "@de/core/contract";
 import { IS_MOCK } from "./index";
 
 export type FaultMode = "timeout" | "error" | "invalid_output";
@@ -89,6 +104,23 @@ export interface SettingsApi {
   getWorkspace(): Promise<WorkspaceView>;
   openWorkspace(): Promise<{ ok: true; path: string }>;
   resetEmployees(): Promise<ResetEmployeesResult>;
+  // ---- 设置文档 v2（T19 起的接口；分区界面由 T21/T22 使用）
+  /** 设置文档视图（密钥只回末 4 位） */
+  getAppSettings(): Promise<AppSettingsView>;
+  /** 合并更新分区字段；revision 过期时抛“设置已被修改，请刷新后重试” */
+  patchAppSettings(patch: AppSettingsPatch): Promise<AppSettingsView>;
+  /** 只写 permissions.defaultRole */
+  setDefaultRole(role: DefaultRole, revision?: number): Promise<SettingsRoleResult>;
+  /** 导出设置；默认脱敏，includeKeys=true 才含明文 Key */
+  exportSettings(includeKeys?: boolean): Promise<SettingsExportResult>;
+  /** 导入设置（接受导出的 document，或裸设置文档）；后端会先备份当前文件 */
+  importSettings(document: unknown): Promise<SettingsImportResult>;
+  /** 诊断信息（版本/运行时/工作区/脱敏快照/最近事件） */
+  getDiagnostics(): Promise<DiagnosticsInfo>;
+  /** 导出诊断包到工作区，返回路径 */
+  exportDiagnostics(): Promise<DiagnosticsExportResult>;
+  /** 用系统编辑器打开 settings.json */
+  openSettingsFile(): Promise<{ ok: true; path: string }>;
 }
 
 type Reply<T> = Promise<{ data: T | null; error: { status: unknown; value: unknown } | null }>;
@@ -108,6 +140,27 @@ interface SettingsShape {
       get(): Reply<SettingsView>;
       connections: ((params: { name: string }) => ConnectionRoute) & {
         // Eden 只把动态路由暴露成函数
+      };
+      app: {
+        get(): Reply<AppSettingsView>;
+        patch(body: unknown): Reply<AppSettingsView>;
+      };
+      role: {
+        put(body: unknown): Reply<SettingsRoleResult>;
+      };
+      /** 关键字路由名：Eden 里按属性访问即可 */
+      export: {
+        get(options?: { query?: { includeKeys?: string } }): Reply<SettingsExportResult>;
+      };
+      import: {
+        post(body: unknown): Reply<SettingsImportResult>;
+      };
+      diagnostics: {
+        get(): Reply<DiagnosticsInfo>;
+        export: { post(body?: unknown): Reply<DiagnosticsExportResult> };
+      };
+      "open-file": {
+        post(body?: unknown): Reply<{ ok: true; path: string }>;
       };
       demo: {
         get(): Reply<DemoView>;
@@ -160,6 +213,26 @@ function createEdenSettingsApi(origin: string): SettingsApi {
     async resetEmployees() {
       return unwrap(await settings.workspace["reset-employees"].post({}));
     },
+    getAppSettings: async () => unwrap(await settings.app.get()),
+    async patchAppSettings(patch) {
+      return unwrap(await settings.app.patch(patch));
+    },
+    async setDefaultRole(role, revision) {
+      return unwrap(await settings.role.put(revision === undefined ? { role } : { role, revision }));
+    },
+    async exportSettings(includeKeys = false) {
+      return unwrap(await settings.export.get(includeKeys ? { query: { includeKeys: "true" } } : {}));
+    },
+    async importSettings(document) {
+      return unwrap(await settings.import.post(document));
+    },
+    getDiagnostics: async () => unwrap(await settings.diagnostics.get()),
+    async exportDiagnostics() {
+      return unwrap(await settings.diagnostics.export.post({}));
+    },
+    async openSettingsFile() {
+      return unwrap(await settings["open-file"].post({}));
+    },
   };
 }
 
@@ -209,6 +282,47 @@ function createMockSettingsApi(): SettingsApi {
     return { ...rest, isDefault: c.name === defaultConnection };
   };
   const workspace = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee";
+
+  // ---- 设置文档 v2 的内存模拟（T19 起的接口）
+  const isRecord = (value: unknown): value is Record<string, any> => typeof value === "object" && value !== null && !Array.isArray(value);
+  let revision = 0;
+  let ui = { ...DEFAULT_UI_SETTINGS };
+  let execution = { ...DEFAULT_EXECUTION_SETTINGS, retryBackoffMs: [...DEFAULT_EXECUTION_SETTINGS.retryBackoffMs] };
+  let diagnosticsSettings = { ...DEFAULT_DIAGNOSTICS_SETTINGS };
+  let permissions = { ...DEFAULT_PERMISSION_SETTINGS };
+  const defaultModelOf = () => connections[0]?.models[0] ?? "deepseek-chat";
+  const currentAppView = (): AppSettingsView => ({
+    ok: true,
+    version: SETTINGS_VERSION,
+    revision,
+    ui: { ...ui },
+    execution: { ...execution, retryBackoffMs: [...execution.retryBackoffMs] },
+    diagnostics: { ...diagnosticsSettings },
+    permissions: { ...permissions },
+    connections: connections.map(view),
+    defaultConnection,
+    defaultModel: defaultModelOf(),
+    demo: { toolFaults: demoTools, ...demo },
+    extra: {},
+    envOverride: false,
+  });
+  const documentJson = (includeKeys: boolean): Record<string, unknown> => ({
+    version: SETTINGS_VERSION,
+    revision,
+    connections: connections.map((c) => ({
+      name: c.name,
+      baseUrl: c.baseUrl,
+      apiKey: includeKeys ? c.apiKey : "",
+      models: [...c.models],
+    })),
+    defaultConnection,
+    defaultModel: defaultModelOf(),
+    demo: { toolFaults: demoTools, ...demo },
+    ui: { ...ui },
+    execution: { ...execution, retryBackoffMs: [...execution.retryBackoffMs] },
+    diagnostics: { ...diagnosticsSettings },
+    permissions: { ...permissions },
+  });
 
   return {
     getSettings: () =>
@@ -264,6 +378,71 @@ function createMockSettingsApi(): SettingsApi {
     openWorkspace: () => later({ ok: true as const, path: workspace }),
     resetEmployees: () =>
       later({ ok: true as const, backupPath: `${workspace}\\config-versions\\employees\\20261029`, employees: ["weekly-report"] }, 300),
+    // ---- 设置文档 v2（T19）
+    getAppSettings: () => later(currentAppView()),
+    patchAppSettings: (patch) =>
+      later(undefined).then(() => {
+        if (patch.revision !== revision) throw new Error("设置已被修改，请刷新后重试");
+        if (patch.ui) ui = { ...ui, ...patch.ui };
+        if (patch.execution) execution = { ...execution, ...patch.execution };
+        if (patch.diagnostics) diagnosticsSettings = { ...diagnosticsSettings, ...patch.diagnostics };
+        if (patch.permissions) permissions = { ...permissions, ...patch.permissions };
+        revision += 1;
+        return currentAppView();
+      }),
+    setDefaultRole: (role) =>
+      later(undefined).then(() => {
+        permissions = { ...permissions, defaultRole: role };
+        revision += 1;
+        return { ok: true as const, revision, permissions: { ...permissions } };
+      }),
+    exportSettings: (includeKeys = false) =>
+      later({
+        ok: true as const,
+        redacted: !includeKeys,
+        filename: `settings${includeKeys ? "-with-keys" : ""}-20261105120000.json`,
+        document: documentJson(includeKeys),
+        exportedAt: new Date().toISOString(),
+      }),
+    importSettings: (document) =>
+      later(undefined).then(() => {
+        const raw = isRecord(document) && isRecord(document.document) ? document.document : document;
+        if (!isRecord(raw)) throw new Error("设置文件必须是 JSON 对象");
+        if (isRecord(raw.ui)) ui = { ...ui, ...raw.ui };
+        if (isRecord(raw.execution)) execution = { ...execution, ...raw.execution };
+        if (isRecord(raw.diagnostics)) diagnosticsSettings = { ...diagnosticsSettings, ...raw.diagnostics };
+        if (isRecord(raw.permissions)) permissions = { ...permissions, ...raw.permissions };
+        revision += 1;
+        return {
+          ok: true as const,
+          revision,
+          backupPath: `${workspace}\\config-versions\\settings\\20261105120000.json`,
+          migrated: raw.version !== SETTINGS_VERSION,
+        };
+      }),
+    getDiagnostics: () =>
+      later<DiagnosticsInfo>({
+        ok: true,
+        generatedAt: new Date().toISOString(),
+        app: { version: "0.0.0-mock", settingsVersion: SETTINGS_VERSION },
+        runtime: { bun: "1.4.2", platform: "win32", arch: "x64" },
+        workspace: {
+          workspaceDir: workspace,
+          employeesDir: `${workspace}\\employees`,
+          configVersionsDir: `${workspace}\\config-versions`,
+          settingsFile: `${workspace}\\settings.json`,
+          settingsFileExists: true,
+        },
+        settings: currentAppView(),
+        tasks: [],
+      }),
+    exportDiagnostics: () =>
+      later<DiagnosticsExportResult>({
+        ok: true,
+        path: `${workspace}\\diagnostics\\diagnostic-20261105120000.json`,
+        generatedAt: new Date().toISOString(),
+      }),
+    openSettingsFile: () => later({ ok: true as const, path: `${workspace}\\settings.json` }),
   };
 }
 

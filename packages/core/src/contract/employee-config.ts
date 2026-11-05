@@ -22,6 +22,11 @@ export function isEmployeeId(value: unknown): value is string {
 const ModelRefSchema = z.object({
   connection: z.string().default("default"),
   model: z.string().default("default"),
+  /**
+   * 本步骤的思考强度（Spec 0004）：由“步骤配置 → 连接默认档位 → off”三级决定。
+   * 这里只做契约与写回校验，运行器怎么用由 T20 负责。
+   */
+  thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).optional(),
 });
 
 /**
