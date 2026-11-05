@@ -203,8 +203,11 @@ function unwrap<T>(res: Awaited<Reply<T>>): T {
   return res.data;
 }
 
-function createEdenSettingsApi(origin: string): SettingsApi {
-  const client = treaty<App>(origin) as unknown as SettingsShape;
+function createEdenSettingsApi(origin: string, getRole?: () => DefaultRole): SettingsApi {
+  // 设置请求带上当前界面角色：服务端审计要记录“谁”做的危险操作（缺省时回落到默认角色）
+  const client = treaty<App>(origin, {
+    headers: getRole ? () => ({ "x-role": getRole() }) : {},
+  }) as unknown as SettingsShape;
   const settings = client.api.settings;
   const connection = (name: string) => settings.connections({ name });
   return {
@@ -487,6 +490,6 @@ function createMockSettingsApi(): SettingsApi {
   };
 }
 
-export function createSettingsApi(origin: string = window.location.origin): SettingsApi {
-  return IS_MOCK ? createMockSettingsApi() : createEdenSettingsApi(origin);
+export function createSettingsApi(origin: string = window.location.origin, getRole?: () => DefaultRole): SettingsApi {
+  return IS_MOCK ? createMockSettingsApi() : createEdenSettingsApi(origin, getRole);
 }

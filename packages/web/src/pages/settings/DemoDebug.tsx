@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Alert, App as AntApp, Divider, Select, Space, Switch, Tag, Typography } from "antd";
 import { BugOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import type { DemoState, DemoView, FaultMode, SettingsApi } from "../../api/settings";
+import { useDangerConfirm } from "../../components/ConfirmDialog";
 
 const { Text, Paragraph } = Typography;
 
@@ -40,6 +41,7 @@ const switchRow: React.CSSProperties = { display: "flex", alignItems: "flex-star
 
 export function DemoDebug({ api }: { api: SettingsApi }) {
   const { message } = AntApp.useApp();
+  const confirmDanger = useDangerConfirm();
   const [demo, setDemo] = useState<DemoView>();
   const [saving, setSaving] = useState<string>();
 
@@ -72,6 +74,22 @@ export function DemoDebug({ api }: { api: SettingsApi }) {
     if (value === "off") delete next[tool];
     else next[tool] = value as FaultMode;
     return save({ toolFaults: next }, tool);
+  };
+
+  /** 模拟崩溃会真的退出进程：布防前统一确认（解除不需要）。 */
+  const changeCrash = (checked: boolean) => {
+    if (!checked) {
+      void save({ crashOnNextStep: false }, "crash");
+      return;
+    }
+    confirmDanger({
+      title: "布防「模拟程序崩溃」？",
+      content:
+        "布防后，进程会在下一个步骤开始执行时写入 fault_injected 事件，然后真的退出（退出码 1）。" +
+        "重启服务后会从断点继续，已完成的步骤不重跑。服务端会写审计。仍要布防崩溃？",
+      okText: "仍要布防",
+      onConfirm: () => save({ crashOnNextStep: true }, "crash"),
+    });
   };
 
   if (!demo) return <div style={{ color: "var(--muted)" }}>读取中…</div>;
@@ -172,7 +190,7 @@ export function DemoDebug({ api }: { api: SettingsApi }) {
           <Switch
             loading={saving === "crash"}
             checked={demo.crashOnNextStep}
-            onChange={(checked) => save({ crashOnNextStep: checked }, "crash")}
+            onChange={changeCrash}
           />
         </div>
       </div>

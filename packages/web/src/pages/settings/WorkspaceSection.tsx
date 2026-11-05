@@ -1,8 +1,9 @@
 // 工作区子页：查看目录、打开工作区文件夹、恢复默认员工配置（先备份到 config-versions/）。
 import { useEffect, useState } from "react";
-import { Alert, App as AntApp, Button, Popconfirm, Typography } from "antd";
+import { Alert, App as AntApp, Button, Typography } from "antd";
 import { FolderOpenOutlined, ReloadOutlined, HistoryOutlined } from "@ant-design/icons";
 import type { ResetEmployeesResult, SettingsApi, WorkspaceView } from "../../api/settings";
+import { useDangerConfirm } from "../../components/ConfirmDialog";
 
 const { Text } = Typography;
 
@@ -19,6 +20,7 @@ const pathStyle: React.CSSProperties = {
 
 export function WorkspaceSection({ api }: { api: SettingsApi }) {
   const { message } = AntApp.useApp();
+  const confirmDanger = useDangerConfirm();
   const [view, setView] = useState<WorkspaceView>();
   const [resetting, setResetting] = useState(false);
   const [resetResult, setResetResult] = useState<ResetEmployeesResult>();
@@ -88,18 +90,23 @@ export function WorkspaceSection({ api }: { api: SettingsApi }) {
           <div style={pathStyle}>{view.employeesDir}</div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <Popconfirm
-            title="恢复默认员工配置？"
-            description="会先把当前配置备份到 config-versions/，再覆盖员工目录，恢复后不可撤销（但可从备份恢复）。"
-            okText="恢复"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-            onConfirm={reset}
+          <Button
+            danger
+            icon={<ReloadOutlined />}
+            loading={resetting}
+            onClick={() =>
+              confirmDanger({
+                title: "恢复默认员工配置？",
+                content:
+                  "会先把当前配置备份到 config-versions/，再覆盖员工目录；恢复后不可撤销（但可从备份恢复）。" +
+                  "运行中的任务使用发起时的配置副本，不受影响；新任务使用恢复后的配置。服务端会写审计。仍要恢复？",
+                okText: "仍要恢复",
+                onConfirm: reset,
+              })
+            }
           >
-            <Button danger icon={<ReloadOutlined />} loading={resetting}>
-              恢复默认员工配置
-            </Button>
-          </Popconfirm>
+            恢复默认员工配置
+          </Button>
         </div>
         {resetResult && (
           <Alert
