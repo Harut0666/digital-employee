@@ -19,11 +19,11 @@ import { formatDiagnosticsText } from "../../view/diagnostics";
 
 const { Text } = Typography;
 
-const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "#fff", padding: "16px 20px", marginBottom: 16 };
+const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "var(--card)", padding: "16px 20px", marginBottom: 16 };
 const rowStyle: React.CSSProperties = { display: "flex", gap: 16, alignItems: "flex-start", padding: "8px 0" };
 const labelStyle: React.CSSProperties = { width: 132, flex: "none", color: "var(--muted)" };
 const mono: React.CSSProperties = { fontFamily: "Consolas, monospace", fontSize: 12, wordBreak: "break-all" };
-const preStyle: React.CSSProperties = { ...mono, background: "#f5f7f9", borderRadius: 8, padding: "10px 12px", margin: "10px 0 0", maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" };
+const preStyle: React.CSSProperties = { ...mono, background: "var(--hover)", borderRadius: 8, padding: "10px 12px", margin: "10px 0 0", maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap" };
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
   error: "error · 只输出错误",
