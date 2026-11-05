@@ -2,7 +2,7 @@
 // 演示开关经 admin_set_faults 下发到工具子进程、工作区文件操作。
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { FaultHooks, ModelSettings, ToolClient, ToolDescriptor } from "@de/core/contract";
 import type { ConnectionProbe, FolderOpener } from "../src/routes/deps";
 import { jsonRequest, setup, tempDir } from "./helpers";
@@ -375,5 +375,313 @@ describe("工作区", () => {
     const body = await bodyOf(await call("/api/settings/workspace/reset-employees", { method: "POST" }));
     expect(body).toMatchObject({ ok: true, employees: ["weekly-report"] });
     expect(existsSync(join(employeesDir, "weekly-report", "workflow.yaml"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------- T19：设置文档 v2
+
+const UI_DEFAULTS = {
+  theme: "system",
+  fontSize: 14,
+  trajectoryDetail: "standard",
+  collapseTiming: "completion",
+  enterBehavior: "send",
+  linkOpening: "in-app",
+};
+
+function storedSettings(ws: string): Record<string, any> {
+  return readJson(join(ws, "settings.json"));
+}
+
+/** v1 文件（无 version）+ 其它模块写入的自定义键。 */
+function v1WorkspaceWithExtras(): string {
+  const ws = settingsWorkspace({ customModule: { keep: true }, note: "现场演示" });
+  return ws;
+}
+
+describe("GET /api/settings/app · 设置文档 v2", () => {
+  test("v1 文件读成 v2：默认分区 + revision 0 + 密钥脱敏，且读不写盘", async () => {
+    const ws = v1WorkspaceWithExtras();
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call("/api/settings/app");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(KEY);
+    expect(text).not.toContain(LOCAL_KEY);
+    const body = JSON.parse(text) as Record<string, any>;
+
+    expect(body).toMatchObject({ ok: true, version: 2, revision: 0, envOverride: false, defaultConnection: "deepseek" });
+    expect(body.ui).toEqual(UI_DEFAULTS);
+    expect(body.execution).toMatchObject({ stepTimeoutMs: 120000, modelMaxRetries: 2, qcAutofix: 3 });
+    expect(body.diagnostics).toEqual({ logLevel: "info" });
+    expect(body.permissions).toEqual({ sandboxMode: "workspace-write", approvalPolicy: "ask", defaultRole: "initiator" });
+    expect(body.connections.find((c: any) => c.name === "deepseek")).toMatchObject({
+      apiKeyLast4: "1234",
+      hasKey: true,
+      source: "file",
+      isDefault: true,
+    });
+    expect(body.extra).toMatchObject({ customModule: { keep: true }, note: "现场演示" });
+
+    // 读路径不写盘
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+  });
+
+  test("PATCH 带正确 revision：合并分区、revision +1，首写迁移成 v2 且未知键保留", async () => {
+    const ws = v1WorkspaceWithExtras();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call(
+      "/api/settings/app",
+      jsonRequest("PATCH", { revision: 0, ui: { theme: "dark" }, execution: { modelMaxRetries: 4 } }),
+    );
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, revision: 1 });
+    expect(body.ui).toMatchObject({ theme: "dark", fontSize: 14 });
+    expect(body.execution).toMatchObject({ modelMaxRetries: 4, stepTimeoutMs: 120000 });
+
+    const stored = storedSettings(ws);
+    expect(stored.version).toBe(2);
+    expect(stored.revision).toBe(1);
+    expect(stored.ui.theme).toBe("dark");
+    expect(stored.customModule).toEqual({ keep: true });
+    expect(stored.note).toBe("现场演示");
+    expect(stored.connections[0].apiKey).toBe(KEY);
+
+    // 再写一次：revision 继续 +1
+    const again = await bodyOf(await call("/api/settings/app", jsonRequest("PATCH", { revision: 1, ui: { fontSize: 16 } })));
+    expect(again.revision).toBe(2);
+    expect(storedSettings(ws).ui).toMatchObject({ theme: "dark", fontSize: 16 });
+  });
+
+  test("PATCH 的 revision 过期：409 + 中文提示，文件不变", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, ui: { theme: "dark" } }));
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+
+    const res = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, ui: { theme: "light" } }));
+    expect(res.status).toBe(409);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: false, error: "revision_conflict", revision: 1 });
+    expect(body.message).toContain("刷新");
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+  });
+
+  test("PATCH 非法枚举 / 越界：400 且文件不变", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+
+    const badTheme = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, ui: { theme: "neon" } }));
+    expect(badTheme.status).toBe(400);
+    const badFont = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, ui: { fontSize: 99 } }));
+    expect(badFont.status).toBe(400);
+    const badTimeout = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, execution: { stepTimeoutMs: 0 } }));
+    expect(badTimeout.status).toBe(400);
+    const badRole = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, permissions: { defaultRole: "admin" } }));
+    expect(badRole.status).toBe(400);
+    const noRevision = await call("/api/settings/app", jsonRequest("PATCH", { ui: { theme: "dark" } }));
+    expect(noRevision.status).toBe(400);
+
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+  });
+
+  test("现有连接写入也走统一入口：经过一次保存 revision +1", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    expect(storedSettings(ws).revision).toBeUndefined();
+
+    await call("/api/settings/connections/deepseek", jsonRequest("PUT", { models: ["deepseek-chat"] }));
+    expect(storedSettings(ws)).toMatchObject({ version: 2, revision: 1 });
+    const app = await bodyOf(await call("/api/settings/app"));
+    expect(app.revision).toBe(1);
+  });
+});
+
+describe("PUT /api/settings/role", () => {
+  test("只写 permissions.defaultRole，其余设置与密钥不动", async () => {
+    const ws = v1WorkspaceWithExtras();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call("/api/settings/role", jsonRequest("PUT", { role: "reviewer" }));
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, revision: 1, permissions: { defaultRole: "reviewer" } });
+    expect(body.permissions).toMatchObject({ sandboxMode: "workspace-write", approvalPolicy: "ask" });
+
+    const stored = storedSettings(ws);
+    expect(stored.permissions.defaultRole).toBe("reviewer");
+    expect(stored.version).toBe(2);
+    expect(stored.connections[0].apiKey).toBe(KEY);
+    expect(stored.customModule).toEqual({ keep: true });
+  });
+
+  test("非法角色 400 且不写盘", async () => {
+    const ws = settingsWorkspace();
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    expect((await call("/api/settings/role", jsonRequest("PUT", { role: "admin" }))).status).toBe(400);
+    expect((await call("/api/settings/role", jsonRequest("PUT", {}))).status).toBe(400);
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+  });
+});
+
+describe("GET /api/settings/export", () => {
+  test("默认脱敏：正文没有明文 Key，文件名标注为普通导出", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const res = await call("/api/settings/export");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(KEY);
+    expect(text).not.toContain(LOCAL_KEY);
+
+    const body = JSON.parse(text) as Record<string, any>;
+    expect(body).toMatchObject({ ok: true, redacted: true });
+    expect(body.filename).toMatch(/^settings-.+\.json$/);
+    expect(body.filename).not.toContain("with-keys");
+    expect(body.document.version).toBe(2);
+    expect(body.document.connections.every((c: any) => c.apiKey === "")).toBe(true);
+    expect(res.headers.get("content-disposition")).toContain(body.filename);
+  });
+
+  test("includeKeys=true 才含明文 Key，文件名带 -with-keys", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const res = await call("/api/settings/export?includeKeys=true");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, any>;
+    expect(body).toMatchObject({ ok: true, redacted: false });
+    expect(body.filename).toContain("with-keys");
+    expect(JSON.stringify(body)).toContain(KEY);
+    expect(res.headers.get("content-disposition")).toContain("with-keys");
+  });
+});
+
+describe("POST /api/settings/import", () => {
+  test("导入合法文件：写入 v2、revision +1，旧文件备份到 config-versions/settings", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const exported = await bodyOf(await call("/api/settings/export?includeKeys=true"));
+    exported.document.ui = { ...exported.document.ui, theme: "dark" };
+
+    const res = await call("/api/settings/import", jsonRequest("POST", { document: exported.document }));
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, revision: 1, migrated: false });
+    expect(typeof body.backupPath).toBe("string");
+    expect(existsSync(body.backupPath)).toBe(true);
+    expect(readJson(body.backupPath).connections[0].apiKey).toBe(KEY);
+    expect(dirname(body.backupPath)).toBe(join(ws, "config-versions", "settings"));
+
+    const stored = storedSettings(ws);
+    expect(stored.version).toBe(2);
+    expect(stored.ui.theme).toBe("dark");
+    expect(stored.connections[0].apiKey).toBe(KEY);
+  });
+
+  test("导入 v1 文件（裸文档、无 version）：迁移成 v2 并保留自定义键", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const v1 = {
+      connections: [{ name: "local", baseUrl: "http://localhost:8000/v1", apiKey: "sk-local-xy12", models: ["qwen"] }],
+      defaultConnection: "local",
+      defaultModel: "qwen",
+      keepMe: { yes: true },
+    };
+    const res = await call("/api/settings/import", jsonRequest("POST", v1));
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, migrated: true, revision: 1 });
+
+    const stored = storedSettings(ws);
+    expect(stored.version).toBe(2);
+    expect(stored.ui).toEqual(UI_DEFAULTS);
+    expect(stored.keepMe).toEqual({ yes: true });
+    expect(stored.connections[0].apiKey).toBe("sk-local-xy12");
+  });
+
+  test("导入非法文件：400 且文件不变", async () => {
+    const ws = settingsWorkspace();
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    for (const bad of [
+      { ui: { theme: "neon" } },
+      { execution: { stepTimeoutMs: -1 } },
+      { connections: "nope" },
+      { version: 9 },
+      "not-an-object",
+    ]) {
+      const res = await call("/api/settings/import", jsonRequest("POST", bad));
+      expect(res.status).toBe(400);
+    }
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+    expect(existsSync(join(ws, "config-versions", "settings"))).toBe(false);
+  });
+});
+
+describe("诊断", () => {
+  test("GET /api/settings/diagnostics：版本、运行时、工作区、脱敏快照、最近事件，且无明文 Key", async () => {
+    const ws = settingsWorkspace();
+    const { call, engine } = setup({ workspaceDir: ws, env: {} });
+    await engine.create({ employee: "weekly-report", form: {}, attachments: [], actor: "initiator" });
+
+    const res = await call("/api/settings/diagnostics");
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(KEY);
+    expect(text).not.toContain(LOCAL_KEY);
+
+    const body = JSON.parse(text) as Record<string, any>;
+    expect(body).toMatchObject({ ok: true, app: { settingsVersion: 2 } });
+    expect(typeof body.app.version).toBe("string");
+    expect(body.runtime.platform).toBe(process.platform);
+    expect(body.runtime.arch).toBe(process.arch);
+    expect(typeof body.runtime.bun).toBe("string");
+    expect(body.workspace.workspaceDir).toBe(ws);
+    expect(body.workspace.settingsFile).toBe(join(ws, "settings.json"));
+    expect(body.settings.connections.find((c: any) => c.name === "deepseek")).toMatchObject({ apiKeyLast4: "1234", hasKey: true });
+    expect(body.tasks[0].events.map((e: any) => e.type)).toContain("task_created");
+  });
+
+  test("POST /api/settings/diagnostics/export：落盘并返回路径，文件里没有明文 Key", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const res = await call("/api/settings/diagnostics/export", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body.ok).toBe(true);
+    expect(existsSync(body.path)).toBe(true);
+    const written = readFileSync(body.path, "utf8");
+    expect(written).not.toContain(KEY);
+    expect(JSON.parse(written).runtime.platform).toBe(process.platform);
+  });
+});
+
+describe("POST /api/settings/open-file", () => {
+  test("用注入的打开器打开 settings.json", async () => {
+    const ws = settingsWorkspace();
+    const opened: string[] = [];
+    const { call } = setup({ workspaceDir: ws, env: {}, openFile: (path: string) => void opened.push(path) });
+    const res = await call("/api/settings/open-file", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, path: join(ws, "settings.json") });
+    expect(opened).toEqual([join(ws, "settings.json")]);
+  });
+
+  test("文件不存在时先写一份默认文档再打开", async () => {
+    const ws = tempDir();
+    const opened: string[] = [];
+    const { call } = setup({ workspaceDir: ws, env: {}, openFile: (path: string) => void opened.push(path) });
+    const res = await call("/api/settings/open-file", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(opened).toEqual([join(ws, "settings.json")]);
+    expect(storedSettings(ws)).toMatchObject({ version: 2, revision: 1 });
   });
 });
