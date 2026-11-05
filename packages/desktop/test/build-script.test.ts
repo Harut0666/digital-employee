@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import {
   FIXED_DESKTOP_COPY,
   desktopArtifactFolder,
+  desktopArtifactProblems,
   desktopCopyMapping,
   desktopStagingAppDir,
   desktopWasmTarget,
@@ -94,6 +95,43 @@ describe("桌面构建脚本（纯函数，不启动 Hutch）", () => {
       writeFileSync(join(app, "Resources", "a.tar.zst"), "a");
       writeFileSync(join(app, "Resources", "metadata.json"), "{}");
       expect(findResourcesTar(app)).toBe(join(app, "Resources", "a.tar.zst"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("产物不齐时逐项列出缺什么、下一步怎么办（不允许静默降级）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "de-artifact-check-"));
+    try {
+      // 齐全：安装包 + staging tar + 绿色目录（含 launcher.exe）+ 便携 zip
+      const setupZip = join(dir, "win-x64-DigitalEmployee-Setup.zip");
+      const tar = join(dir, "stable-win-x64-DigitalEmployee.tar.zst");
+      const appDir = join(dir, "DigitalEmployee");
+      const zip = join(dir, "win-x64-DigitalEmployee-portable.zip");
+      mkdirSync(join(appDir, "bin"), { recursive: true });
+      writeFileSync(join(appDir, "bin", "launcher.exe"), "MZ");
+      for (const file of [setupZip, tar, zip]) writeFileSync(file, "x");
+      expect(
+        desktopArtifactProblems({ setupZips: [setupZip], resourcesTar: tar, portableAppDir: appDir, portableZip: zip }),
+      ).toEqual([]);
+
+      // 全缺：四条必须各说清缺什么 + 下一步
+      const problems = desktopArtifactProblems({
+        setupZips: [],
+        resourcesTar: undefined,
+        portableAppDir: join(dir, "missing-app"),
+        portableZip: join(dir, "missing.zip"),
+      });
+      expect(problems).toHaveLength(4);
+      const text = problems.join("\n");
+      expect(text).toContain("Setup.zip");
+      expect(text).toContain("tar.zst");
+      expect(text).toContain("launcher.exe");
+      expect(text).toContain("便携 zip");
+      expect(text).toContain("重跑");
+      expect(text).toContain("Hutch");
+      // 每一项都以“缺什么：下一步”的形式给出，便于直接照做
+      for (const line of problems) expect(line).toContain("：");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

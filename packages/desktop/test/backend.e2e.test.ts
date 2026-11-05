@@ -1,5 +1,5 @@
 // 接缝 A：共享装配的目录资源来源 + 桌面后端（真实工具服务器 InMemoryTransport + 剧本模型），经 HTTP 跑通 A-01。
-// 断言外部行为：窗口要加载的地址可访问、首页/员工接口正确、任务能到 delivered、交付 docx 可下载且内容正确、关窗后端口释放。
+// 断言外部行为：窗口要加载的地址可访问、首页/员工接口正确、任务能到 delivered、事件日志完整、交付 docx 可下载且内容正确、关窗后端口释放。
 import { afterEach, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +48,15 @@ async function freePort(): Promise<number> {
 interface Snapshot {
   id: string;
   state: string;
+}
+
+/** 事件列表里本测试关心的字段（GET /api/tasks/:id/events 返回 TaskEvent[]）。 */
+interface TaskEventRow {
+  seq: number;
+  type: string;
+  employee?: string;
+  kind?: string;
+  to?: string;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -104,7 +113,7 @@ function readDocxText(path: string): string {
 
 describe("桌面后端（共享装配 · 目录资源 · InMemoryTransport 工具）", () => {
   test(
-    "A-01 经 HTTP 跑到 delivered，首页/员工接口/docx 下载正确，关窗后端口释放",
+    "A-01 经 HTTP 跑到 delivered，首页/员工接口/docx/事件正确，关窗后端口释放",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "de-desktop-e2e-"));
       const assetsDir = stageAssets(root);
@@ -175,6 +184,22 @@ describe("桌面后端（共享装配 · 目录资源 · InMemoryTransport 工�
       const text = readDocxText(downloaded);
       expect(text).toContain("573,635 元");
       expect(text).toContain("-12.7%");
+
+      // 事件：接缝 A 要求“docx 与事件”都断言。读事件列表（带超时，接口异常时不挂住）
+      const eventsRes = await fetch(`${backend.url}/api/tasks/${draft.id}/events`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      expect(eventsRes.status).toBe(200);
+      const events = (await eventsRes.json()) as TaskEventRow[];
+      expect(events.length).toBeGreaterThan(0);
+      // 首个事件是建任务，说明事件日志从创建就开始记
+      expect(events[0]?.type).toBe("task_created");
+      expect(events[0]?.employee).toBe("weekly-report");
+      // 终态 state_changed 到 delivered，且 docx 交付物有对应事件
+      expect(events.some((event) => event.type === "state_changed" && event.to === "delivered")).toBe(true);
+      expect(events.some((event) => event.type === "deliverable_created" && event.kind === "docx")).toBe(true);
+      // seq 从 1 连续递增：事件日志不丢号（断点恢复依赖这个顺序）
+      expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
 
       // 关窗/退出：端口释放、工具客户端关闭
       await backend.close();
