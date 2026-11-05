@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RenderReportInput, RenderReportOutput, RenderedReport, WeeklyFacts } from "@de/core/contract";
-import { CHART_SIZE, regionBarOption, renderChartPng, trendLineOption, type FontOptions } from "./charts";
+import { CHART_SIZE, regionBarOption, renderChartPng, trendLineOption, type FontOptions, type ResvgWasm } from "./charts";
 import { fmtPct, fmtWow, fmtYuan } from "./format";
 
 export interface RenderOptions {
@@ -26,6 +26,8 @@ export interface RenderOptions {
   chartFonts?: FontOptions;
   /** Word 正文字体名；不嵌入字体，由阅读端系统提供，缺失时 Word 自动回退 */
   docxFont?: string;
+  /** resvg wasm 的路径或字节；由各入口注入（charts.ts 不再静态导入 wasm） */
+  resvgWasm?: ResvgWasm;
 }
 
 const CHART_COUNT = 2;
@@ -132,8 +134,8 @@ async function buildDocx(input: RenderReportInput, opts: RenderOptions): Promise
   const run = (text: string, extra: { bold?: boolean; size?: number } = {}) => new TextRun({ text, font: fontSpec, size: 21, ...extra });
 
   const [bar, trend] = await Promise.all([
-    renderChartPng(regionBarOption(facts), opts.chartFonts),
-    renderChartPng(trendLineOption(facts), opts.chartFonts),
+    renderChartPng(regionBarOption(facts), opts.chartFonts, opts.resvgWasm),
+    renderChartPng(trendLineOption(facts), opts.chartFonts, opts.resvgWasm),
   ]);
   // 图宽约 16cm（600px @96dpi），按图表比例定高
   const imgW = IMG_WIDTH_PX;

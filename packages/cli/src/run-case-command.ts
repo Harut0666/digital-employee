@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import {
   createMcpToolClient,
   createModelProvider,
@@ -46,7 +47,7 @@ export async function runCaseCommand(args: RunCaseCommandArgs): Promise<number> 
     : createModelProvider(loadSettings(resolveWorkspace()));
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await createToolsServer().server.connect(serverTransport);
+  await createToolsServer({ resvgWasm }).server.connect(serverTransport);
   const toolClient = await createMcpToolClient(clientTransport);
 
   try {

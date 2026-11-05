@@ -130,7 +130,7 @@ export function createToolsServer(options: ToolsServerOptions = {}): ToolsServer
       outputSchema: S.renderReportOut,
     },
     wrap("render_report_docx", (a: RenderReportInput) =>
-      renderReportDocx(a, { chartFonts: options.chartFonts, docxFont: options.docxFont }),
+      renderReportDocx(a, { chartFonts: options.chartFonts, docxFont: options.docxFont, resvgWasm: options.resvgWasm }),
     ) as never,
   );
 

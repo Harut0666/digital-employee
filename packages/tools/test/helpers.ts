@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import { join, resolve } from "node:path";
 import { createToolsServer, type ToolsServerOptions } from "../src/index";
 
@@ -18,7 +19,8 @@ export interface Harness {
 }
 
 export async function connect(options?: ToolsServerOptions): Promise<Harness> {
-  const tools = createToolsServer(options);
+  // 测试同样走注入：Bun 文件导入拿到 wasm 真实路径
+  const tools = createToolsServer({ resvgWasm, ...options });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0.0.0" });
   await Promise.all([tools.server.connect(a), client.connect(b)]);

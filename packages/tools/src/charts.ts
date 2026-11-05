@@ -1,11 +1,18 @@
 // 图表：ECharts 服务端渲染出 SVG，再用 resvg-wasm 转成 PNG（Word 里嵌 PNG 最稳）。
-/// <reference path="./env.d.ts" />
+// resvg wasm 不再用 `with { type: "file" }` 静态导入（Hutch/Electrobun 打包器不保证支持）：
+// 由工具服务器选项注入路径或字节——exe/CLI/test 用 Bun 文件导入，桌面版读随包拷贝的 wasm。
 import * as echarts from "echarts";
+import { SVGRenderer } from "echarts/renderers";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import { existsSync, readFileSync } from "node:fs";
 import type { WeeklyFacts } from "@de/core/contract";
-// 让 bun build --compile 把 wasm 一并打进可执行文件
-import resvgWasmPath from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
+
+// 显式注册 SVG 渲染器：`import * as echarts from "echarts"` 自带的 use() 在打包器 tree-shake
+// 后可能被去掉（Hutch 的压缩构建实测会丢），这里显式引用，保证 SSR 渲染器一定在。
+echarts.use([SVGRenderer]);
+
+/** resvg wasm 的来源：文件路径或直接给字节。 */
+export type ResvgWasm = string | Uint8Array;
 
 export interface FontOptions {
   /** 字体文件路径（ttf/otf/ttc）。默认依次尝试环境变量 DE_FONT_PATHS 与常见系统中文字体 */
@@ -25,8 +32,24 @@ const SYSTEM_FONT_CANDIDATES = [
   "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 ];
 
+// resvg-wasm 的 initWasm() 只能调用一次；多个工具服务器实例共享同一个 wasm 运行时。
 let wasmReady: Promise<void> | undefined;
-const ensureWasm = () => (wasmReady ??= initWasm(readFileSync(resvgWasmPath)));
+
+function ensureWasm(source: ResvgWasm | undefined): Promise<void> {
+  if (!source) {
+    throw new Error(
+      "图表渲染缺少 resvg wasm：请通过 ToolsServerOptions.resvgWasm 传入 wasm 路径或字节（exe/CLI 用 Bun 文件导入，桌面版读随包资源）",
+    );
+  }
+  if (wasmReady) return wasmReady;
+  const init = typeof source === "string" ? initWasm(readFileSync(source)) : initWasm(source);
+  wasmReady = init.catch((error) => {
+    // 初始化失败时清掉缓存，下一次还有机会重试
+    wasmReady = undefined;
+    throw error;
+  });
+  return wasmReady;
+}
 
 const fontCache = new Map<string, Uint8Array>();
 function loadFontBuffers(opts: FontOptions): Uint8Array[] {
@@ -103,7 +126,11 @@ export function trendLineOption(f: WeeklyFacts): echarts.EChartsCoreOption {
   };
 }
 
-export async function renderChartPng(option: echarts.EChartsCoreOption, fonts: FontOptions = {}): Promise<Uint8Array> {
+export async function renderChartPng(
+  option: echarts.EChartsCoreOption,
+  fonts: FontOptions = {},
+  resvgWasm?: ResvgWasm,
+): Promise<Uint8Array> {
   const chart = echarts.init(null as never, null as never, { renderer: "svg", ssr: true, width: W, height: H });
   let svg: string;
   try {
@@ -112,7 +139,7 @@ export async function renderChartPng(option: echarts.EChartsCoreOption, fonts: F
   } finally {
     chart.dispose();
   }
-  await ensureWasm();
+  await ensureWasm(resvgWasm);
   const fontBuffers = loadFontBuffers(fonts);
   const resvg = new Resvg(svg, {
     fitTo: { mode: "width", value: W * 2 },

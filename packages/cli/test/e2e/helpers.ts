@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
 import { join, resolve } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import {
   createMcpToolClient,
   createScriptedModelProvider,
@@ -63,7 +64,7 @@ export async function createE2E(options: { script?: ModelScript; faults?: FaultH
   const root = mkdtempSync(join(tmpdir(), "de-e2e-"));
   const workspaceDir = join(root, "workspace");
 
-  const tools = createToolsServer({ faults: options.toolFaults, faultTimeoutMs: 50 });
+  const tools = createToolsServer({ resvgWasm, faults: options.toolFaults, faultTimeoutMs: 50 });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await tools.server.connect(serverTransport);
   const toolClient = await createMcpToolClient(clientTransport);
