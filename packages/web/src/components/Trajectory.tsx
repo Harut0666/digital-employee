@@ -15,8 +15,10 @@ import {
   SafetyCertificateOutlined,
   ToolOutlined,
 } from "@ant-design/icons";
-import type { TaskState } from "@de/core/contract";
+import type { TrajectoryDetail, TaskState } from "@de/core/contract";
 import type { TraceItem, TrajectoryView } from "../view/trajectory";
+import { trajectoryDisplay, shouldAutoExpand, shouldStayOpenAfterRun, type TrajectoryDisplay } from "../pages/settings/preferences";
+import { onUserInput, useUiPreferences } from "./Preferences";
 import { StepIcon } from "./TaskPanel";
 
 const STEP_KIND = { compute: "计算", judge: "判断", qc: "质检" } as const;
@@ -40,33 +42,34 @@ function dotOf(state: TaskState | undefined): string {
   return "warning";
 }
 
-function ChildRow({ item }: { item: TraceItem }) {
-  const dur = fmtDur(item.meta?.durationMs);
-  const tokens = item.meta?.usage ? item.meta.usage.input + item.meta.usage.output : undefined;
+function ChildRow({ item, display }: { item: TraceItem; display: TrajectoryDisplay }) {
+  const dur = display.showMeta ? fmtDur(item.meta?.durationMs) : undefined;
+  const tokens = display.showMeta && item.meta?.usage ? item.meta.usage.input + item.meta.usage.output : undefined;
   const icon =
     item.kind === "model" ? <RobotOutlined /> : item.kind === "qc" ? <CloseCircleFilled style={{ color: "var(--danger)" }} /> : <ToolOutlined />;
   return (
     <div className={`trace-child ${item.status}`}>
       <span className="trace-child-icon">{icon}</span>
       <span className="trace-child-label">{item.label}</span>
-      {item.kind === "tool" && item.meta?.attempt !== undefined && item.meta.attempt > 1 && (
+      {display.showMeta && item.kind === "tool" && item.meta?.attempt !== undefined && item.meta.attempt > 1 && (
         <span className="trace-child-meta">第 {item.meta.attempt} 次尝试</span>
       )}
       {dur && <span className="trace-child-meta">{dur}</span>}
       {tokens !== undefined && <span className="trace-child-meta">{tokens} tokens</span>}
       {item.status === "failed" && item.error && <span className="trace-child-error">{item.error}</span>}
-      {item.detail && <span className="trace-child-detail">{item.detail}</span>}
+      {display.showDetail && item.detail && <span className="trace-child-detail">{item.detail}</span>}
     </div>
   );
 }
 
-function TraceRow({ item }: { item: TraceItem }) {
+function TraceRow({ item, detail }: { item: TraceItem; detail: TrajectoryDetail | undefined }) {
+  const display = trajectoryDisplay(detail);
   const [open, setOpen] = useState<boolean | undefined>();
   const children = item.children ?? [];
   const expandable = children.length > 0;
-  // 运行中的步骤自动展开；其余默认折叠，点击展开历史细节
-  const expanded = open ?? (item.kind === "step" && item.status === "running");
-  const dur = fmtDur(item.meta?.durationMs);
+  // 运行中的步骤自动展开跟随最新事件；其余按详细度决定默认展开
+  const expanded = open ?? (expandable && shouldAutoExpand(detail, item.status));
+  const dur = display.showMeta ? fmtDur(item.meta?.durationMs) : undefined;
   const icon =
     item.kind === "step" ? (
       <StepIcon status={item.status} />
@@ -105,12 +108,12 @@ function TraceRow({ item }: { item: TraceItem }) {
         )}
         {dur && <span className="trace-dur">{dur}</span>}
         {item.status === "failed" && item.error && <span className="trace-error">{item.error}</span>}
-        {item.detail && <span className="trace-detail">{item.detail}</span>}
+        {display.showDetail && item.detail && <span className="trace-detail">{item.detail}</span>}
       </div>
       {expandable && expanded && (
         <div className="trace-children">
           {children.map((child) => (
-            <ChildRow key={child.id} item={child} />
+            <ChildRow key={child.id} item={child} display={display} />
           ))}
         </div>
       )}
@@ -128,7 +131,21 @@ export function Trajectory({
   modelCalls: { used: number; limit: number };
 }) {
   const [userOpen, setUserOpen] = useState<boolean | undefined>();
-  const expanded = userOpen ?? view.active;
+  const [holdOpen, setHoldOpen] = useState(false);
+  const { ui } = useUiPreferences();
+  const wasActive = useRef(view.active);
+
+  // 折叠时机：完成即折叠（默认收起）；下次输入时折叠（先留着，等用户下一次输入再收）
+  useEffect(() => {
+    if (ui.collapseTiming === "completion") setHoldOpen(false);
+    else if (shouldStayOpenAfterRun(ui.collapseTiming, wasActive.current, view.active)) setHoldOpen(true);
+    wasActive.current = view.active;
+  }, [ui.collapseTiming, view.active]);
+
+  // 用户开始新的输入 → 收起上一轮（「下次输入时折叠」）
+  useEffect(() => onUserInput(() => setHoldOpen(false)), []);
+
+  const expanded = userOpen ?? (view.active || holdOpen);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // 运行中展开时跟随最新事件（像看日志 tail）
@@ -168,7 +185,7 @@ export function Trajectory({
             <div key={round.round} className="trace-round">
               {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
               {round.items.map((item) => (
-                <TraceRow key={item.id} item={item} />
+                <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} />
               ))}
             </div>
           ))}

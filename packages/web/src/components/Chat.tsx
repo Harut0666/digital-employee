@@ -8,13 +8,15 @@ import {
   RobotOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { EmployeeInfo } from "../api";
 import type { ChatCard, SessionView, StepDef } from "../view/session-view";
 import { deriveTrajectory } from "../view/trajectory";
 import { renderCard, type CardActions } from "./Cards";
 import { Trajectory } from "./Trajectory";
+import { notifyUserInput, useUiPreferences } from "./Preferences";
+import { enterAction } from "../pages/settings/preferences";
 
 const STATE_COLOR: Record<TaskState, string> = {
   draft: "default",
@@ -52,11 +54,40 @@ function Message({ card }: { card: Extract<ChatCard, { kind: "user" | "agent" }>
 }
 
 function ChatInput({ placeholder }: { placeholder: string }) {
+  const { ui } = useUiPreferences();
+  const [value, setValue] = useState("");
+
+  const send = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    // 通知轨迹：用户开始下一次输入（「下次输入时折叠」用它收起上一轮）
+    notifyUserInput();
+    setValue("");
+    message.info("前台 Agent 暂未接入：请使用右栏表单和卡片按钮推进任务");
+  };
+
   return (
     <div className="chat-foot">
       <Sender
+        value={value}
+        onChange={setValue}
         placeholder={placeholder}
-        onSubmit={() => message.info("前台 Agent 暂未接入：请使用右栏表单和卡片按钮推进任务")}
+        // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
+        submitType="enter"
+        onSubmit={(text) => send(text)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter") return;
+          const ctrl = event.ctrlKey || event.metaKey;
+          // Ctrl/Cmd+Enter 始终发送（两种模式一致）
+          if (ctrl) {
+            event.preventDefault();
+            send(value);
+            return false;
+          }
+          // 换行模式：拦住 Sender 的 Enter 提交，让 textarea 自己换行
+          if (enterAction(ui.enterBehavior, { shift: event.shiftKey }) === "newline") return false;
+          return undefined;
+        }}
       />
     </div>
   );
