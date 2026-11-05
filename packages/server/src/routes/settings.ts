@@ -47,7 +47,8 @@ import {
   type TaskEvent,
   type ToolName,
 } from "@de/core";
-import { apiError } from "../http";
+import { appendAuditEntry, redactAuditText, type AuditAction, type AuditResult } from "../audit";
+import { apiError, roleOf } from "../http";
 import { consoleLogger, setConsoleLogLevel } from "../log";
 import { copyEmployeeConfigs } from "../bootstrap";
 import type { ConnectionProbe, FileOpener, FolderOpener, RouteDeps } from "./deps";
@@ -213,6 +214,42 @@ export function createSettingsRoutes(deps: RouteDeps) {
   const workspaceDir = deps.workspaceDir;
   const env = () => deps.env ?? process.env;
   const now = deps.now ?? (() => new Date());
+
+  /**
+   * 写一条审计（Spec 0004「危险操作」、T23）：角色优先取请求头 x-role，
+   * 没带时用设置里的 defaultRole（设置页请求由前端带角色，命令行/测试可以省略）。
+   * 审计写失败只打 warn，绝不让业务操作因此失败。
+   */
+  function audit(
+    action: AuditAction,
+    target: string,
+    result: AuditResult,
+    headers?: Record<string, string | undefined>,
+    detail?: string,
+  ): void {
+    try {
+      const role = (headers ? roleOf(headers) : undefined) ?? readSettingsDocument(workspaceDir).permissions.defaultRole;
+      appendAuditEntry(workspaceDir, {
+        time: now(),
+        role,
+        action,
+        target,
+        result,
+        ...(detail ? { detail: redactAuditText(detail) } : {}),
+      });
+    } catch (error) {
+      consoleLogger.warn(`审计写入失败（${action}）：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** 请求体是否意图切到危险权限（用于成功/失败都留痕；详情由路由判断）。 */
+  function dangerousIntentOf(body: unknown): { sandbox: boolean; approval: boolean } {
+    const permissions = isRecord(body) && isRecord(body.permissions) ? body.permissions : undefined;
+    return {
+      sandbox: permissions?.sandboxMode === "danger-full-access",
+      approval: permissions?.approvalPolicy === "never",
+    };
+  }
 
   /** settings.json 里的连接（不应用环境变量覆盖：写回时不能把环境变量的 Key 落到文件里）。 */
   const fileSettings = (): ModelSettings => loadSettings(workspaceDir, {});
@@ -503,20 +540,29 @@ export function createSettingsRoutes(deps: RouteDeps) {
     })
     // ---- 设置文档 v2（T19）：GET/PATCH app、role、export/import、diagnostics、open-file
     .get("/app", () => appView())
-    .patch("/app", ({ body, set }) => {
+    .patch("/app", ({ body, set, headers }) => {
+      const intent = dangerousIntentOf(body);
       const parsed = parseAppSettingsPatch(body);
       if (!parsed.ok) {
+        if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "failure", headers, parsed.message);
+        if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "failure", headers, parsed.message);
         set.status = 400;
         return apiError("invalid_input", parsed.message);
       }
       const current = readSettingsDocument(workspaceDir);
       if (parsed.patch.revision !== current.revision) {
+        const message = conflictBody(current.revision).message;
+        if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "failure", headers, message);
+        if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "failure", headers, message);
         set.status = 409;
         return conflictBody(current.revision);
       }
       const written = updateSettingsDocument(workspaceDir, (doc) => applyAppSettingsPatch(doc, parsed.patch));
       // 日志级别即时生效（Spec 0004）：与 start.ts 共用同一个 consoleLogger；重启后按文件值生效
       setConsoleLogLevel(written.diagnostics.logLevel);
+      // 危险预设：成功也留痕（含“从不询问”，它只在显式确认后写入）
+      if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "success", headers, `sandboxMode=${written.permissions.sandboxMode}`);
+      if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "success", headers, `approvalPolicy=${written.permissions.approvalPolicy}`);
       const changed = (["ui", "execution", "diagnostics", "permissions"] as const).filter(
         (key) => parsed.patch[key] !== undefined,
       );
@@ -539,49 +585,71 @@ export function createSettingsRoutes(deps: RouteDeps) {
       });
       return { ok: true as const, revision: written.revision, permissions: written.permissions };
     })
-    .get("/export", ({ query, set }) => {
+    .get("/export", ({ query, set, headers }) => {
       const includeKeys = includeKeysOf(query);
       const filename = exportFilename(includeKeys, now());
-      const result: SettingsExportResult = {
-        ok: true,
-        redacted: !includeKeys,
-        filename,
-        document: settingsExport(readSettingsDocument(workspaceDir), { includeKeys }),
-        exportedAt: now().toISOString(),
-      };
-      set.headers["content-disposition"] = `attachment; filename="${filename}"`;
-      return result;
+      try {
+        const result: SettingsExportResult = {
+          ok: true,
+          redacted: !includeKeys,
+          filename,
+          document: settingsExport(readSettingsDocument(workspaceDir), { includeKeys }),
+          exportedAt: now().toISOString(),
+        };
+        set.headers["content-disposition"] = `attachment; filename="${filename}"`;
+        // 含密钥导出是危险操作：响应里带明文（用户已确认），但审计行永远不含 Key
+        if (includeKeys) audit("export-settings-with-keys", filename, "success", headers, "导出文件含明文 API Key（已二次确认）");
+        return result;
+      } catch (error) {
+        if (includeKeys) {
+          audit("export-settings-with-keys", filename, "failure", headers, error instanceof Error ? error.message : String(error));
+        }
+        throw error;
+      }
     })
-    .post("/import", async ({ body, set }) => {
+    .post("/import", async ({ body, set, headers }) => {
       const candidate = settingsDocumentOfImportBody(body);
       const validation = validateSettingsDocumentInput(candidate);
       if (!validation.ok) {
+        audit("import-settings", "settings.json", "failure", headers, validation.message);
         set.status = 400;
         return apiError("invalid_input", validation.message);
       }
-      const current = readSettingsDocument(workspaceDir);
-      const backupPath = backupSettingsFile();
-      const imported = normalizeSettingsDocument(candidate as Record<string, unknown>);
-      // 导入的文档可能带着其它机器的 revision：以本机当前值 +1 继续，避免客户端旧 revision 误判
-      imported.revision = current.revision;
-      const written = writeSettingsDocument(workspaceDir, imported);
-      setConsoleLogLevel(written.diagnostics.logLevel);
-      const warning = await notifySettingsSaved();
-      // 导入的 demo 段也可能变了：同步运行时开关与工具子进程
-      if (deps.faults) {
-        deps.faults.corruptTraceability = written.demo.corruptTraceability;
-        deps.faults.crashOnNextStep = written.demo.crashOnNextStep;
+      try {
+        const current = readSettingsDocument(workspaceDir);
+        const backupPath = backupSettingsFile();
+        const imported = normalizeSettingsDocument(candidate as Record<string, unknown>);
+        // 导入的文档可能带着其它机器的 revision：以本机当前值 +1 继续，避免客户端旧 revision 误判
+        imported.revision = current.revision;
+        const written = writeSettingsDocument(workspaceDir, imported);
+        setConsoleLogLevel(written.diagnostics.logLevel);
+        const warning = await notifySettingsSaved();
+        // 导入的 demo 段也可能变了：同步运行时开关与工具子进程
+        if (deps.faults) {
+          deps.faults.corruptTraceability = written.demo.corruptTraceability;
+          deps.faults.crashOnNextStep = written.demo.crashOnNextStep;
+        }
+        const toolError = await applyToolFaults(written.demo.toolFaults);
+        const result: SettingsImportResult = {
+          ok: true,
+          revision: written.revision,
+          backupPath,
+          migrated: validation.migrated,
+          ...(warning ? { warning } : {}),
+          ...(toolError ? { toolError } : {}),
+        };
+        audit(
+          "import-settings",
+          "settings.json",
+          "success",
+          headers,
+          `revision=${written.revision}${backupPath ? `，旧文件已备份` : ""}`,
+        );
+        return result;
+      } catch (error) {
+        audit("import-settings", "settings.json", "failure", headers, error instanceof Error ? error.message : String(error));
+        throw error;
       }
-      const toolError = await applyToolFaults(written.demo.toolFaults);
-      const result: SettingsImportResult = {
-        ok: true,
-        revision: written.revision,
-        backupPath,
-        migrated: validation.migrated,
-        ...(warning ? { warning } : {}),
-        ...(toolError ? { toolError } : {}),
-      };
-      return result;
     })
     .get("/diagnostics", async () => diagnosticsInfo())
     .post("/diagnostics/export", async () => {
@@ -617,7 +685,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
       return { ok: true as const, path };
     })
     .get("/demo", () => ({ ok: true as const, ...demoView() }))
-    .put("/demo", async ({ body, set }) => {
+    .put("/demo", async ({ body, set, headers }) => {
       const fields = isRecord(body) ? body : {};
       const patch: Partial<DemoSettings> = {};
 
@@ -643,6 +711,10 @@ export function createSettingsRoutes(deps: RouteDeps) {
         deps.faults.corruptTraceability = demo.corruptTraceability;
         deps.faults.crashOnNextStep = demo.crashOnNextStep;
       }
+      // 模拟崩溃是会真的退出进程的危险操作：布防时留痕（解除不需要）
+      if (patch.crashOnNextStep === true) {
+        audit("simulate-crash", "demo.crashOnNextStep", "success", headers, "下一次步骤开始后进程退出（一次性）");
+      }
       const toolError = await applyToolFaults(demo.toolFaults);
       return { ok: true as const, demo, tools: demoView().tools, ...(toolError ? { toolError } : {}) };
     })
@@ -662,25 +734,33 @@ export function createSettingsRoutes(deps: RouteDeps) {
       }
       return { ok: true as const, path: workspaceDir };
     })
-    .post("/workspace/reset-employees", async () => {
+    .post("/workspace/reset-employees", async ({ headers }) => {
       const destination = resolve(deps.employeesDir);
       const source = resolve(deps.defaultEmployeesDir ?? deps.employeesDir);
       if (!existsSync(source) || !statSync(source).isDirectory()) {
-        return internalError(`默认员工配置目录不存在：${source}`);
+        const message = `默认员工配置目录不存在：${source}`;
+        audit("reset-employees", destination, "failure", headers, message);
+        return internalError(message);
       }
-      const stamp = now().toISOString().replace(/[-:T]/g, "").slice(0, 14) || `${Date.now()}`;
-      let backupPath: string | undefined;
-      if (existsSync(destination)) {
-        const versions = join(workspaceDir, "config-versions", "employees");
-        mkdirSync(versions, { recursive: true });
-        backupPath = uniqueDir(versions, stamp);
-        cpSync(destination, backupPath, { recursive: true });
+      try {
+        const stamp = now().toISOString().replace(/[-:T]/g, "").slice(0, 14) || `${Date.now()}`;
+        let backupPath: string | undefined;
+        if (existsSync(destination)) {
+          const versions = join(workspaceDir, "config-versions", "employees");
+          mkdirSync(versions, { recursive: true });
+          backupPath = uniqueDir(versions, stamp);
+          cpSync(destination, backupPath, { recursive: true });
+        }
+        // 只有两个目录不同才覆盖；开发时员工目录可能就是仓库里的默认目录，此时只备份
+        if (destination !== source) {
+          rmSync(destination, { recursive: true, force: true });
+          copyEmployeeConfigs(source, destination);
+        }
+        audit("reset-employees", destination, "success", headers, backupPath ? "旧配置已备份到 config-versions/employees/" : "没有旧配置，直接创建默认配置");
+        return { ok: true as const, backupPath: backupPath ?? null, employees: employeeDirsOf(destination) };
+      } catch (error) {
+        audit("reset-employees", destination, "failure", headers, error instanceof Error ? error.message : String(error));
+        throw error;
       }
-      // 只有两个目录不同才覆盖；开发时员工目录可能就是仓库里的默认目录，此时只备份
-      if (destination !== source) {
-        rmSync(destination, { recursive: true, force: true });
-        copyEmployeeConfigs(source, destination);
-      }
-      return { ok: true as const, backupPath: backupPath ?? null, employees: employeeDirsOf(destination) };
     });
 }
