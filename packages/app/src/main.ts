@@ -4,27 +4,32 @@
 //   init        → 只准备工作区（冒烟脚本用）
 //   mcp-server  → 工具服务器（服务端把自身 + 这个子命令当工具子进程）
 //   其余子命令  → 转交 @de/cli（run-case / run-cases / check / fixtures / replay）
+import { resolveWorkspace } from "@de/core";
 import { runCli } from "@de/cli";
 import { runStdioServer } from "@de/tools";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import { runApp } from "./dispatch";
 import { EMBEDDED_BUNDLES } from "./embedded";
 import { serveApp } from "./serve";
 import { prepareWorkspace } from "./workspace";
-import { resolveWorkspace } from "@de/core";
 
 const argv = process.argv.slice(2);
 
 const code = await runApp(argv, {
   serve: async () => {
-    await serveApp();
+    await serveApp({ source: { kind: "archive", bundles: EMBEDDED_BUNDLES } });
     // 服务端会一直运行，直到收到 SIGINT/SIGTERM（startServer 里注册的收尾）
     await new Promise<never>(() => {});
   },
   mcpServer: async () => {
-    await runStdioServer();
+    // exe 里 wasm 由 Bun 的 `with { type: "file" }` 嵌入，这里拿到的是可读路径
+    await runStdioServer({ resvgWasm });
   },
   initWorkspace: async () => {
-    const prepared = await prepareWorkspace({ workspaceDir: resolveWorkspace(), bundles: EMBEDDED_BUNDLES });
+    const prepared = await prepareWorkspace({
+      workspaceDir: resolveWorkspace(),
+      source: { kind: "archive", bundles: EMBEDDED_BUNDLES },
+    });
     return prepared.workspaceDir;
   },
   cli: (args) => runCli(args),
