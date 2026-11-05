@@ -23,7 +23,7 @@ const labelStyle: React.CSSProperties = { width: 96, flex: "none", color: "var(-
 const cardStyle: React.CSSProperties = {
   border: "1px solid var(--line)",
   borderRadius: 12,
-  background: "#fff",
+  background: "var(--card)",
   marginBottom: 12,
   overflow: "hidden",
 };

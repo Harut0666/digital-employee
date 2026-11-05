@@ -34,7 +34,7 @@ function effectOf(tool: string, mode: FaultMode | undefined): string {
   }
 }
 
-const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "#fff", padding: "16px 20px", marginBottom: 16 };
+const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "var(--card)", padding: "16px 20px", marginBottom: 16 };
 const toolRow: React.CSSProperties = { display: "flex", alignItems: "flex-start", gap: 16, padding: "12px 0", borderTop: "1px solid var(--line)" };
 const switchRow: React.CSSProperties = { display: "flex", alignItems: "flex-start", gap: 16, padding: "12px 0", borderTop: "1px solid var(--line)" };
 

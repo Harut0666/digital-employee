@@ -6,11 +6,11 @@ import type { ResetEmployeesResult, SettingsApi, WorkspaceView } from "../../api
 
 const { Text } = Typography;
 
-const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "#fff", padding: "16px 20px", marginBottom: 16 };
+const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "var(--card)", padding: "16px 20px", marginBottom: 16 };
 const pathStyle: React.CSSProperties = {
   fontFamily: "Consolas, monospace",
   fontSize: 12,
-  background: "#f5f7f9",
+  background: "var(--hover)",
   borderRadius: 6,
   padding: "6px 10px",
   marginTop: 6,

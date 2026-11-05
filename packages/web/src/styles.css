@@ -11,6 +11,78 @@
   --line: #e6eaee;
   --text: #1d2733;
   --muted: #7b8794;
+  /* T21 外观：字号由设置页写入 --font-size；其余为深色需要的补充变量 */
+  --font-size: 14px;
+  --text-2: #3d4955;
+  --hover: #f3f6f8;
+  --card-2: #fafbfc;
+  --bubble: #f1f4f6;
+  --bubble-me: #dff2ec;
+  --avatar-bg: #d6efe7;
+  --avatar-bg-2: #e3ebff;
+  --chip-bg: #ffffff;
+  --chip-border: #bfe3d8;
+  --chip-text: #237a64;
+  --danger-border: #f2c4c6;
+  --warn-border: #f6d5b5;
+  --muted-border: #c3cbd3;
+  --dot-default: #b8c0c9;
+  --trace-bg: #fbfcfd;
+  --doc-frame: #eef1f4;
+  --ph-line: #e9edf1;
+  --bar: #3aa58a;
+  --shadow: rgba(0, 0, 0, 0.06);
+  --focus-shadow: rgba(31, 138, 112, 0.12);
+}
+
+/*
+ * 深色：主题解析后由 App 写到 <html data-theme="dark">。
+ * antd 组件交给 darkAlgorithm，这里补齐自定义 CSS 变量的深色取值，
+ * 保证新对话、会话 + 轨迹、任务面板、员工配置、设置页都没有刺眼白块。
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #37a98c;
+  --primary-soft: #123a31;
+  --danger: #ff7875;
+  --danger-soft: #3a1f22;
+  --warn: #f0a35e;
+  --warn-soft: #3a2a17;
+  --info: #6ea0ff;
+  --bg: #10151b;
+  --card: #171d25;
+  --line: #2a333d;
+  --text: #e6edf3;
+  --muted: #9aa7b4;
+  --text-2: #b6c0cb;
+  --hover: #1e2630;
+  --card-2: #1a212a;
+  --bubble: #232c36;
+  --bubble-me: #123a31;
+  --avatar-bg: #123a31;
+  --avatar-bg-2: #1c2a45;
+  --chip-bg: #1a212a;
+  --chip-border: #2f5c4f;
+  --chip-text: #6fd0b4;
+  --danger-border: #5a2a2d;
+  --warn-border: #5c4326;
+  --muted-border: #3d4955;
+  --dot-default: #5b6673;
+  --trace-bg: #131922;
+  --doc-frame: #0c1116;
+  --ph-line: #2a333d;
+  --bar: #37a98c;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --focus-shadow: rgba(55, 169, 140, 0.22);
+}
+
+/* 深色兜底：少数页面（不在 T21 改动范围）仍用内联浅色底，
+   按 React 序列化后的内联值统一改写，避免深色模式下出现刺眼白块。 */
+:root[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
+:root[data-theme="dark"] [style*="background: rgb(247, 248, 250)"],
+:root[data-theme="dark"] [style*="background: rgb(245, 247, 249)"],
+:root[data-theme="dark"] [style*="background: rgb(238, 241, 244)"] {
+  background: var(--card) !important;
 }
 
 * {
@@ -25,6 +97,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
+  font-size: var(--font-size);
   font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -75,14 +148,14 @@ body {
 .side-title {
   padding: 8px 10px 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .emp-card {
   margin: 6px 4px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--card);
   cursor: pointer;
 }
 .emp-card.active {
@@ -101,12 +174,12 @@ body {
   display: grid;
   place-items: center;
   font-size: 22px;
-  background: #d6efe7;
+  background: var(--avatar-bg);
   color: var(--primary);
   flex: none;
 }
 .emp-avatar.b {
-  background: #e3ebff;
+  background: var(--avatar-bg-2);
   color: var(--info);
 }
 .emp-name {
@@ -114,7 +187,7 @@ body {
 }
 .emp-desc {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .sessions {
   flex: 1;
@@ -148,7 +221,7 @@ body {
   background: var(--primary);
 }
 .dot.default {
-  background: #b8c0c9;
+  background: var(--dot-default);
 }
 .session-item {
   display: flex;
@@ -157,10 +230,10 @@ body {
   padding: 7px 10px;
   border-radius: 8px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-size);
 }
 .session-item:hover {
-  background: #f3f6f8;
+  background: var(--hover);
 }
 .session-item.active {
   background: var(--primary-soft);
@@ -173,7 +246,7 @@ body {
 }
 .session-item .time {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .side-foot {
   border-top: 1px solid var(--line);
@@ -186,11 +259,11 @@ body {
   padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
-  color: #3d4955;
+  color: var(--text-2);
 }
 .side-link:hover,
 .side-link.active {
-  background: #f3f6f8;
+  background: var(--hover);
 }
 
 /* ---------- 中栏 ---------- */
@@ -210,7 +283,7 @@ body {
 }
 .chat-sub {
   color: var(--muted);
-  font-size: 13px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .chat-body {
   flex: 1;
@@ -253,7 +326,7 @@ body {
 .bubble {
   padding: 10px 16px;
   border-radius: 14px;
-  background: #f1f4f6;
+  background: var(--bubble);
   width: fit-content;
   white-space: pre-wrap;
 }
@@ -261,11 +334,11 @@ body {
   margin-left: auto;
 }
 .msg-row.me .bubble {
-  background: #dff2ec;
+  background: var(--bubble-me);
 }
 .msg-time {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   margin-top: 4px;
 }
 .msg-row.me .msg-time {
@@ -276,34 +349,34 @@ body {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 16px;
-  background: #fff;
+  background: var(--card);
 }
 .card.ok {
   background: var(--primary-soft);
-  border-color: #bfe3d8;
+  border-color: var(--chip-border);
 }
 .card.danger {
   background: var(--danger-soft);
-  border-color: #f2c4c6;
+  border-color: var(--danger-border);
 }
 .card.warn {
   background: var(--warn-soft);
-  border-color: #f6d5b5;
+  border-color: var(--warn-border);
 }
 .card.muted {
-  background: #fafbfc;
+  background: var(--card-2);
   color: var(--muted);
 }
 .card-title {
   font-weight: 700;
-  font-size: 16px;
+  font-size: calc(var(--font-size) + 2px);
   display: flex;
   align-items: center;
   gap: 8px;
 }
 .card-body {
   margin-top: 6px;
-  color: #3d4955;
+  color: var(--text-2);
 }
 .card-actions {
   display: flex;
@@ -328,13 +401,13 @@ body {
 }
 .step-row .err {
   color: var(--danger);
-  font-size: 13px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .step-pending {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 1.5px solid #c3cbd3;
+  border: 1.5px solid var(--muted-border);
   border-radius: 50%;
 }
 .chips {
@@ -344,15 +417,15 @@ body {
   margin-top: 10px;
 }
 .chip {
-  background: #fff;
-  border: 1px solid #bfe3d8;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
   border-radius: 8px;
   padding: 3px 10px;
-  font-size: 13px;
-  color: #237a64;
+  font-size: calc(var(--font-size) - 1px);
+  color: var(--chip-text);
 }
 .chip.bad {
-  border-color: #f2c4c6;
+  border-color: var(--danger-border);
   color: var(--danger);
 }
 .section-grid {
@@ -397,11 +470,11 @@ body {
   border-radius: 14px;
   padding: 16px;
   cursor: pointer;
-  background: #fff;
+  background: var(--card);
 }
 .prompt-card:hover {
   border-color: var(--primary);
-  box-shadow: 0 2px 10px rgba(31, 138, 112, 0.12);
+  box-shadow: 0 2px 10px var(--focus-shadow);
 }
 .prompt-icon {
   width: 40px;
@@ -426,7 +499,7 @@ body {
   border: none;
 }
 .panel-card {
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 14px;
@@ -437,7 +510,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: calc(var(--font-size) + 1px);
 }
 .stat {
   font-size: 26px;
@@ -458,7 +531,7 @@ body {
 .check-row .state {
   margin-left: auto;
   color: var(--muted);
-  font-size: 13px;
+  font-size: calc(var(--font-size) - 1px);
 }
 .check-row.missing {
   color: var(--danger);
@@ -474,11 +547,11 @@ body {
 
 /* ---------- 报告预览（占位） ---------- */
 .doc-page {
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 22px 24px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 1px 6px var(--shadow);
 }
 .doc-page h3 {
   text-align: center;
@@ -490,14 +563,14 @@ body {
 }
 .ph-line {
   height: 9px;
-  background: #e9edf1;
+  background: var(--ph-line);
   border-radius: 4px;
   margin: 7px 0;
 }
 .doc-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
 }
 .doc-table th,
 .doc-table td {
@@ -522,12 +595,12 @@ body {
 }
 .bars span {
   flex: 1;
-  background: #3aa58a;
+  background: var(--bar);
   border-radius: 3px 3px 0 0;
 }
 .docx-host {
   overflow: auto;
-  background: #eef1f4;
+  background: var(--doc-frame);
   border-radius: 8px;
   max-height: 560px;
 }
@@ -554,7 +627,7 @@ body {
   height: auto;
   align-items: flex-start;
   text-align: left;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--line);
   padding: 16px;
 }
@@ -583,7 +656,7 @@ body {
 .trace {
   flex: none;
   border-bottom: 1px solid var(--line);
-  background: #fbfcfd;
+  background: var(--trace-bg);
   min-width: 0;
 }
 .trace-head {
@@ -593,12 +666,12 @@ body {
   padding: 9px 20px;
   cursor: pointer;
   user-select: none;
-  font-size: 13px;
-  color: #3d4955;
+  font-size: calc(var(--font-size) - 1px);
+  color: var(--text-2);
   min-width: 0;
 }
 .trace-head:hover {
-  background: #f3f6f8;
+  background: var(--hover);
 }
 .trace-title {
   display: inline-flex;
@@ -610,7 +683,7 @@ body {
 }
 .trace-summary {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -632,7 +705,7 @@ body {
 }
 .trace-empty {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   padding: 6px 0;
 }
 .trace-round + .trace-round {
@@ -642,7 +715,7 @@ body {
 }
 .trace-round-label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   margin: 2px 0 4px;
 }
 .trace-row {
@@ -650,7 +723,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: calc(var(--font-size) - 1px);
   min-width: 0;
 }
 .trace-row.expandable {
@@ -668,7 +741,7 @@ body {
 .trace-caret {
   width: 12px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 3px);
   flex: none;
   display: inline-flex;
   justify-content: center;
@@ -679,26 +752,26 @@ body {
 }
 .trace-tag {
   margin: 0;
-  font-size: 11px;
+  font-size: calc(var(--font-size) - 3px);
   line-height: 18px;
   padding-block: 0;
 }
 .trace-dur {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   margin-left: auto;
   flex: none;
 }
 .trace-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .trace-detail {
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(var(--font-size) - 2px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -714,8 +787,8 @@ body {
   align-items: center;
   gap: 8px;
   padding: 2px 0;
-  font-size: 12px;
-  color: #4b5763;
+  font-size: calc(var(--font-size) - 2px);
+  color: var(--text-2);
   min-width: 0;
 }
 .trace-child-icon {
