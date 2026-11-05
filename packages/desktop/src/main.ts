@@ -165,7 +165,8 @@ function runDesktop(context: DesktopContext): void {
     if (size.changed) window.setSize(size.width, size.height);
   });
 
-  // 外部链接交给系统浏览器，窗口不变成浏览器；本机地址之外的导航一律拦下
+  // 外部链接交给系统浏览器，窗口不变成浏览器：
+  // 本机地址之外的 http(s) 导航拦下并 openExternal；非 http(s)（about:、file: 等）不拦，按原地址加载。
   window.webview.on("will-navigate", (event: unknown) => {
     const url = navigationUrlFromEvent(event);
     if (!url) return;

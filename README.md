@@ -38,7 +38,7 @@ digital-employee/
 ├── samples/
 │   ├── scenario-a/      样例数据（销售明细、周会纪要、格式要求）
 │   └── cases/           A-01…A-05 命令行用例及其剧本式假模型输出
-├── scripts/       构建与冒烟：gen-embedded.ts、build-exe.ts、smoke-exe.ps1、build-desktop.ts、smoke-desktop.ps1
+├── scripts/       构建与冒烟：gen-embedded.ts、build-exe.ts、smoke-exe.ps1、build-desktop.ts、dev-desktop.ts、smoke-desktop.ps1
 ├── docs/          设计文档、术语表、ADR、ticket、界面稿
 └── README.md
 ```
@@ -97,7 +97,7 @@ bun run build:desktop
 powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 ```
 
-`bun run dev:desktop` 用 Hutch 的 dev 模式起窗口并在改主进程后自动重建。
+`bun run dev:desktop` 先补齐不入库的前端产物与 resvg wasm，再用 Hutch 的 dev 模式起窗口，改主进程后自动重建；干净检出可直接运行（仍需要 Hutch）。
 
 **实测**（Windows 11 x64，2026-11-05）：安装包 **51.1MB**、便携包 62.3MB、安装后 **142.5MB**（exe 为 105.8MB）；冷启动到 `/api/employees` 可用 **0.61–1.08 秒**（多点测量）；剧本模式 A-01 在桌面版后端跑到 delivered 约 **3.3 秒**。详见[桌面版结果文档](docs/results/electrobun-desktop.md)。
 
@@ -174,12 +174,12 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1
 | 命令 | 说明 |
 |---|---|
 | `bun test` | 全仓库测试（含端到端；剧本式模型，不联网、不需要 Key） |
-| `bun run typecheck` | 6 个包分别 `tsc --noEmit` |
+| `bun run typecheck` | 7 个包分别 `tsc --noEmit`（含 `@de/desktop`） |
 | `bun run build:exe` | 构建单文件 exe：`dist/digital-employee.exe` |
 | `bun run build:desktop` | 构建桌面版：`dist/desktop/` 下的安装包、便携 zip 与绿色目录（需要 Hutch） |
-| `bun run dev:desktop` | 用 Hutch dev 模式起桌面窗口，改主进程后自动重建 |
+| `bun run dev:desktop` | 先准备前端产物与 resvg wasm，再用 Hutch dev 模式起桌面窗口，改主进程后自动重建（需要 Hutch） |
 | `powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1` | exe 冒烟：临时工作区跑 A-01 + 起服务端校验接口与界面 |
-| `powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1` | 桌面版冒烟：临时工作区启动应用，校验接口/首页，HTTP 跑 A-01 到 delivered 并断言 docx |
+| `powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1` | 桌面版冒烟：临时工作区启动应用，校验接口/首页，HTTP 跑 A-01 到 delivered 并断言 docx，最后优雅关窗断言端口与子进程释放 |
 | `bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/`（`result.json`、`snapshot.json`、`events.jsonl`） |
 | `bun packages/cli/src/main.ts replay <workspace> <taskId>` | 按时间回放某任务的事件 |
 | `bun packages/cli/src/main.ts mcp-server` | 以 stdio 运行工具服务器 |
