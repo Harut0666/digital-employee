@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import {
   createMcpToolClient,
   createModelProvider,
@@ -228,7 +229,7 @@ export async function runCasesCommand(args: RunCasesArgs): Promise<number> {
   const employeesDir = resolveEmployeesDir();
 
   // 一次批量共用一个进程内工具服务器
-  const tools = createToolsServer();
+  const tools = createToolsServer({ resvgWasm });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await tools.server.connect(serverTransport);
   const toolClient = await createMcpToolClient(clientTransport);

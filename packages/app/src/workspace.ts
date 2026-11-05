@@ -1,18 +1,11 @@
-// 首次启动 / 换新 exe 时的准备工作区：释放嵌入的员工配置与样例、解出前端构建产物、写默认 settings.json。
-// 嵌入资源以“归档文件”的形式跟着 exe（见 archive.ts）；这里只认归档路径，方便单测传入临时归档。
-import { existsSync } from "node:fs";
+// 首次启动 / 换新版本时的准备工作区：释放员工配置与样例、解出前端构建产物、写默认 settings.json。
+// 资源来源由 resources.ts 抽象成“归档”（exe）与“目录”（桌面）两种，这里只做释放语义。
 import { join } from "node:path";
 import { releaseFiles, writeDefaultSettings, type ReleaseOutcome } from "@de/server/bootstrap";
-import { decodeArchive, type ArchiveEntry } from "./archive";
+import type { ArchiveEntry } from "./archive";
+import { loadResourceFiles, type AppResourceSource, type EmbeddedBundlePaths } from "./resources";
 
-export interface EmbeddedBundlePaths {
-  /** packages/web/dist 的归档，构建期生成 */
-  web: string;
-  /** employees/ 的归档 */
-  employees: string;
-  /** samples/scenario-a 与 samples/cases 的归档（不含体积大的 samples/fixtures） */
-  samples: string;
-}
+export type { AppResourceSource, EmbeddedBundlePaths } from "./resources";
 
 export interface PreparedWorkspace {
   workspaceDir: string;
@@ -34,33 +27,34 @@ export const DEFAULT_SETTINGS_TEMPLATE: Record<string, unknown> = {
   demo: { toolFaults: {}, corruptTraceability: false, crashOnNextStep: false },
 };
 
-/** 运行时资源（前端构建产物）放在工作区里，换 exe 版本时整体覆盖。 */
+/** 运行时资源（前端构建产物）放在工作区里，换版本时整体覆盖。 */
 const RUNTIME_DIR = ".runtime";
-
-async function readBundle(path: string, label: string): Promise<ArchiveEntry[]> {
-  if (!existsSync(path)) throw new Error(`嵌入资源缺失（${label}）：${path}；请用 bun run build:exe 重新构建`);
-  return decodeArchive(new Uint8Array(await Bun.file(path).arrayBuffer()));
-}
 
 const toFiles = (prefix: string, entries: ArchiveEntry[]) =>
   entries.map((e) => ({ path: prefix === "" ? e.key : `${prefix}/${e.key}`, data: e.data }));
 
-export async function prepareWorkspace(options: { workspaceDir: string; bundles: EmbeddedBundlePaths }): Promise<PreparedWorkspace> {
-  const { workspaceDir, bundles } = options;
-  const [web, employees, samples] = await Promise.all([
-    readBundle(bundles.web, "前端构建产物"),
-    readBundle(bundles.employees, "员工配置"),
-    readBundle(bundles.samples, "公开样例"),
-  ]);
+export interface PrepareWorkspaceOptions {
+  workspaceDir: string;
+  /** 资源来源（归档 / 目录） */
+  source?: AppResourceSource;
+  /** 兼容旧调用：等价于 { kind: "archive", bundles } */
+  bundles?: EmbeddedBundlePaths;
+}
+
+export async function prepareWorkspace(options: PrepareWorkspaceOptions): Promise<PreparedWorkspace> {
+  const { workspaceDir, bundles, source } = options;
+  const resolved = source ?? (bundles ? { kind: "archive" as const, bundles } : undefined);
+  if (!resolved) throw new Error("prepareWorkspace：需要资源来源（source 或 bundles）");
+  const files = await loadResourceFiles(resolved);
 
   // 员工配置与样例：已有文件不覆盖（用户改过的配置要保留）
-  const releasedEmployees = releaseFiles(toFiles("employees", employees), workspaceDir);
-  const releasedSamples = releaseFiles(toFiles("samples", samples), workspaceDir);
-  // 前端构建产物与“默认员工配置”是内部资源：必须跟着 exe 版本走
+  const releasedEmployees = releaseFiles(toFiles("employees", files.employees), workspaceDir);
+  const releasedSamples = releaseFiles(toFiles("samples", files.samples), workspaceDir);
+  // 前端构建产物与“默认员工配置”是内部资源：必须跟着版本走
   const webDistDir = join(workspaceDir, RUNTIME_DIR, "web");
-  const releasedWeb = releaseFiles(toFiles("", web), webDistDir, { overwrite: true });
+  const releasedWeb = releaseFiles(toFiles("", files.web), webDistDir, { overwrite: true });
   const defaultEmployeesDir = join(workspaceDir, RUNTIME_DIR, "default-employees");
-  const releasedDefaults = releaseFiles(toFiles("", employees), defaultEmployeesDir, { overwrite: true });
+  const releasedDefaults = releaseFiles(toFiles("", files.employees), defaultEmployeesDir, { overwrite: true });
 
   const settings = writeDefaultSettings(workspaceDir, DEFAULT_SETTINGS_TEMPLATE);
   return {

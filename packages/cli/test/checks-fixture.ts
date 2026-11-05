@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import resvgWasm from "@resvg/resvg-wasm/index_bg.wasm" with { type: "file" };
 import { createMcpToolClient } from "@de/core";
 import type { RenderedReport, WeeklyFacts } from "@de/core/contract";
 import { createToolsServer } from "@de/tools";
@@ -121,7 +122,7 @@ export async function makeRunDir(
   const taskId = "20261029-120000-test01";
   const taskDir = join(dir, "workspace", "tasks", taskId);
 
-  const tools = createToolsServer();
+  const tools = createToolsServer({ resvgWasm });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await tools.server.connect(serverTransport);
   const toolClient = await createMcpToolClient(clientTransport);

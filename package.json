@@ -10,6 +10,8 @@
     "dev:web": "bun run --filter @de/web dev",
     "gen:assets": "bun scripts/gen-embedded.ts",
     "build:exe": "bun scripts/build-exe.ts",
+    "build:desktop": "bun scripts/build-desktop.ts",
+    "dev:desktop": "hutch electrobun dev --env=stable --watch",
     "smoke:exe": "powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1"
   },
   "devDependencies": {

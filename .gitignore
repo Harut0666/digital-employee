@@ -11,3 +11,8 @@ out/
 .scratch/
 .playwright-cli/
 .worktrees/
+# 桌面构建（Hutch / Electrobun）：状态目录、构建目录、产物与构建期拷贝的 wasm 都不入库
+.hutch/
+build/
+artifacts/
+packages/desktop/assets/resvg.wasm

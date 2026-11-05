@@ -1,5 +1,5 @@
-// 服务端启动的主流程（开发入口和打包后的 exe 共用）：
-// 工作区 → 演示开关 → 工具子进程 → 模型 → 引擎 → 选端口 → 监听 → 打印地址。
+// 服务端启动的主流程（开发入口和打包后的 exe / 桌面版共用）：
+// 工作区 → 演示开关 → 工具客户端 → 模型 → 引擎 → 选端口 → 监听 → 打印地址。
 // 只负责“跑起来”；路径准备（源码目录 / 嵌入资源释放）由调用方完成。
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -33,12 +33,16 @@ export interface StartServerOptions {
   defaultEmployeesDir?: string;
   /** 前端构建产物目录；不传则不托管静态资源 */
   webDistDir?: string;
-  /** 工具服务器子进程命令（开发：bun + stdio.ts；exe：自身 + mcp-server） */
-  toolServer: { command: string; args: string[] };
+  /** 工具服务器子进程命令（开发：bun + stdio.ts；exe：自身 + mcp-server）；与 toolClient 二选一 */
+  toolServer?: { command: string; args: string[] };
+  /** 已建好的工具客户端（桌面 MCP InMemoryTransport）；传入时不起子进程，close() 也不负责关它 */
+  toolClient?: ToolClient;
   /** 首选端口，缺省 8787 */
   port?: number;
   /** 首选端口被占用时往后试几个端口，缺省 1（不换端口，直接失败） */
   portAttempts?: number;
+  /** 监听地址；缺省由 Bun 决定（与现状一致）。桌面传 127.0.0.1 只监听回环 */
+  hostname?: string;
   /** 剧本式假模型文件（DE_SCRIPTED）；不传则按 settings.json 连真实模型 */
   scriptFile?: string;
   /** 模拟崩溃要真的退出进程（生产/exe 为 true） */
@@ -56,7 +60,7 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-/** 启动服务端并开始监听；返回后可继续做别的事（例如打开浏览器）。 */
+/** 启动服务端并开始监听；返回后可继续做别的事（例如打开浏览器、建窗口）。 */
 export async function startServer(options: StartServerOptions): Promise<RunningServer> {
   const workspaceDir = options.workspaceDir ?? resolveWorkspace();
   mkdirSync(join(workspaceDir, "tasks"), { recursive: true });
@@ -87,10 +91,17 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
       ? createScriptedModelProvider(JSON.parse(readFileSync(scriptFile, "utf8")) as ModelScript)
       : createModelProvider(settings ?? loadSettings(workspaceDir));
 
-  const toolClient = await createMcpToolClient(
-    new StdioClientTransport({ command: options.toolServer.command, args: options.toolServer.args, stderr: "inherit" }),
-  );
-  logger.debug(`工具子进程：${options.toolServer.command} ${options.toolServer.args.join(" ")}`);
+  // 工具客户端：桌面版在同一个进程里用 InMemoryTransport 注入；exe / 开发模式起子进程。
+  let toolClient: ToolClient;
+  const ownsToolClient = options.toolClient === undefined;
+  if (options.toolClient) toolClient = options.toolClient;
+  else {
+    if (!options.toolServer) throw new Error("startServer：必须提供 toolServer 或 toolClient");
+    toolClient = await createMcpToolClient(
+      new StdioClientTransport({ command: options.toolServer.command, args: options.toolServer.args, stderr: "inherit" }),
+    );
+    logger.debug(`工具子进程：${options.toolServer.command} ${options.toolServer.args.join(" ")}`);
+  }
 
   // 启动时恢复上次演示留下的工具故障（设置页把开关持久化在 settings.json）
   try {
@@ -130,18 +141,37 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     },
   });
   // SSE 是长连接，Bun 默认 10 秒空闲就会断开
-  app.listen({ port, idleTimeout: 120 });
+  const listening = app.listen({
+    port,
+    ...(options.hostname ? { hostname: options.hostname } : {}),
+    idleTimeout: 120,
+  });
+  // 端口 0 时由系统分配，url 要用实际监听的端口
+  const actualPort = listening.server?.port ?? port;
+  const urlHost = options.hostname && options.hostname !== "0.0.0.0" ? options.hostname : "localhost";
+  const url = `http://${urlHost}:${actualPort}`;
 
-  const url = `http://localhost:${port}`;
   logger.info(
     `digital-employee 服务已启动：${url}（工作区 ${workspaceDir}${scriptFile ? `，剧本式模型 ${scriptFile}` : ""}）`,
   );
   logger.debug(
-    `监听端口 ${port}（首选 ${options.port ?? 8787}，最多尝试 ${options.portAttempts ?? 1} 个）；员工目录 ${options.employeesDir}`,
+    `监听端口 ${actualPort}（首选 ${options.port ?? 8787}，最多尝试 ${options.portAttempts ?? 1} 个）；员工目录 ${options.employeesDir}`,
   );
 
-  const close = async () => {
-    await toolClient.close();
+  // 关窗 / 退出时先停 HTTP（释放端口），再关自己起的工具子进程；注入的客户端由调用方负责。
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= (async () => {
+      try {
+        // SSE 是长连接，用 force 立即断开，避免关窗后端口迟迟不释放
+        await app.stop(true);
+      } catch (error) {
+        logger.warn(`停止 HTTP 服务失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (ownsToolClient) await toolClient.close();
+      }
+    })();
+    return closing;
   };
   if (options.handleSignals ?? true) {
     const shutdown = async () => {
@@ -152,5 +182,5 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
     process.on("SIGTERM", shutdown);
   }
 
-  return { engine, toolClient, port, url, close };
+  return { engine, toolClient, port: actualPort, url, close };
 }

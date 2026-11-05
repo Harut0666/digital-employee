@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadSettings } from "@de/core";
@@ -89,5 +89,74 @@ describe("prepareWorkspace", () => {
     await expect(
       prepareWorkspace({ workspaceDir, bundles: { web: missing, employees: missing, samples: missing } }),
     ).rejects.toThrow(/嵌入资源/);
+  });
+});
+
+/** 造一份桌面构建期资源目录（electrobun.config.ts 的 build.copy 布局）。 */
+function makeAssetsDir(root: string, options: { web?: string; workflow?: string } = {}): string {
+  mkdirSync(join(root, "web", "assets"), { recursive: true });
+  writeFileSync(join(root, "web", "index.html"), options.web ?? "<html>桌面版</html>");
+  writeFileSync(join(root, "web", "assets", "index-abc.js"), "console.log('desktop')");
+  // 只含 workflow.yaml 的目录才是员工；node_modules/test 等非员工内容要忽略
+  mkdirSync(join(root, "employees", "weekly-report", "prompts"), { recursive: true });
+  writeFileSync(join(root, "employees", "weekly-report", "workflow.yaml"), options.workflow ?? "steps: 默认");
+  writeFileSync(join(root, "employees", "weekly-report", "prompts", "write_report.md"), "# 写作提示词");
+  mkdirSync(join(root, "employees", "test"), { recursive: true });
+  mkdirSync(join(root, "employees", "node_modules", "junk"), { recursive: true });
+  writeFileSync(join(root, "employees", "node_modules", "junk", "x.js"), "junk");
+  // 样例只收 scenario-a 与 cases
+  mkdirSync(join(root, "samples", "scenario-a"), { recursive: true });
+  writeFileSync(join(root, "samples", "scenario-a", "销售明细.xlsx"), "xlsx");
+  mkdirSync(join(root, "samples", "cases", "scripts"), { recursive: true });
+  writeFileSync(join(root, "samples", "cases", "A-01.json"), '{"id":"A-01"}');
+  writeFileSync(join(root, "samples", "cases", "scripts", "A-01.json"), "{}");
+  mkdirSync(join(root, "samples", "fixtures"), { recursive: true });
+  writeFileSync(join(root, "samples", "fixtures", "big.bin"), "不该被释放");
+  return root;
+}
+
+describe("prepareWorkspace（目录资源来源）", () => {
+  test("释放员工配置与样例、解出前端产物；非员工目录与 fixtures 不释放", async () => {
+    const root = makeAssetsDir(tmp());
+    const workspaceDir = tmp();
+    const prepared = await prepareWorkspace({ workspaceDir, source: { kind: "directory", root } });
+
+    expect(readFileSync(join(workspaceDir, "employees", "weekly-report", "workflow.yaml"), "utf8")).toBe("steps: 默认");
+    expect(readFileSync(join(workspaceDir, "employees", "weekly-report", "prompts", "write_report.md"), "utf8")).toBe("# 写作提示词");
+    expect(existsSync(join(workspaceDir, "employees", "test"))).toBe(false);
+    expect(existsSync(join(workspaceDir, "employees", "node_modules"))).toBe(false);
+    expect(readFileSync(join(workspaceDir, "samples", "cases", "A-01.json"), "utf8")).toBe('{"id":"A-01"}');
+    expect(readFileSync(join(workspaceDir, "samples", "cases", "scripts", "A-01.json"), "utf8")).toBe("{}");
+    expect(existsSync(join(workspaceDir, "samples", "fixtures"))).toBe(false);
+    expect(existsSync(join(prepared.webDistDir, "index.html"))).toBe(true);
+    expect(readFileSync(join(prepared.webDistDir, "assets", "index-abc.js"), "utf8")).toContain("desktop");
+    expect(readFileSync(join(prepared.defaultEmployeesDir, "weekly-report", "workflow.yaml"), "utf8")).toBe("steps: 默认");
+    expect(prepared.settings).toBe("written");
+  });
+
+  test("再次启动不覆盖用户改过的员工/样例，但 .runtime 下的前端与默认副本跟着资源目录换新", async () => {
+    const root = makeAssetsDir(tmp());
+    const workspaceDir = tmp();
+    await prepareWorkspace({ workspaceDir, source: { kind: "directory", root } });
+
+    writeFileSync(join(workspaceDir, "employees", "weekly-report", "workflow.yaml"), "steps: 用户改的");
+    writeFileSync(join(workspaceDir, "samples", "cases", "A-01.json"), '{"id":"用户改的"}');
+
+    // 模拟新版本桌面包：资源目录里的默认内容变了
+    makeAssetsDir(root, { web: "<html>新桌面版</html>", workflow: "steps: 新默认" });
+    const prepared = await prepareWorkspace({ workspaceDir, source: { kind: "directory", root } });
+
+    expect(readFileSync(join(workspaceDir, "employees", "weekly-report", "workflow.yaml"), "utf8")).toBe("steps: 用户改的");
+    expect(readFileSync(join(workspaceDir, "samples", "cases", "A-01.json"), "utf8")).toBe('{"id":"用户改的"}');
+    expect(readFileSync(join(prepared.webDistDir, "index.html"), "utf8")).toBe("<html>新桌面版</html>");
+    expect(readFileSync(join(prepared.defaultEmployeesDir, "weekly-report", "workflow.yaml"), "utf8")).toBe("steps: 新默认");
+    expect(prepared.settings).toBe("kept");
+  });
+
+  test("资源目录缺 web 时报桌面构建问题", async () => {
+    const root = tmp();
+    mkdirSync(join(root, "employees", "weekly-report"), { recursive: true });
+    writeFileSync(join(root, "employees", "weekly-report", "workflow.yaml"), "steps: 默认");
+    await expect(prepareWorkspace({ workspaceDir: tmp(), source: { kind: "directory", root } })).rejects.toThrow(/桌面资源/);
   });
 });
