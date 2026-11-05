@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { createJudgmentRunner, createScriptedModelProvider } from "../../src/agent";
+import { DEFAULT_EXECUTION_SETTINGS, type JudgeStepConfig } from "../../src/contract";
 import { callTool, makeInput, makeStep, makeToolClient, submit } from "./helpers";
 
 const runner = createJudgmentRunner();
+
+/** 只覆盖 execution 里的一个字段，其余沿用默认值（模拟设置页保存后的执行默认值）。 */
+const execution = (patch: Partial<typeof DEFAULT_EXECUTION_SETTINGS> = {}) => ({
+  ...DEFAULT_EXECUTION_SETTINGS,
+  ...patch,
+});
 
 describe("判断步骤执行器：正常路径", () => {
   test("调用工具 → 提交结果 → ok，回调次数正确", async () => {
@@ -144,8 +151,94 @@ describe("上限", () => {
   });
 });
 
-describe("断点重放", () => {
-  test("replay 的前两轮不调用模型，第三轮才真正调用", async () => {
+describe("推理档位与执行默认值", () => {
+  test("验收口径：每模型输出上限 4096 + 档位 high 会一起进入模型调用", async () => {
+    const model = createScriptedModelProvider({ s1: [submit("好")] }, { model: { maxTokens: 4_096 } });
+    const { input } = makeInput({
+      model,
+      step: makeStep({ model: { connection: "default", model: "default", thinking: "high" } }),
+    });
+
+    expect((await runner.run(input)).ok).toBe(true);
+    expect(model.requests[0]!.options).toMatchObject({ maxTokens: 4_096, reasoning: "high" });
+  });
+
+  test("步骤的 thinking 进入 pi Agent 的 thinkingLevel，假模型收到的流选项带 reasoning", async () => {
+    const model = createScriptedModelProvider({ s1: [submit("好")] });
+    const { input } = makeInput({ model, step: makeStep({ model: { connection: "default", model: "default", thinking: "high" } }) });
+
+    expect((await runner.run(input)).ok).toBe(true);
+    expect(model.requests[0]!.options.reasoning).toBe("high");
+  });
+
+  test("步骤没有 thinking 时 reasoning 为 undefined（保持关闭）", async () => {
+    const model = createScriptedModelProvider({ s1: [submit("好")] });
+    const { input } = makeInput({ model });
+
+    await runner.run(input);
+    expect(model.requests[0]!.options.reasoning).toBeUndefined();
+  });
+
+  test("模型的最大输出上限进入流选项（pi-ai 用它设置 max_tokens）", async () => {
+    const model = createScriptedModelProvider({ s1: [submit("好")] }, { model: { maxTokens: 4_096 } });
+    const { input } = makeInput({ model });
+
+    await runner.run(input);
+    expect(model.requests[0]!.options.maxTokens).toBe(4_096);
+  });
+
+  test("模型重试次数：连接配置优先，其次设置默认，最后内置 2", async () => {
+    const fromSettings = createScriptedModelProvider({ s1: [submit("a")] });
+    await runner.run(makeInput({ model: fromSettings }).input);
+    // 剧本 provider 没有连接级重试 → 用内置值
+    expect(fromSettings.requests[0]!.options.maxRetries).toBe(2);
+
+    const withDefaults = createJudgmentRunner({ execution: () => execution({ modelMaxRetries: 7 }) });
+    const fromExecution = createScriptedModelProvider({ s1: [submit("b")] });
+    await withDefaults.run(makeInput({ model: fromExecution }).input);
+    expect(fromExecution.requests[0]!.options.maxRetries).toBe(7);
+
+    const fromConnection = createScriptedModelProvider({ s1: [submit("c")] }, { maxRetries: 4 });
+    await withDefaults.run(makeInput({ model: fromConnection }).input);
+    expect(fromConnection.requests[0]!.options.maxRetries).toBe(4);
+  });
+
+  test("连接级超时进入流选项；没有配置时不传（交给 pi-ai 默认值）", async () => {
+    const configured = createScriptedModelProvider({ s1: [submit("a")] }, { timeoutMs: 45_000 });
+    await runner.run(makeInput({ model: configured }).input);
+    expect(configured.requests[0]!.options.timeoutMs).toBe(45_000);
+
+    const plain = createScriptedModelProvider({ s1: [submit("b")] });
+    await runner.run(makeInput({ model: plain }).input);
+    expect(plain.requests[0]!.options.timeoutMs).toBeUndefined();
+  });
+});
+
+describe("步骤超时：步骤配置 → 设置默认 → 内置值", () => {
+  test("步骤配置了时长时，设置里的默认超时不会生效", async () => {
+    // 设置默认 50ms；步骤自己配了 90 秒 → 慢 0.2 秒的一轮不该被判超时
+    const runnerWithDefaults = createJudgmentRunner({ execution: () => execution({ stepTimeoutMs: 50 }) });
+    const model = createScriptedModelProvider({ s1: [{ delayMs: 200, then: submit("慢一点但没超") }] });
+    const { input } = makeInput({ model, step: makeStep({ limits: { rounds: 6, durationSec: 90 } }) });
+
+    expect((await runnerWithDefaults.run(input)).ok).toBe(true);
+  });
+
+  test("步骤没配时长时用设置里的默认超时", async () => {
+    const runnerWithDefaults = createJudgmentRunner({ execution: () => execution({ stepTimeoutMs: 60 }) });
+    const model = createScriptedModelProvider({ s1: [{ delayMs: 2_000, then: submit("太慢") }] });
+    // 旧配置里可能的写法：只有轮次、没有时长（交给设置默认值兜底）
+    const step = makeStep({ limits: { rounds: 6 } as JudgeStepConfig["limits"] });
+    const { input } = makeInput({ model, step });
+
+    const started = Date.now();
+    const result = await runnerWithDefaults.run(input);
+    expect(result).toMatchObject({ ok: false, failure: "step_duration" });
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("断点重放", () => {  test("replay 的前两轮不调用模型，第三轮才真正调用", async () => {
     // 第一次运行：记录三轮响应，假装在第三轮之后崩溃（只保留前两轮）。
     const first = createScriptedModelProvider({ s1: [callTool("query_task", { n: 1 }), callTool("query_task", { n: 2 }), submit("完成")] });
     const a = makeInput({ model: first });
