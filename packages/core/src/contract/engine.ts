@@ -117,6 +117,15 @@ export interface ModelConnection {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  /**
+   * 每个模型单独的高级参数（按模型 id）：上下文窗口、输出上限、推理档位。
+   * Spec 0004「每模型参数」；缺省时沿用 128k / 8192 / off（由 T20 的模型提供者消费）。
+   */
+  modelOptions?: Record<string, import("./settings").ModelOptions>;
+  /** 连接级超时，毫秒；缺省由模型提供者决定 */
+  timeoutMs?: number;
+  /** 连接级模型调用重试次数 */
+  maxRetries?: number;
 }
 
 export interface ModelSettings {
