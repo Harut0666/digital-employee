@@ -14,6 +14,7 @@ import {
   type DiagnosticsExportResult,
   type DiagnosticsInfo,
   type ModelOptions,
+  type SettingsConnectionView,
   type SettingsExportResult,
   type SettingsImportResult,
   type SettingsRoleResult,
@@ -21,24 +22,10 @@ import {
 import { IS_MOCK } from "./index";
 
 export type FaultMode = "timeout" | "error" | "invalid_output";
-export type ApiKeySource = "env" | "file" | "none";
+export type ApiKeySource = SettingsConnectionView["source"];
 
-export interface SettingsConnectionView {
-  name: string;
-  baseUrl: string;
-  models: string[];
-  /** 每模型高级参数（Spec 0004）：上下文窗口、输出上限、推理档位 */
-  modelOptions?: Record<string, ModelOptions>;
-  /** 连接级 HTTP 超时（毫秒） */
-  timeoutMs?: number;
-  /** 连接级模型调用重试次数 */
-  maxRetries?: number;
-  /** 只给末 4 位；没配置时为 null */
-  apiKeyLast4: string | null;
-  hasKey: boolean;
-  source: ApiKeySource;
-  isDefault: boolean;
-}
+/** 连接的脱敏视图来自 contract，前端只做展示，不重复定义形状（README：契约是唯一事实来源）。 */
+export type { SettingsConnectionView };
 
 export interface SettingsView {
   ok: true;

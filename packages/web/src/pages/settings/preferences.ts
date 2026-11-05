@@ -86,7 +86,7 @@ export function shouldAutoExpand(detail: TrajectoryDetail | undefined, status: s
 
 /**
  * 一轮执行刚结束时是否保留轨迹展开。
- * `completion` 立即收起；`next-input` 留到用户下次输入（由输入框发信号收起）。
+ * `completion` 立即收起；`next-input` 留到下一次输入（由输入框发信号收起）。
  */
 export function shouldStayOpenAfterRun(timing: CollapseTiming, wasActive: boolean, active: boolean): boolean {
   return timing === "next-input" && wasActive && !active;

@@ -6,10 +6,8 @@ import type { DemoSettings, ModelSettings } from "../contract";
 import {
   isDeepSeekConnection,
   modelSettingsOf,
-  readRawSettingsObject,
   readSettingsDocument,
   updateSettingsDocument,
-  writeSettingsObject,
 } from "./settings-document";
 
 type Env = Record<string, string | undefined>;
@@ -26,9 +24,6 @@ export const DEFAULT_DEMO_SETTINGS: DemoSettings = {
   crashOnNextStep: false,
 };
 
-// 兼容旧调用方：读原始 JSON / 写回 settings.json 都转到唯一入口（写入会 `revision + 1`）。
-export const readSettingsObject = readRawSettingsObject;
-export { writeSettingsObject };
 export { isDeepSeekConnection };
 
 /** 读取 <workspace>/settings.json；DEEPSEEK_API_KEY 优先于文件里的 Key。文件不存在时用默认的 DeepSeek 连接。 */

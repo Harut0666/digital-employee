@@ -3,10 +3,11 @@ import { App as AntApp, Button, ConfigProvider, theme, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
-import type { TaskCommand } from "@de/core/contract";
+import type { ApprovalPolicy, TaskCommand } from "@de/core/contract";
 import { createApi, IS_MOCK, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { ApiContext, useApi, useEmployees, useTask, useTaskList } from "./hooks/data";
+import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, TaskChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
@@ -262,22 +263,25 @@ export function App() {
   const queryRole = useMemo(initialRole, []);
   const roleRef = useRef<UiRole>(queryRole ?? "initiator");
   const [roleReady, setRoleReady] = useState(queryRole !== undefined);
+  /** 审批策略也来自设置文档：确认框按它决定 ask 弹框 / never 直接执行 */
+  const [approvalPolicy, setApprovalPolicy] = useState<ApprovalPolicy>("ask");
   const api = useMemo(() => createApi(() => roleRef.current), []);
   // 设置页与外观偏好共用一个设置客户端（模拟模式下也共享同一份内存状态）；
   // 带上角色头发给服务端，审计记录“谁”做了危险操作。
   const settingsApi = useMemo(() => createSettingsApi(undefined, () => roleRef.current), []);
 
   useEffect(() => {
-    if (queryRole !== undefined) return;
     let alive = true;
     settingsApi.getAppSettings().then(
       (view) => {
         if (!alive) return;
-        roleRef.current = view.permissions.defaultRole;
+        setApprovalPolicy(view.permissions.approvalPolicy);
+        // 显式 ?role= 优先：只有没带查询参数时才用默认角色
+        if (queryRole === undefined) roleRef.current = view.permissions.defaultRole;
         setRoleReady(true);
       },
       () => {
-        // 读取失败不阻塞应用：回落到发起人
+        // 读取失败不阻塞应用：回落到发起人 / 每次询问（最保守的审批策略）
         if (alive) setRoleReady(true);
       },
     );
@@ -287,13 +291,15 @@ export function App() {
   }, [queryRole, settingsApi]);
 
   if (!roleReady) {
-    return <div style={{ padding: 24, color: "#888" }}>正在读取默认角色…</div>;
+    return <div style={{ padding: 24, color: "#888" }}>正在读取默认角色与审批策略…</div>;
   }
 
   return (
-    <UiPreferencesProvider api={settingsApi}>
-      <ThemedShell roleRef={roleRef} api={api} settingsApi={settingsApi} />
-    </UiPreferencesProvider>
+    <ApprovalPolicyProvider initialPolicy={approvalPolicy} onPolicyChange={setApprovalPolicy}>
+      <UiPreferencesProvider api={settingsApi}>
+        <ThemedShell roleRef={roleRef} api={api} settingsApi={settingsApi} />
+      </UiPreferencesProvider>
+    </ApprovalPolicyProvider>
   );
 }
 

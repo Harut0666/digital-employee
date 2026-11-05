@@ -210,6 +210,50 @@ function connectionRetriesOf(value: unknown): ParsedField<number> {
   return { ok: true, value };
 }
 
+const ADVANCED_CONNECTION_KEYS = ["modelOptions", "timeoutMs", "maxRetries"] as const;
+type AdvancedConnectionKey = (typeof ADVANCED_CONNECTION_KEYS)[number];
+/** 三段同形：有值 = 校验后写入；null = 清除；缺省 = 保留原值。 */
+type AdvancedConnectionValues = { [K in AdvancedConnectionKey]: ModelConnection[K] | null | undefined };
+
+const ADVANCED_CONNECTION_PARSERS: {
+  [K in AdvancedConnectionKey]: (value: unknown) => ParsedField<NonNullable<ModelConnection[K]>>;
+} = {
+  modelOptions: modelOptionsOf,
+  timeoutMs: connectionTimeoutOf,
+  maxRetries: connectionRetriesOf,
+};
+
+function parseAdvancedConnectionFields(
+  fields: Record<string, unknown>,
+): { ok: true; values: AdvancedConnectionValues } | { ok: false; message: string } {
+  const values: AdvancedConnectionValues = { modelOptions: undefined, timeoutMs: undefined, maxRetries: undefined };
+  for (const key of ADVANCED_CONNECTION_KEYS) {
+    const raw = fields[key];
+    if (raw === undefined) continue;
+    const parsed = ADVANCED_CONNECTION_PARSERS[key](raw);
+    if (!parsed.ok) return parsed;
+    (values as Record<AdvancedConnectionKey, unknown>)[key] = parsed.value;
+  }
+  return { ok: true, values };
+}
+
+/** 缺省保留原值、null 清除、有值写入（旧界面不传时不能因为保存连接就丢掉高级参数）。 */
+function mergeAdvancedConnectionFields(
+  next: ModelConnection,
+  existing: ModelConnection | undefined,
+  fields: Record<string, unknown>,
+  values: AdvancedConnectionValues,
+): void {
+  for (const key of ADVANCED_CONNECTION_KEYS) {
+    if (fields[key] === undefined) {
+      if (existing?.[key] !== undefined) (next as unknown as Record<string, unknown>)[key] = existing[key];
+      continue;
+    }
+    const value = values[key];
+    if (value !== null && value !== undefined) (next as unknown as Record<string, unknown>)[key] = value;
+  }
+}
+
 export function createSettingsRoutes(deps: RouteDeps) {
   const workspaceDir = deps.workspaceDir;
   const env = () => deps.env ?? process.env;
@@ -249,6 +293,16 @@ export function createSettingsRoutes(deps: RouteDeps) {
       sandbox: permissions?.sandboxMode === "danger-full-access",
       approval: permissions?.approvalPolicy === "never",
     };
+  }
+
+  /** 危险预设被拒绝（400 / 409）时，两个字段分别留痕。 */
+  function auditDangerousIntentFailures(
+    intent: { sandbox: boolean; approval: boolean },
+    headers: Record<string, string | undefined> | undefined,
+    detail: string,
+  ): void {
+    if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "failure", headers, detail);
+    if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "failure", headers, detail);
   }
 
   /** settings.json 里的连接（不应用环境变量覆盖：写回时不能把环境变量的 Key 落到文件里）。 */
@@ -424,30 +478,10 @@ export function createSettingsRoutes(deps: RouteDeps) {
       }
 
       // 高级参数：先校验，全部合法才动文件
-      const advanced: Pick<ModelConnection, "modelOptions" | "timeoutMs" | "maxRetries"> = {};
-      if (fields.modelOptions !== undefined) {
-        const parsed = modelOptionsOf(fields.modelOptions);
-        if (!parsed.ok) {
-          set.status = 400;
-          return apiError("invalid_input", parsed.message);
-        }
-        if (parsed.value !== null) advanced.modelOptions = parsed.value;
-      }
-      if (fields.timeoutMs !== undefined) {
-        const parsed = connectionTimeoutOf(fields.timeoutMs);
-        if (!parsed.ok) {
-          set.status = 400;
-          return apiError("invalid_input", parsed.message);
-        }
-        if (parsed.value !== null) advanced.timeoutMs = parsed.value;
-      }
-      if (fields.maxRetries !== undefined) {
-        const parsed = connectionRetriesOf(fields.maxRetries);
-        if (!parsed.ok) {
-          set.status = 400;
-          return apiError("invalid_input", parsed.message);
-        }
-        if (parsed.value !== null) advanced.maxRetries = parsed.value;
+      const parsedAdvanced = parseAdvancedConnectionFields(fields);
+      if (!parsedAdvanced.ok) {
+        set.status = 400;
+        return apiError("invalid_input", parsedAdvanced.message);
       }
 
       const next: ModelConnection = {
@@ -457,23 +491,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
         apiKey: typeof apiKey === "string" && apiKey !== "" ? apiKey : (existing?.apiKey ?? ""),
         models,
       };
-      // 高级参数（T19 契约）：旧界面不传时保留原值，不能因为保存连接就丢掉
-      if (existing?.modelOptions !== undefined) next.modelOptions = existing.modelOptions;
-      if (existing?.timeoutMs !== undefined) next.timeoutMs = existing.timeoutMs;
-      if (existing?.maxRetries !== undefined) next.maxRetries = existing.maxRetries;
-      // 传了就以新值为准（null 已在上面转成“清除”）
-      if (fields.modelOptions !== undefined) {
-        if (advanced.modelOptions !== undefined) next.modelOptions = advanced.modelOptions;
-        else delete next.modelOptions;
-      }
-      if (fields.timeoutMs !== undefined) {
-        if (advanced.timeoutMs !== undefined) next.timeoutMs = advanced.timeoutMs;
-        else delete next.timeoutMs;
-      }
-      if (fields.maxRetries !== undefined) {
-        if (advanced.maxRetries !== undefined) next.maxRetries = advanced.maxRetries;
-        else delete next.maxRetries;
-      }
+      mergeAdvancedConnectionFields(next, existing, fields, parsedAdvanced.values);
       if (existing) settings.connections[existingIndex] = next;
       else settings.connections.push(next);
       // 第一个连接自动成为默认连接
@@ -544,16 +562,14 @@ export function createSettingsRoutes(deps: RouteDeps) {
       const intent = dangerousIntentOf(body);
       const parsed = parseAppSettingsPatch(body);
       if (!parsed.ok) {
-        if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "failure", headers, parsed.message);
-        if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "failure", headers, parsed.message);
+        auditDangerousIntentFailures(intent, headers, parsed.message);
         set.status = 400;
         return apiError("invalid_input", parsed.message);
       }
       const current = readSettingsDocument(workspaceDir);
       if (parsed.patch.revision !== current.revision) {
         const message = conflictBody(current.revision).message;
-        if (intent.sandbox) audit("set-sandbox-mode", "permissions.sandboxMode", "failure", headers, message);
-        if (intent.approval) audit("set-approval-policy", "permissions.approvalPolicy", "failure", headers, message);
+        auditDangerousIntentFailures(intent, headers, message);
         set.status = 409;
         return conflictBody(current.revision);
       }
@@ -660,7 +676,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
       writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`);
       return { ok: true as const, path, generatedAt: info.generatedAt };
     })
-    .post("/diagnostics/open", async () => {
+    .post("/diagnostics/open", async ({ set }) => {
       // 导出成功后“打开所在目录”：诊断包统一落在 <workspace>/diagnostics
       const dir = join(workspaceDir, "diagnostics");
       mkdirSync(dir, { recursive: true });
@@ -668,11 +684,12 @@ export function createSettingsRoutes(deps: RouteDeps) {
       try {
         await open(dir);
       } catch (error) {
+        set.status = 500;
         return internalError(`打开诊断目录失败：${error instanceof Error ? error.message : String(error)}`);
       }
       return { ok: true as const, path: dir };
     })
-    .post("/open-file", async () => {
+    .post("/open-file", async ({ set }) => {
       // 没有 settings.json 时先写一份默认文档，保证“打开设置文件”总能打开点什么
       ensureSettingsFile(workspaceDir);
       const path = settingsPathFor(workspaceDir);
@@ -680,6 +697,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
       try {
         await open(path);
       } catch (error) {
+        set.status = 500;
         return internalError(`打开设置文件失败：${error instanceof Error ? error.message : String(error)}`);
       }
       return { ok: true as const, path };
@@ -725,21 +743,23 @@ export function createSettingsRoutes(deps: RouteDeps) {
       defaultEmployeesDir: deps.defaultEmployeesDir ?? deps.employeesDir,
       configVersionsDir: join(workspaceDir, "config-versions"),
     }))
-    .post("/workspace/open", async () => {
+    .post("/workspace/open", async ({ set }) => {
       const open: FolderOpener = deps.openFolder ?? ((dir) => openFolderWithSystem(dir));
       try {
         await open(workspaceDir);
       } catch (error) {
+        set.status = 500;
         return internalError(`打开工作区失败：${error instanceof Error ? error.message : String(error)}`);
       }
       return { ok: true as const, path: workspaceDir };
     })
-    .post("/workspace/reset-employees", async ({ headers }) => {
+    .post("/workspace/reset-employees", async ({ headers, set }) => {
       const destination = resolve(deps.employeesDir);
       const source = resolve(deps.defaultEmployeesDir ?? deps.employeesDir);
       if (!existsSync(source) || !statSync(source).isDirectory()) {
         const message = `默认员工配置目录不存在：${source}`;
         audit("reset-employees", destination, "failure", headers, message);
+        set.status = 500;
         return internalError(message);
       }
       try {

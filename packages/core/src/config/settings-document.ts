@@ -27,7 +27,6 @@ import {
   CONNECTION_RETRIES_MAX,
   CONNECTION_TIMEOUT_MAX_MS,
   CONNECTION_TIMEOUT_MIN_MS,
-  type AppSettings,
   type AppSettingsPatch,
   type DemoSettings,
   type ExecutionSettings,
@@ -250,14 +249,6 @@ export function updateSettingsDocument(workspace: string, mutate: (doc: Settings
   return writeSettingsDocument(workspace, doc);
 }
 
-/**
- * 兼容旧调用方（原先直接 writeFileSync 覆盖）：把原始对象按 v2 归一化后写入，
- * 同样经过唯一写入点并 `revision + 1`。
- */
-export function writeSettingsObject(workspace: string, value: Record<string, unknown>): void {
-  writeSettingsDocument(workspace, normalizeSettingsDocument(value));
-}
-
 /** settings.json 不存在时写一份默认文档（“打开设置文件”前调用）。 */
 export function ensureSettingsFile(workspace: string): SettingsDocument {
   if (existsSync(settingsPathFor(workspace))) return readSettingsDocument(workspace);
@@ -408,11 +399,6 @@ export function settingsDocumentOfImportBody(body: unknown): unknown {
   if (isRecord(body.document)) return body.document;
   if (isRecord(body.settings)) return body.settings;
   return body;
-}
-
-/** 文档的四个分区默认值 + revision（测试与迁移共用）。 */
-export function appSettingsWithDefaults(overrides: Partial<AppSettings> = {}): AppSettings {
-  return { ...defaultAppSettings(), ...overrides };
 }
 
 /** 供 `loadSettings` 使用：把文档转成运行期的模型设置（不含 v2 分区）。 */

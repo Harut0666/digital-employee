@@ -59,15 +59,18 @@ export interface UiSettings {
   linkOpening: LinkOpening;
 }
 
-/** 执行与预算（对之后开始的步骤 / 模型调用生效）。 */
+/**
+ * 执行与预算（对之后开始的步骤 / 模型调用生效）。
+ * 每一项都是“默认值”：员工配置或连接配置显式写了就以更靠近步骤的值为准。
+ */
 export interface ExecutionSettings {
-  /** 单个工作步骤超时，毫秒，默认 120000 */
+  /** 单个工作步骤超时，毫秒，默认 120000；判断步骤没写 limits.durationSec 时用它 */
   stepTimeoutMs: number;
-  /** 模型调用重试次数，默认 2 */
+  /** 模型调用重试次数，默认 2；连接上的 maxRetries 优先 */
   modelMaxRetries: number;
-  /** 重试退避，毫秒；按第 N 次重试取第 N 项，默认 [500, 1500, 4000] */
+  /** 重试退避，毫秒；按第 N 次重试取第 N 项。工具重试的 backoffMs 为空时用它 */
   retryBackoffMs: number[];
-  /** 质检自动修正上限；员工配置未配置时用它，默认 3 */
+  /** 质检自动修正上限；员工配置没写 limits.qcAutofix 时用它，默认 3 */
   qcAutofix: number;
 }
 
@@ -184,7 +187,10 @@ export const CONNECTION_RETRIES_MAX = 10;
 
 // ---------------------------------------------------------------- schema
 
-const percentLike = (max: number) => z.number().int().min(0).max(max);
+/** 0..max 的整数：用于重试次数、自动修正次数这类“次数”。 */
+const boundedCount = (max: number) => z.number().int().min(0).max(max);
+/** 0..max 的整数毫秒：用于退避间隔这类“时长”。 */
+const milliseconds = (max: number) => z.number().int().min(0).max(max);
 
 export const UiSettingsSchema = z.strictObject({
   theme: z.enum(THEMES).default(DEFAULT_UI_SETTINGS.theme),
@@ -202,12 +208,12 @@ export const ExecutionSettingsSchema = z.strictObject({
     .min(STEP_TIMEOUT_MIN_MS)
     .max(STEP_TIMEOUT_MAX_MS)
     .default(DEFAULT_EXECUTION_SETTINGS.stepTimeoutMs),
-  modelMaxRetries: percentLike(MODEL_RETRIES_MAX).default(DEFAULT_EXECUTION_SETTINGS.modelMaxRetries),
+  modelMaxRetries: boundedCount(MODEL_RETRIES_MAX).default(DEFAULT_EXECUTION_SETTINGS.modelMaxRetries),
   retryBackoffMs: z
-    .array(percentLike(RETRY_BACKOFF_ITEM_MAX_MS))
+    .array(milliseconds(RETRY_BACKOFF_ITEM_MAX_MS))
     .max(RETRY_BACKOFF_MAX)
     .default([...DEFAULT_EXECUTION_SETTINGS.retryBackoffMs]),
-  qcAutofix: percentLike(QC_AUTOFIX_MAX).default(DEFAULT_EXECUTION_SETTINGS.qcAutofix),
+  qcAutofix: boundedCount(QC_AUTOFIX_MAX).default(DEFAULT_EXECUTION_SETTINGS.qcAutofix),
 });
 
 export const DiagnosticsSettingsSchema = z.strictObject({
@@ -235,7 +241,7 @@ export const ModelConnectionSchema = z.strictObject({
   models: z.array(z.string()).default([]),
   modelOptions: z.record(z.string(), ModelOptionsSchema).optional(),
   timeoutMs: z.number().int().min(CONNECTION_TIMEOUT_MIN_MS).max(CONNECTION_TIMEOUT_MAX_MS).optional(),
-  maxRetries: percentLike(CONNECTION_RETRIES_MAX).optional(),
+  maxRetries: boundedCount(CONNECTION_RETRIES_MAX).optional(),
 });
 
 export const DemoToolFaultsSchema = z.record(z.string(), z.enum(["timeout", "error", "invalid_output"]));

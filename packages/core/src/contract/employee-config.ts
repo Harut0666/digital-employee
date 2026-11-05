@@ -70,7 +70,11 @@ const JudgeStepSchema = z.object({
   tools: z.array(z.string()).default([]),
   /** 输出 JSON Schema 文件；模型必须调用 submit_result 工具提交符合该 Schema 的结果 */
   outputSchema: z.string(),
-  limits: z.object({ rounds: z.number().int().positive(), durationSec: z.number().positive() }),
+  /**
+   * 本步骤的上限。`durationSec` 可省略：省略时不注入默认值，
+   * 由任务引擎按「设置 execution.stepTimeoutMs → 内置 120 秒」解析（Spec 0004）。
+   */
+  limits: z.object({ rounds: z.number().int().positive(), durationSec: z.number().positive().optional() }),
   model: ModelRefSchema.default({ connection: "default", model: "default" }),
   /** 退回重做时是否重跑本步骤 */
   rework: z.boolean().default(false),
@@ -97,7 +101,11 @@ export const EmployeeWorkflowSchema = z.object({
   limits: z.object({
     task: z.object({ modelCalls: z.number().int().positive(), durationSec: z.number().positive() }),
     toolRetry: z.object({ attempts: z.number().int().positive(), backoffMs: z.array(z.number().nonnegative()) }),
-    qcAutofix: z.number().int().nonnegative(),
+    /**
+     * 质检自动修正上限，可省略：省略时不注入默认值，
+     * 由任务引擎按「设置 execution.qcAutofix → 内置 3」解析（Spec 0004）。
+     */
+    qcAutofix: z.number().int().nonnegative().optional(),
   }),
   /** 准入校验步骤的 id，必须是第一个 compute 步骤 */
   admissionStep: z.string(),

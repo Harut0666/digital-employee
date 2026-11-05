@@ -6,8 +6,10 @@ export { normalizeThinkingLevel } from "./provider";
 export type { JudgmentModelProvider, ModelRef, ResolvedStepModel } from "./provider";
 export {
   BUILTIN_MODEL_MAX_RETRIES,
+  BUILTIN_QC_AUTOFIX,
   BUILTIN_STEP_TIMEOUT_MS,
-  FALLBACK_EXECUTION_SETTINGS,
   resolveModelMaxRetries,
+  resolveQcAutofix,
   resolveStepTimeoutMs,
+  resolveToolRetryBackoffMs,
 } from "./execution";
