@@ -1,9 +1,10 @@
 // 设置页请求级测试（接缝：HTTP 接口）。重点：API Key 只回末 4 位、空 Key 保留原值、测试连接走注入的假提供者、
 // 演示开关经 admin_set_faults 下发到工具子进程、工作区文件操作。
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { FaultHooks, ModelSettings, ToolClient, ToolDescriptor } from "@de/core/contract";
+import { AUDIT_FILE_NAME, formatAuditLine, readAuditEntries } from "../src/audit";
 import type { ConnectionProbe, FolderOpener } from "../src/routes/deps";
 import { jsonRequest, setup, tempDir } from "./helpers";
 
@@ -837,5 +838,232 @@ describe("PUT /api/settings/connections · 高级参数", () => {
       expect({ patch, status: res.status }).toEqual({ patch, status: 400 });
       expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
     }
+  });
+});
+
+// ---------------------------------------------------------------- T23：权限预设、默认角色与审计
+
+/** 带角色头的请求：审计要记录操作角色。 */
+function roleRequest(method: string, body: unknown, role = "operator"): RequestInit {
+  return { method, headers: { "content-type": "application/json", "x-role": role }, body: JSON.stringify(body) };
+}
+
+function auditLines(ws: string): Record<string, any>[] {
+  const file = join(ws, AUDIT_FILE_NAME);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Record<string, any>);
+}
+
+describe("T23 · 审计留痕（接缝 A）", () => {
+  test("恢复默认员工配置成功后写一行：时间、角色、操作、目标、结果", async () => {
+    const ws = tempDir();
+    const employeesDir = join(ws, "employees");
+    mkdirSync(join(employeesDir, "weekly-report"), { recursive: true });
+    writeFileSync(join(employeesDir, "weekly-report", "workflow.yaml"), "id: modified\n");
+    const defaultsDir = tempDir();
+    mkdirSync(join(defaultsDir, "weekly-report"));
+    writeFileSync(join(defaultsDir, "weekly-report", "workflow.yaml"), "id: default\n");
+
+    const { call } = setup({ workspaceDir: ws, employeesDir, defaultEmployeesDir: defaultsDir, env: {} });
+    const res = await call("/api/settings/workspace/reset-employees", { method: "POST", headers: { "x-role": "operator" } });
+    expect(res.status).toBe(200);
+
+    const lines = auditLines(ws);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      role: "operator",
+      action: "reset-employees",
+      target: employeesDir,
+      result: "success",
+    });
+    expect(lines[0]!.time).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/);
+    expect(JSON.stringify(lines)).not.toContain("id: default");
+  });
+
+  test("恢复失败也留痕：默认目录不存在 → result=failure（不会伪造成功记录）", async () => {
+    const ws = tempDir();
+    const employeesDir = join(ws, "employees");
+    const missing = join(ws, "defaults-missing");
+    const { call } = setup({ workspaceDir: ws, employeesDir, defaultEmployeesDir: missing, env: {} });
+
+    const res = await call("/api/settings/workspace/reset-employees", { method: "POST", headers: { "x-role": "operator" } });
+    expect((await bodyOf(res)).ok).toBe(false);
+
+    const lines = auditLines(ws);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ action: "reset-employees", result: "failure" });
+    expect(lines[0]!.detail).toContain("不存在");
+  });
+
+  test("导入成功与失败都留痕；审计文件绝不出现明文 Key", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const exported = await bodyOf(await call("/api/settings/export?includeKeys=true"));
+
+    const ok = await call("/api/settings/import", roleRequest("POST", { document: exported.document }, "operator"));
+    expect(ok.status).toBe(200);
+    let lines = auditLines(ws);
+    // 导出含密钥本身也留痕，这里只看最后一条导入记录
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatchObject({ action: "import-settings", target: "settings.json", result: "success" });
+    expect(readFileSync(join(ws, AUDIT_FILE_NAME), "utf8")).not.toContain(KEY);
+
+    const bad = await call("/api/settings/import", roleRequest("POST", { ui: { theme: "neon" } }, "reviewer"));
+    expect(bad.status).toBe(400);
+    lines = auditLines(ws);
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toMatchObject({ role: "reviewer", action: "import-settings", result: "failure" });
+  });
+
+  test("导出含密钥写审计；普通脱敏导出不写", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const plain = await call("/api/settings/export", { headers: { "x-role": "operator" } });
+    expect(plain.status).toBe(200);
+    expect(existsSync(join(ws, AUDIT_FILE_NAME))).toBe(false);
+
+    const withKeys = await bodyOf(await call("/api/settings/export?includeKeys=true", { headers: { "x-role": "operator" } }));
+    expect(withKeys.redacted).toBe(false);
+    const lines = auditLines(ws);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ action: "export-settings-with-keys", target: withKeys.filename, result: "success" });
+    expect(readFileSync(join(ws, AUDIT_FILE_NAME), "utf8")).not.toContain(KEY);
+    expect(readFileSync(join(ws, AUDIT_FILE_NAME), "utf8")).not.toContain(LOCAL_KEY);
+  });
+
+  test("切到完全访问 / 从不询问分别留痕；revision 冲突的尝试记 failure", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const danger = await call("/api/settings/app", roleRequest("PATCH", { revision: 0, permissions: { sandboxMode: "danger-full-access" } }));
+    expect(danger.status).toBe(200);
+    const never = await call("/api/settings/app", roleRequest("PATCH", { revision: 1, permissions: { approvalPolicy: "never" } }, "reviewer"));
+    expect(never.status).toBe(200);
+
+    let lines = auditLines(ws);
+    expect(lines.map((l) => [l.action, l.result, l.role])).toEqual([
+      ["set-sandbox-mode", "success", "operator"],
+      ["set-approval-policy", "success", "reviewer"],
+    ]);
+
+    const conflict = await call("/api/settings/app", roleRequest("PATCH", { revision: 0, permissions: { sandboxMode: "danger-full-access" } }));
+    expect(conflict.status).toBe(409);
+    lines = auditLines(ws);
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toMatchObject({ action: "set-sandbox-mode", result: "failure", target: "permissions.sandboxMode" });
+  });
+
+  test("模拟崩溃布防也留痕（危险演示操作）", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+    const res = await call("/api/settings/demo", roleRequest("PUT", { crashOnNextStep: true }, "operator"));
+    expect(res.status).toBe(200);
+    const lines = auditLines(ws);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ action: "simulate-crash", target: "demo.crashOnNextStep", result: "success" });
+    // 关掉不需要审计
+    await call("/api/settings/demo", roleRequest("PUT", { crashOnNextStep: false }, "operator"));
+    expect(auditLines(ws)).toHaveLength(1);
+  });
+
+  test("非法预设 / 非法角色：400 且文件不变，不写成功审计", async () => {
+    const ws = settingsWorkspace();
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    for (const body of [
+      { revision: 0, permissions: { sandboxMode: "sandbox" } },
+      { revision: 0, permissions: { approvalPolicy: "sometimes" } },
+    ]) {
+      const res = await call("/api/settings/app", roleRequest("PATCH", body));
+      expect(res.status).toBe(400);
+    }
+    expect((await call("/api/settings/role", roleRequest("PUT", { role: "admin" }))).status).toBe(400);
+    expect((await call("/api/settings/role", roleRequest("PUT", { role: "root" }))).status).toBe(400);
+
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+    expect(auditLines(ws)).toHaveLength(0);
+  });
+
+  test("完全访问预设只改设置值，不改变任何真实文件权限", async () => {
+    const ws = settingsWorkspace();
+    const note = join(ws, "note.txt");
+    writeFileSync(note, "现场文件\n");
+    const modeBefore = statSync(note).mode;
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call("/api/settings/app", roleRequest("PATCH", { revision: 0, permissions: { sandboxMode: "danger-full-access" } }));
+    expect(res.status).toBe(200);
+    const view = await bodyOf(res);
+    expect(view.permissions).toMatchObject({ sandboxMode: "danger-full-access", approvalPolicy: "ask" });
+
+    // 只写设置文档：文件内容与权限位不变（本机模式没有系统级沙箱）
+    expect(readFileSync(note, "utf8")).toBe("现场文件\n");
+    expect(statSync(note).mode).toBe(modeBefore);
+    expect(storedSettings(ws).permissions.sandboxMode).toBe("danger-full-access");
+  });
+});
+
+describe("T23 · 审计行格式（纯函数）", () => {
+  test("字段顺序固定、UTC ISO 时间、单行 JSON", () => {
+    const line = formatAuditLine({
+      time: new Date("2026-11-05T09:19:29.000Z"),
+      role: "operator",
+      action: "export-settings-with-keys",
+      target: "settings-with-keys-20261105091929.json",
+      result: "success",
+    });
+    expect(line).toBe(
+      '{"time":"2026-11-05T09:19:29.000Z","role":"operator","action":"export-settings-with-keys","target":"settings-with-keys-20261105091929.json","result":"success"}\n',
+    );
+  });
+
+  test("脱敏：明文 Key、Bearer 令牌与 apiKey 字段都打码", () => {
+    const line = formatAuditLine({
+      time: new Date("2026-11-05T09:19:29.000Z"),
+      role: "operator",
+      action: "import-settings",
+      target: "settings.json",
+      result: "failure",
+      detail: 'key=sk-secret-1234 Authorization: Bearer abc.def apiKey=sk-local-abcd {"apiKey":"sk-deep-5678"}',
+    });
+    expect(line).not.toContain("sk-secret-1234");
+    expect(line).not.toContain("sk-local-abcd");
+    expect(line).not.toContain("sk-deep-5678");
+    expect(line).not.toContain("abc.def");
+    expect(line).toContain("sk-***");
+    expect(line).toContain("Bearer ***");
+    expect(line.split("\n")).toHaveLength(2); // 只有末尾一个换行
+  });
+
+  test("detail 里的换行不会把一行审计拆成两行", () => {
+    const line = formatAuditLine({
+      time: new Date("2026-11-05T09:19:29.000Z"),
+      role: "operator",
+      action: "import-settings",
+      target: "settings.json",
+      result: "failure",
+      detail: "第一行\n第二行",
+    });
+    expect(line.trimEnd().split(/\r?\n/)).toHaveLength(1);
+  });
+
+  test("损坏行跳过：坏 JSON / 缺字段的行不影响其余记录", () => {
+    const ws = tempDir();
+    writeFileSync(
+      join(ws, AUDIT_FILE_NAME),
+      [
+        JSON.stringify({ time: "2026-11-05T09:19:29.000Z", role: "operator", action: "import-settings", target: "settings.json", result: "success" }),
+        "不是 JSON",
+        JSON.stringify({ time: 1, role: "operator", action: "reset-employees" }),
+        JSON.stringify({ time: "2026-11-05T09:19:30.000Z", role: "operator", action: "export-settings-with-keys", result: "success" }),
+        "",
+      ].join("\n"),
+    );
+    expect(readAuditEntries(ws).map((entry) => entry.action)).toEqual(["import-settings"]);
   });
 });
