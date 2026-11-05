@@ -6,10 +6,15 @@ import {
   FIXED_DESKTOP_COPY,
   desktopArtifactFolder,
   desktopCopyMapping,
+  desktopStagingAppDir,
   desktopWasmTarget,
+  dirSize,
+  findResourcesTar,
   findSetupArtifacts,
   formatSize,
   hutchMissingMessage,
+  portableAppDir,
+  portableZipPath,
   resolveResvgWasmSource,
 } from "../../../scripts/build-desktop";
 
@@ -70,5 +75,41 @@ describe("桌面构建脚本（纯函数，不启动 Hutch）", () => {
 
   test("体积格式化为 MB 一位小数", () => {
     expect(formatSize(45.3 * 1024 * 1024)).toBe("45.3MB");
+  });
+
+  test("绿色目录：staging 路径、便携目录与便携 zip 路径", () => {
+    expect(desktopStagingAppDir("/repo")).toBe(join("/repo", "build", "stable-win-x64", "DigitalEmployee"));
+    expect(desktopStagingAppDir("/repo", "dev")).toBe(join("/repo", "build", "dev-win-x64", "DigitalEmployee"));
+    expect(portableAppDir("/artifacts")).toBe(join("/artifacts", "DigitalEmployee"));
+    expect(portableZipPath("/artifacts")).toBe(join("/artifacts", "win-x64-DigitalEmployee-portable.zip"));
+  });
+
+  test("staging 里定位安装内容 tar.zst（按名字取第一个，缺失返回 undefined）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "de-staging-"));
+    try {
+      const app = join(dir, "DigitalEmployee");
+      mkdirSync(join(app, "Resources"), { recursive: true });
+      expect(findResourcesTar(app)).toBeUndefined();
+      writeFileSync(join(app, "Resources", "b.tar.zst"), "b");
+      writeFileSync(join(app, "Resources", "a.tar.zst"), "a");
+      writeFileSync(join(app, "Resources", "metadata.json"), "{}");
+      expect(findResourcesTar(app)).toBe(join(app, "Resources", "a.tar.zst"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("dirSize 递归统计文件字节数", () => {
+    const dir = mkdtempSync(join(tmpdir(), "de-dirsize-"));
+    try {
+      mkdirSync(join(dir, "nested", "deeper"), { recursive: true });
+      writeFileSync(join(dir, "a.bin"), Buffer.alloc(10));
+      writeFileSync(join(dir, "nested", "b.bin"), Buffer.alloc(20));
+      writeFileSync(join(dir, "nested", "deeper", "c.bin"), Buffer.alloc(30));
+      expect(dirSize(dir)).toBe(60);
+      expect(dirSize(join(dir, "missing"))).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
