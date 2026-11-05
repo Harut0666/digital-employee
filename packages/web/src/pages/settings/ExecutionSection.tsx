@@ -12,7 +12,7 @@ import { formatBackoffInput, validateExecutionForm, type ExecutionFormValues } f
 
 const { Text } = Typography;
 
-const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "#fff", padding: "16px 20px", marginBottom: 16 };
+const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "var(--card)", padding: "16px 20px", marginBottom: 16 };
 const row: React.CSSProperties = { display: "flex", gap: 16, alignItems: "flex-start", padding: "12px 0", borderTop: "1px solid var(--line)" };
 const labelStyle: React.CSSProperties = { width: 156, flex: "none", color: "var(--muted)", paddingTop: 6 };
 const hintStyle: React.CSSProperties = { color: "var(--muted)", fontSize: 12, marginTop: 6 };
