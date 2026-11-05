@@ -30,13 +30,14 @@ digital-employee/
 │   ├── server/    Elysia：REST 接口、SSE 事件流、角色权限
 │   ├── web/       React 前端（任务对话、轨迹、发起表单、审核、设置）
 │   ├── cli/       命令行：跑用例、回放事件
-│   └── app/       打包入口：exe 子命令分派、工作区释放、端口选择（design §14）
+│   ├── app/       打包入口：exe 子命令分派、工作区释放、端口选择（design §14）
+│   └── desktop/   Electrobun 桌面壳：主进程入口、窗口后端装配、资源路径（design §14）
 ├── employees/
 │   └── weekly-report/   场景 A 员工配置（提示词、输出 Schema、流程与质检配置）
 ├── samples/
 │   ├── scenario-a/      样例数据（销售明细、周会纪要、格式要求）
 │   └── cases/           A-01…A-05 命令行用例及其剧本式假模型输出
-├── scripts/       构建与冒烟：gen-embedded.ts（生成嵌入归档）、build-exe.ts、smoke-exe.ps1
+├── scripts/       构建与冒烟：gen-embedded.ts、build-exe.ts、smoke-exe.ps1、build-desktop.ts、smoke-desktop.ps1
 ├── docs/          设计文档、术语表、ADR、ticket、界面稿
 └── README.md
 ```
@@ -59,6 +60,47 @@ $env:DE_SCRIPTED="$env:APPDATA\digital-employee\samples\cases\scripts\A-01.json"
 exe 也能当命令行用：`digital-employee.exe init`（只准备工作区）、`mcp-server`（工具服务器），以及和 `de` 一样的 `run-case` / `run-cases` / `check` / `replay`。
 
 嵌进 exe 的资源：前端构建产物、`employees/`、`samples/scenario-a/` 与 `samples/cases/`。**不含 `samples/fixtures/`**（约 12MB 变异数据，只有 `de fixtures` 和异常用例用得到，打进去不划算）。
+
+### 方式二：桌面窗口（Electrobun）
+
+同一套后端与 React 界面装进原生窗口（Electrobun + 系统 WebView2），不打开浏览器；适合现场演示“可执行程序自己的窗口”。
+
+**平台要求**：Windows 11 x64 + 系统 WebView2（Windows 11 自带；缺失时装 Microsoft Edge WebView2 Evergreen Runtime）。Windows 10 不在 Electrobun 官方支持列表，请用方式一。
+
+**安装与运行**
+
+1. 构建一次：`bun run build:desktop` → `dist/desktop/` 下得到安装包 `win-x64-DigitalEmployee-Setup.zip`、便携包 `win-x64-DigitalEmployee-portable.zip`，以及解压即可运行的绿色目录 `DigitalEmployee/`。
+2. 安装版：解压 `win-x64-DigitalEmployee-Setup.zip`，运行其中的 `Digital Employee-Setup.exe` 按提示安装；免安装：解压便携包，双击 `DigitalEmployee\bin\launcher.exe`。
+3. 首次启动不需要命令行：自动建立/沿用 `%APPDATA%\digital-employee` 工作区（与 exe 共用，`DE_WORKSPACE` 可覆盖），释放员工配置与公开样例，写一份不含 Key 的 `settings.json`；窗口标题为“迷你数字员工”。
+4. 没有 API Key 时用剧本模式演示：
+
+```powershell
+$env:DE_SCRIPTED="$env:APPDATA\digital-employee\samples\cases\scripts\A-01.json"
+# 再双击应用（安装版从开始菜单，便携版运行 DigitalEmployee\bin\launcher.exe）
+```
+
+**菜单与单实例**（Windows 快捷键用 Control；实测状态见[桌面版结果](docs/results/electrobun-desktop.md)）
+
+- 菜单提供“打开工作区文件夹”“重新加载”“开发者工具（仅开发构建）”“关于（应用版本 + Electrobun / Bun 运行时版本）”“退出”。
+- 关闭窗口即退出：先关工具客户端与 HTTP 服务再退出，不留端口与后台进程。
+- 同一工作区重复启动会提示“已经有一个窗口在运行”，不会起第二份服务、不会重复执行任务；exe 不检查这个锁，所以**不要和 exe 同时打开**。
+
+**构建要求**：需要 Hutch（仅构建机使用，使用者不需要），首次构建需要联网拉取 Electrobun / Bun 运行时：
+
+```powershell
+# 一次性安装 Hutch（PowerShell）
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://hutch.blackboard.sh/hutch/install.ps1)))"
+$env:HUTCH_HOME = "D:\hutch-home"   # 中文用户名/非 ASCII 用户目录必须设置，否则报 AccessDenied
+$env:PATH = "$env:USERPROFILE\.hutch\bin;$env:PATH"
+bun run build:desktop
+powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
+```
+
+`bun run dev:desktop` 用 Hutch 的 dev 模式起窗口并在改主进程后自动重建。
+
+**实测**（Windows 11 x64，2026-11-05）：安装包 **51.0MB**、便携包 62.2MB、安装后 **142.0MB**（exe 为 105.8MB）；冷启动到 `/api/employees` 可用 **0.61–1.06 秒**（多点测量）；剧本模式 A-01 在桌面版后端跑到 delivered 约 **3.6 秒**。详见[桌面版结果文档](docs/results/electrobun-desktop.md)。
+
+**与 exe 的关系**：两套产物共用 `%APPDATA%\digital-employee` 工作区（设置、Key、任务、样例通用），但**不要同时运行**——两个进程会同时写任务目录与设置。桌面版不提供 `init` / `mcp-server` / `run-cases` 等命令行子命令，这些继续用 exe；桌面化出问题随时退回 exe。
 
 ### 环境
 
@@ -133,7 +175,10 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1
 | `bun test` | 全仓库测试（含端到端；剧本式模型，不联网、不需要 Key） |
 | `bun run typecheck` | 6 个包分别 `tsc --noEmit` |
 | `bun run build:exe` | 构建单文件 exe：`dist/digital-employee.exe` |
+| `bun run build:desktop` | 构建桌面版：`dist/desktop/` 下的安装包、便携 zip 与绿色目录（需要 Hutch） |
+| `bun run dev:desktop` | 用 Hutch dev 模式起桌面窗口，改主进程后自动重建 |
 | `powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1` | exe 冒烟：临时工作区跑 A-01 + 起服务端校验接口与界面 |
+| `powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1` | 桌面版冒烟：临时工作区启动应用，校验接口/首页，HTTP 跑 A-01 到 delivered 并断言 docx |
 | `bun packages/cli/src/main.ts run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/`（`result.json`、`snapshot.json`、`events.jsonl`） |
 | `bun packages/cli/src/main.ts replay <workspace> <taskId>` | 按时间回放某任务的事件 |
 | `bun packages/cli/src/main.ts mcp-server` | 以 stdio 运行工具服务器 |
@@ -229,8 +274,9 @@ employees/weekly-report/
 
 - [设计文档](docs/design.md)：范围、技术栈、架构、状态机、质检、场景 A/B、界面、打包
 - [术语表](GLOSSARY.md)：任务、角色、步骤、事实等术语的准确含义
-- [ADR-0001 程序编排步骤](docs/adr/0001-program-orchestrated-steps.md) / [ADR-0002 事实与槽位](docs/adr/0002-facts-via-slots.md)
-- [规格 0001](docs/specs/0001-skeleton.md) 与 [tickets T1–T7](docs/specs/tickets)
+- [ADR-0001 程序编排步骤](docs/adr/0001-program-orchestrated-steps.md) / [ADR-0002 事实与槽位](docs/adr/0002-facts-via-slots.md) / [ADR-0003 Electrobun 桌面壳](docs/adr/0003-electrobun-desktop-shell.md)
+- [桌面版结果（体积、冷启动、A-01、人工目视清单）](docs/results/electrobun-desktop.md)、[Electrobun spike](docs/results/electrobun-spike.md)
+- [规格 0001](docs/specs/0001-skeleton.md)、[规格 0003 桌面壳](docs/specs/0003-electrobun-desktop-shell.md) 与 [tickets T1–T7](docs/specs/tickets)
 - [用例文件格式](samples/cases/README.md)
 
 ## 现状
@@ -239,9 +285,13 @@ employees/weekly-report/
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 30 条（6 条公开样例 + 24 条 S 系列）在剧本模式 30/30 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
 - 单文件 exe 已落地（设计 §14）：`bun run build:exe` → `dist/digital-employee.exe`（约 105.8MB），首次启动释放工作区，欢迎页可一键载入公开样例；`scripts/smoke-exe.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面”。
+- 桌面窗口（Electrobun）已落地（设计 §14、[ADR-0003](docs/adr/0003-electrobun-desktop-shell.md)）：`bun run build:desktop` → `dist/desktop/` 下安装包（51.0MB）、便携 zip（62.2MB）与绿色目录（安装后 142.0MB）；冷启动 0.61–1.06 秒，剧本模式 A-01 约 3.6 秒；`scripts/smoke-desktop.ps1` 覆盖“启动 → 接口/首页 → HTTP 跑 A-01 到 delivered 并断言 docx”。体积与人工目视清单见[桌面版结果](docs/results/electrobun-desktop.md)。
 - 已知限制：
   - 字体未嵌入。ticket 里的“思源黑体子集（OFL）”需要仓库里不存在、也没找到可合法分发来源的字体文件，因此**跳过字体嵌入**并保留回退：图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（`noto` 等缺失时由阅读端回退），不嵌入字体二进制。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
   - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时跑 `digital-employee.exe fixtures`（源数据已嵌入，输出到工作区 `samples/fixtures/`，约 31 秒）或源码 `de fixtures`；8 条依赖夹具的 S 用例要先这样生成夹具才能跑。
   - **工作区里的员工配置与样例不会自动覆盖**（保护用户改动）。升级 exe 后如需最新的默认配置/样例，请先删除或改名 `%APPDATA%\digital-employee`（或改用新的 `DE_WORKSPACE`），否则会继续用旧副本；源码模式同理，跑命令行用例时建议显式设置 `DE_WORKSPACE=<新的空目录>`。
   - 源码模式（`bun run dev:server`）不会释放工作区样例：欢迎页「载入公开样例」只在 exe 首次启动（或工作区里已有 `samples/`）时可用；源码演示请直接用 exe，或把 `samples/` 复制进工作区。
-  - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。
+  - exe 与桌面版安装包都未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。
+  - 桌面版只支持 **Windows 11 x64 + 系统 WebView2**；Windows 10 不在 Electrobun 官方支持列表，评审机不满足时用 exe。
+  - 桌面版**不承诺命令行子命令**（`init` / `mcp-server` / `run-cases` / `fixtures` / `replay` 继续用 exe）；桌面版与 exe 共用工作区，但**不要同时运行**。
+  - 桌面版构建需要 **Hutch**（仅构建机，使用者不需要）；中文用户名下必须把 `HUTCH_HOME` 指到纯 ASCII 路径。安装后约 **142MB**（本次实测；比 exe 的 105.8MB 大，下载体积则更小）。
