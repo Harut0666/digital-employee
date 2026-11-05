@@ -3,11 +3,13 @@
 
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEventStream, type Model } from "@mariozechner/pi-ai";
-import type { ModelProvider } from "../contract";
+import { THINKING_LEVELS, type ModelProvider, type ThinkingLevel } from "../contract";
 
 export interface ModelRef {
   connection: string;
   model: string;
+  /** 本步骤的思考强度原文（可能被手改坏）；缺省时由连接上的模型默认档位决定（Spec 0004） */
+  thinking?: string;
 }
 
 export interface ResolvedStepModel {
@@ -15,6 +17,12 @@ export interface ResolvedStepModel {
   /** 交给 pi Agent 的 streamFn；真实模型即 streamSimple，剧本式假模型是内存里的实现 */
   streamFn: StreamFn;
   apiKey?: string;
+  /** 交给 pi Agent 的 initialState.thinkingLevel：步骤 thinking → 连接默认档位 → off */
+  thinkingLevel: ThinkingLevel;
+  /** 连接级 HTTP 超时（毫秒）；缺省交给 pi-ai 的默认值 */
+  timeoutMs?: number;
+  /** 连接级客户端重试次数；缺省交给“设置 execution → 内置值” */
+  maxRetries?: number;
 }
 
 export interface JudgmentModelProvider extends ModelProvider {
@@ -23,6 +31,14 @@ export interface JudgmentModelProvider extends ModelProvider {
 
 export function isJudgmentModelProvider(p: ModelProvider): p is JudgmentModelProvider {
   return typeof (p as Partial<JudgmentModelProvider>).resolve === "function";
+}
+
+/**
+ * 推理档位归一化：只接受契约里的六个值，其它（手改坏值、旧文件）一律按 off。
+ * Spec 0004「关键约定」：档位集合 off / minimal / low / medium / high / xhigh。
+ */
+export function normalizeThinkingLevel(value: unknown): ThinkingLevel {
+  return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value) ? (value as ThinkingLevel) : "off";
 }
 
 const ZERO_USAGE = {

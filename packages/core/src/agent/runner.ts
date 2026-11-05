@@ -1,10 +1,17 @@
 // 判断步骤执行器（docs/design.md §6）：每次 run 新建一个 pi Agent，只开放白名单工具加 submit_result。
+//
+// T20：思考强度与执行参数不再写死——
+//   思考强度  步骤 model.thinking → 连接默认档位 → off（由模型提供者的 resolve 决定）
+//   步骤超时  step.limits.durationSec → settings.execution.stepTimeoutMs → 内置 120s
+//   模型重试  连接 maxRetries → settings.execution.modelMaxRetries → 内置 2 次
+// 执行默认值由引擎通过 `execution` 取值函数传入（每步读取，设置改动即时生效）。
 
 import { Agent, type AgentTool, type StreamFn } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Tool, TSchema } from "@mariozechner/pi-ai";
+import type { AssistantMessage, SimpleStreamOptions, Tool, TSchema } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import Ajv from "ajv";
-import type { JudgmentFailure, JudgmentRunner, JudgmentStepInput, JudgmentStepResult, ToolDescriptor } from "../contract";
+import type { ExecutionSettings, JudgmentFailure, JudgmentRunner, JudgmentStepInput, JudgmentStepResult, ToolDescriptor } from "../contract";
+import { resolveModelMaxRetries, resolveStepTimeoutMs } from "./execution";
 import { completedStream, failedStream, isJudgmentModelProvider } from "./provider";
 
 export const SUBMIT_TOOL = "submit_result";
@@ -30,11 +37,29 @@ function lastText(message: AssistantMessage): string {
   return message.errorMessage ?? "模型调用失败";
 }
 
-export function createJudgmentRunner(): JudgmentRunner {
-  return { run };
+export interface JudgmentRunnerOptions {
+  /**
+   * 执行与预算默认值（引擎从 settings.execution 读）。每个步骤开始前调用一次，
+   * 因此设置页保存后对之后新建 / 新开始的判断步骤立即生效。
+   */
+  execution?: () => Partial<ExecutionSettings> | undefined;
 }
 
-async function run(input: JudgmentStepInput): Promise<JudgmentStepResult> {
+export function createJudgmentRunner(options: JudgmentRunnerOptions = {}): JudgmentRunner {
+  return {
+    run(input) {
+      return run(input, options.execution?.());
+    },
+  };
+}
+
+/** 把毫秒按人读的秒数写进失败说明（0.05 秒这种小数保留两位）。 */
+function describeSeconds(timeoutMs: number): string {
+  const seconds = timeoutMs / 1000;
+  return Number.isInteger(seconds) ? `${seconds}` : `${Number(seconds.toFixed(2))}`;
+}
+
+async function run(input: JudgmentStepInput, execution: Partial<ExecutionSettings> | undefined): Promise<JudgmentStepResult> {
   let realCalls = 0;
   const fail = (failure: JudgmentFailure, message: string): JudgmentStepResult => ({ ok: false, failure, message, modelCalls: realCalls });
 
@@ -149,6 +174,8 @@ async function run(input: JudgmentStepInput): Promise<JudgmentStepResult> {
 
   // ---- 模型调用（streamFn 包装：轮次、预算、重放、回调）----
   const baseStream = resolved.streamFn;
+  // 重试次数：连接级配置 → 设置 execution 默认 → 内置值（在每次步骤开始时解析一次）
+  const modelMaxRetries = resolveModelMaxRetries(resolved.maxRetries, execution);
   const streamFn: StreamFn = async (model, context, options) => {
     if (failure) return failedStream(model, "error", failure.message);
     if (submission) return failedStream(model, "aborted", "结果已提交");
@@ -172,11 +199,19 @@ async function run(input: JudgmentStepInput): Promise<JudgmentStepResult> {
       return failedStream(model, "error", failure.message);
     }
 
+    // 每模型参数与连接级参数走 pi 的流选项：输出上限取模型配置（缺省 8192），超时/重试按解析结果
+    const streamOptions: SimpleStreamOptions = {
+      ...options,
+      maxTokens: model.maxTokens,
+      maxRetries: modelMaxRetries,
+      ...(resolved.timeoutMs !== undefined ? { timeoutMs: resolved.timeoutMs } : {}),
+    };
+
     realCalls++;
     const started = Date.now();
     let stream;
     try {
-      stream = await baseStream(model, { ...context, tools: visibleTools }, options);
+      stream = await baseStream(model, { ...context, tools: visibleTools }, streamOptions);
     } catch (e) {
       return failedStream(model, "error", e instanceof Error ? e.message : String(e));
     }
@@ -194,7 +229,8 @@ async function run(input: JudgmentStepInput): Promise<JudgmentStepResult> {
   };
 
   const agent = new Agent({
-    initialState: { systemPrompt: input.systemPrompt, model: resolved.model, tools: agentTools, thinkingLevel: "off" },
+    // 思考强度来自“步骤 → 连接默认档位 → off”，不再写死关闭
+    initialState: { systemPrompt: input.systemPrompt, model: resolved.model, tools: agentTools, thinkingLevel: resolved.thinkingLevel },
     streamFn,
     toolExecution: "sequential",
     getApiKey: resolved.apiKey === undefined ? undefined : () => resolved.apiKey,
@@ -223,7 +259,9 @@ async function run(input: JudgmentStepInput): Promise<JudgmentStepResult> {
   const timers: ReturnType<typeof setTimeout>[] = [];
   const untilDeadline = input.budget.deadline - Date.now();
   if (untilDeadline <= 0) return fail("task_duration", "任务总时长已到");
-  timers.push(setTimeout(() => stop("step_duration", `超过本步骤的时长上限（${step.limits.durationSec} 秒）`), step.limits.durationSec * 1000));
+  // 步骤超时：步骤配置 → 设置 execution 默认 → 内置 120 秒
+  const stepTimeoutMs = resolveStepTimeoutMs(step.limits?.durationSec !== undefined ? step.limits.durationSec * 1000 : undefined, execution);
+  timers.push(setTimeout(() => stop("step_duration", `超过本步骤的时长上限（${describeSeconds(stepTimeoutMs)} 秒）`), stepTimeoutMs));
   timers.push(setTimeout(() => stop("task_duration", "任务总时长已到"), untilDeadline));
   const onAbort = () => stop("model_error", "步骤已被取消");
   if (input.signal?.aborted) {

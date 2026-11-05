@@ -1,6 +1,8 @@
 // 模型连接子页：多连接编辑、测试连接、API Key 打码与环境变量来源。
+// T20：每张连接卡片增加“高级”折叠区——每模型上下文窗口 / 输出上限 / 推理档位，连接级超时与重试。
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Input, Popconfirm, Space, Tag, Tooltip, Typography } from "antd";
+import { App as AntApp, Button, Collapse, Input, InputNumber, Popconfirm, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { THINKING_LEVELS, type ModelOptions, type ThinkingLevel } from "@de/core/contract";
 import {
   ApiOutlined,
   CheckCircleFilled,
@@ -18,6 +20,25 @@ import type { ConnectionTestResult, SettingsApi, SettingsConnectionView } from "
 
 const { Text } = Typography;
 
+/** 推理档位的中文标签（Spec 0004 档位集合）。 */
+const THINKING_LABELS: Record<ThinkingLevel, string> = {
+  off: "关闭",
+  minimal: "最低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "最高",
+};
+
+/** 上下文窗口 / 输出上限的范围（与服务端校验一致）。 */
+const CONTEXT_WINDOW_MIN = 1_000;
+const CONTEXT_WINDOW_MAX = 4_000_000;
+const MAX_TOKENS_MIN = 1;
+const MAX_TOKENS_MAX = 2_000_000;
+const TIMEOUT_MIN_MS = 1_000;
+const TIMEOUT_MAX_MS = 3_600_000;
+const RETRIES_MAX = 10;
+
 const row: React.CSSProperties = { display: "flex", gap: 16, alignItems: "flex-start", marginBottom: 16 };
 const labelStyle: React.CSSProperties = { width: 96, flex: "none", color: "var(--muted)", paddingTop: 6 };
 const cardStyle: React.CSSProperties = {
@@ -34,6 +55,23 @@ interface DraftState {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  /** 每模型高级参数；没设置的模型就是“用缺省值” */
+  modelOptions: Record<string, ModelOptions>;
+  /** 连接级超时（毫秒）；undefined 表示用 pi-ai 默认值 */
+  timeoutMs?: number;
+  /** 连接级重试次数；undefined 表示按设置 execution → 内置值 */
+  maxRetries?: number;
+}
+
+function draftOf(connection: SettingsConnectionView): DraftState {
+  return {
+    baseUrl: connection.baseUrl,
+    apiKey: "",
+    models: connection.models,
+    modelOptions: structuredClone(connection.modelOptions ?? {}),
+    ...(connection.timeoutMs !== undefined ? { timeoutMs: connection.timeoutMs } : {}),
+    ...(connection.maxRetries !== undefined ? { maxRetries: connection.maxRetries } : {}),
+  };
 }
 
 type TestState = ConnectionTestResult | "loading" | undefined;
@@ -94,15 +132,28 @@ function ConnectionCard({
 }) {
   const { message } = AntApp.useApp();
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<DraftState>({ baseUrl: connection.baseUrl, apiKey: "", models: connection.models });
+  const [draft, setDraft] = useState<DraftState>(draftOf(connection));
   const [test, setTest] = useState<TestState>();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setDraft({ baseUrl: connection.baseUrl, apiKey: "", models: connection.models });
+    setDraft(draftOf(connection));
   }, [connection]);
 
   const status = statusOf(test, connection);
+
+  /** 改某个模型的一个高级参数：值清空（undefined）时删掉该字段，全空时删掉整个模型条目。 */
+  const setModelOption = (model: string, key: keyof ModelOptions, value: number | ThinkingLevel | undefined) => {
+    setDraft((current) => {
+      const modelOptions = structuredClone(current.modelOptions);
+      const entry: ModelOptions = { ...(modelOptions[model] ?? {}) };
+      if (value === undefined) delete entry[key];
+      else Object.assign(entry, { [key]: value });
+      if (Object.keys(entry).length === 0) delete modelOptions[model];
+      else modelOptions[model] = entry;
+      return { ...current, modelOptions };
+    });
+  };
 
   const save = async () => {
     if (!draft.baseUrl.trim()) return message.warning("请填写 Base URL");
@@ -113,6 +164,11 @@ function ConnectionCard({
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim() === "" ? undefined : draft.apiKey.trim(),
         models: draft.models,
+        // 没有配置任何每模型参数时传 null，避免在 settings.json 里留下空对象
+        modelOptions: Object.keys(draft.modelOptions).length > 0 ? draft.modelOptions : null,
+        // undefined 表示没设置：传 null 让服务端清掉（老配置可能带着旧值）
+        timeoutMs: draft.timeoutMs ?? null,
+        maxRetries: draft.maxRetries ?? null,
       });
       if (res.warning) message.warning(`已保存，但重建模型提供者失败：${res.warning}`);
       else message.success("已保存，对新的判断步骤生效");
@@ -190,6 +246,119 @@ function ConnectionCard({
           <div style={row}>
             <div style={labelStyle}>模型</div>
             <ModelTags value={draft.models} onChange={(models) => setDraft((d) => ({ ...d, models }))} />
+          </div>
+          <div style={{ ...row, marginBottom: 8 }}>
+            <div style={labelStyle}>高级</div>
+            <div style={{ flex: 1 }}>
+              <Collapse
+                size="small"
+                ghost
+                items={[
+                  {
+                    key: "advanced",
+                    label: (
+                      <Text type="secondary">
+                        每模型上下文窗口 / 输出上限 / 推理档位，连接级超时与重试（保存后对新的判断步骤生效）
+                      </Text>
+                    ),
+                    children: (
+                      <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                        <Space size={24} wrap>
+                          <label>
+                            <Text type="secondary">连接超时（毫秒）</Text>
+                            <div>
+                              <InputNumber
+                                min={TIMEOUT_MIN_MS}
+                                max={TIMEOUT_MAX_MS}
+                                step={1_000}
+                                style={{ width: 140 }}
+                                placeholder="pi-ai 默认"
+                                value={draft.timeoutMs}
+                                onChange={(value) => setDraft((d) => ({ ...d, timeoutMs: value ?? undefined }))}
+                              />
+                            </div>
+                          </label>
+                          <label>
+                            <Text type="secondary">重试次数</Text>
+                            <div>
+                              <InputNumber
+                                min={0}
+                                max={RETRIES_MAX}
+                                style={{ width: 120 }}
+                                placeholder="跟随设置"
+                                value={draft.maxRetries}
+                                onChange={(value) => setDraft((d) => ({ ...d, maxRetries: value ?? undefined }))}
+                              />
+                            </div>
+                          </label>
+                          <Text type="secondary" style={{ fontSize: 12, maxWidth: 320 }}>
+                            超时只影响单次 HTTP 请求；重试次数为 0 表示不重试，留空则按“设置 → 执行与预算”的默认值。
+                          </Text>
+                        </Space>
+                        {draft.models.length === 0 ? (
+                          <Text type="secondary">先添加模型，再为每个模型配置参数。</Text>
+                        ) : (
+                          draft.models.map((model) => {
+                            const options = draft.modelOptions[model] ?? {};
+                            return (
+                              <div key={model} style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px" }}>
+                                <Space size={16} wrap align="start">
+                                  <Text strong style={{ display: "inline-block", minWidth: 140 }}>
+                                    {model}
+                                  </Text>
+                                  <label>
+                                    <Text type="secondary">上下文窗口</Text>
+                                    <div>
+                                      <InputNumber
+                                        min={CONTEXT_WINDOW_MIN}
+                                        max={CONTEXT_WINDOW_MAX}
+                                        step={1_000}
+                                        style={{ width: 150 }}
+                                        placeholder="128000"
+                                        value={options.contextWindow}
+                                        onChange={(value) => setModelOption(model, "contextWindow", value ?? undefined)}
+                                      />
+                                    </div>
+                                  </label>
+                                  <label>
+                                    <Text type="secondary">输出上限</Text>
+                                    <div>
+                                      <InputNumber
+                                        min={MAX_TOKENS_MIN}
+                                        max={MAX_TOKENS_MAX}
+                                        step={256}
+                                        style={{ width: 130 }}
+                                        placeholder="8192"
+                                        value={options.maxTokens}
+                                        onChange={(value) => setModelOption(model, "maxTokens", value ?? undefined)}
+                                      />
+                                    </div>
+                                  </label>
+                                  <label>
+                                    <Text type="secondary">推理档位</Text>
+                                    <div>
+                                      <Select<ThinkingLevel>
+                                        allowClear
+                                        style={{ width: 120 }}
+                                        placeholder="关闭"
+                                        value={options.defaultReasoningEffort}
+                                        optionFilterProp="label"
+                                        onChange={(value) => setModelOption(model, "defaultReasoningEffort", value ?? undefined)}
+                                        options={THINKING_LEVELS.map((level) => ({ value: level, label: THINKING_LABELS[level] }))}
+                                      />
+                                    </div>
+                                  </label>
+                                </Space>
+                              </div>
+                            );
+                          })
+                        )}
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingBottom: 8 }}>
             <Button icon={<ThunderboltOutlined />} loading={test === "loading"} onClick={runTest}>

@@ -1,10 +1,31 @@
 // 工作步骤：步骤卡片（只能改参数，不能增删和排序；可选步骤可以开关）写回 workflow.yaml。
 // 判断步骤的提示词是独立文件（prompts/*.md），在这里直接编辑并作为单独文件保存。
+// T20：判断步骤增加“思考强度”（写回 model.thinking），任务级增加工具重试退避编辑（limits.toolRetry.backoffMs）。
 import { Alert, Card, Collapse, Input, InputNumber, Select, Space, Switch, Tag, Typography } from "antd";
-import { TOOL_NAMES } from "@de/core/contract";
+import { THINKING_LEVELS, TOOL_NAMES, type ThinkingLevel } from "@de/core/contract";
 import { asArray, asRecord, textOf, type Json, type TabProps } from "./helpers";
 
 const EDITABLE_TOOLS = TOOL_NAMES.filter((tool) => tool !== "web_search");
+
+/** 推理档位的中文标签；不设置时跟随连接上的模型默认档位。 */
+const THINKING_LABELS: Record<ThinkingLevel, string> = {
+  off: "关闭",
+  minimal: "最低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "最高",
+};
+
+/** 逗号 / 空格分隔的毫秒数：只保留合法数字（非法输入由保存时的配置校验兜底拒绝）。 */
+function parseBackoff(text: string): number[] {
+  return text
+    .split(/[,，\s]+/)
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+}
 
 const KIND_LABEL: Record<string, { text: string; color: string }> = {
   compute: { text: "计算步骤", color: "blue" },
@@ -38,6 +59,7 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
         type="info"
         showIcon
         message="步骤顺序与数量由计算步骤之间的数据依赖决定，这里只能修改参数；标为“可选”的步骤可以关闭。"
+        description="判断步骤的“思考强度”不设置时跟随模型连接上的默认档位（都没配置按“关闭”）；步骤超时以秒为单位。"
       />
 
       <Card size="small" title="任务级上限">
@@ -80,6 +102,21 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
                   draft.limits = draft.limits ?? {};
                   draft.limits.toolRetry = draft.limits.toolRetry ?? {};
                   draft.limits.toolRetry.attempts = value ?? 1;
+                })
+              }
+            />
+          </label>
+          <label>
+            <Typography.Text type="secondary">工具重试退避（毫秒，逗号分隔）</Typography.Text>
+            <Input
+              style={{ width: 180 }}
+              value={asArray<number>(toolRetry.backoffMs).join(",")}
+              placeholder="500,1500,4000"
+              onChange={(event) =>
+                update((draft) => {
+                  draft.limits = draft.limits ?? {};
+                  draft.limits.toolRetry = draft.limits.toolRetry ?? {};
+                  draft.limits.toolRetry.backoffMs = parseBackoff(event.target.value);
                 })
               }
             />
@@ -153,11 +190,28 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
                     />
                   </label>
                   <label>
-                    <Typography.Text type="secondary">时长上限（秒）</Typography.Text>
+                    <Typography.Text type="secondary">步骤超时（秒）</Typography.Text>
                     <InputNumber
                       min={1}
                       value={stepLimits.durationSec}
                       onChange={(value) => updateStep(index, (draft) => void (((draft.limits ??= {}).durationSec = value ?? 1)))}
+                    />
+                  </label>
+                  <label>
+                    <Typography.Text type="secondary">思考强度</Typography.Text>
+                    <Select<ThinkingLevel>
+                      allowClear
+                      style={{ width: 140 }}
+                      placeholder="跟随连接默认"
+                      value={typeof model.thinking === "string" ? (model.thinking as ThinkingLevel) : undefined}
+                      onChange={(value) =>
+                        updateStep(index, (draft) => {
+                          draft.model = draft.model ?? {};
+                          if (value === undefined) delete draft.model.thinking;
+                          else draft.model.thinking = value;
+                        })
+                      }
+                      options={THINKING_LEVELS.map((level) => ({ value: level, label: THINKING_LABELS[level] }))}
                     />
                   </label>
                   <label>

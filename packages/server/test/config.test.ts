@@ -268,3 +268,56 @@ describe("保存与版本", () => {
     expect((await call("/api/employees/weekly-report/config/versions/nope/restore", { method: "POST" })).status).toBe(404);
   });
 });
+
+// T20：工作步骤的思考强度（model.thinking）、步骤超时（limits.durationSec）与重试退避（limits.toolRetry.backoffMs）。
+describe("工作步骤的思考强度与执行参数", () => {
+  test("合法值写回 workflow.yaml：thinking=high、时长 120 秒、退避 [200, 800]", async () => {
+    const { put, config, employeeDir, workspaceDir, call } = setup();
+    const data = await workflowData(config);
+    const writeStep = data.steps.find((s: any) => s.id === "write_report");
+    writeStep.model = { connection: "default", model: "default", thinking: "high" };
+    writeStep.limits.durationSec = 120;
+    data.limits.toolRetry.backoffMs = [200, 800];
+
+    const res = await put("/api/employees/weekly-report/config/workflow.yaml", { data });
+    expect(res.status).toBe(200);
+    expect(versionIds(workspaceDir)).toHaveLength(1);
+
+    const saved = read(employeeDir, "workflow.yaml");
+    expect(saved).toContain("thinking: high");
+    expect(saved).toContain("durationSec: 120");
+    // 重新加载（等价于重启）后仍在
+    const after = (await (await call("/api/employees/weekly-report/config")).json()) as EmployeeConfigResponse;
+    const step = after.config!.workflow.steps.find((s) => s.id === "write_report")!;
+    expect(step.kind === "judge" ? step.model.thinking : undefined).toBe("high");
+    expect(after.config!.workflow.limits.toolRetry.backoffMs).toEqual([200, 800]);
+  });
+
+  test("非法 thinking 返回 400，文件不变、不留版本", async () => {
+    const { put, config, employeeDir, workspaceDir } = setup();
+    const before = read(employeeDir, "workflow.yaml");
+    const data = await workflowData(config);
+    data.steps.find((s: any) => s.id === "write_report").model = { connection: "default", model: "default", thinking: "turbo" };
+
+    const res = await put("/api/employees/weekly-report/config/workflow.yaml", { data });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { errors: string[] }).errors.join("\n")).toContain("thinking");
+    expect(read(employeeDir, "workflow.yaml")).toBe(before);
+    expect(versionIds(workspaceDir)).toEqual([]);
+  });
+
+  test("非法步骤时长与负数退避同样被拒绝", async () => {
+    const { put, config, employeeDir } = setup();
+    const before = read(employeeDir, "workflow.yaml");
+
+    const zeroTimeout = await workflowData(config);
+    zeroTimeout.steps.find((s: any) => s.id === "write_report").limits.durationSec = 0;
+    expect((await put("/api/employees/weekly-report/config/workflow.yaml", { data: zeroTimeout })).status).toBe(400);
+
+    const negativeBackoff = await workflowData(config);
+    negativeBackoff.limits.toolRetry.backoffMs = [500, -1];
+    expect((await put("/api/employees/weekly-report/config/workflow.yaml", { data: negativeBackoff })).status).toBe(400);
+
+    expect(read(employeeDir, "workflow.yaml")).toBe(before);
+  });
+});
