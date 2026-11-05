@@ -12,7 +12,7 @@ import { formatBackoffInput, validateExecutionForm, type ExecutionFormValues } f
 
 const { Text } = Typography;
 
-const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "#fff", padding: "16px 20px", marginBottom: 16 };
+const card: React.CSSProperties = { border: "1px solid var(--line)", borderRadius: 12, background: "var(--card)", padding: "16px 20px", marginBottom: 16 };
 const row: React.CSSProperties = { display: "flex", gap: 16, alignItems: "flex-start", padding: "12px 0", borderTop: "1px solid var(--line)" };
 const labelStyle: React.CSSProperties = { width: 156, flex: "none", color: "var(--muted)", paddingTop: 6 };
 const hintStyle: React.CSSProperties = { color: "var(--muted)", fontSize: 12, marginTop: 6 };
@@ -123,7 +123,8 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
               onChange={(value) => set("stepTimeoutMs", value)}
             />
             <div style={hintStyle}>
-              单个工作步骤的最大执行时间（{STEP_TIMEOUT_MIN_MS}–{STEP_TIMEOUT_MAX_MS} 毫秒，默认 120000）。对之后的新任务生效。
+              单个工作步骤的最大执行时间（{STEP_TIMEOUT_MIN_MS}–{STEP_TIMEOUT_MAX_MS} 毫秒，默认 120000）。
+              员工配置里给步骤配置了超时的以员工配置为准；对之后的新任务生效。
             </div>
           </div>
         </div>
@@ -141,7 +142,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
               onChange={(value) => set("modelMaxRetries", value)}
             />
             <div style={hintStyle}>
-              模型调用失败后的重试次数（0 表示不重试，默认 2）。对之后的新任务生效。
+              模型调用失败后的重试次数（0 表示不重试，默认 2）。连接上配置了重试次数时以连接为准；对之后的新任务生效。
             </div>
           </div>
         </div>
@@ -174,7 +175,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
               onChange={(value) => set("qcAutofix", value)}
             />
             <div style={hintStyle}>
-              质检不通过时自动重跑写作步骤的上限（默认 3）。员工配置里配置了自动修正上限时以员工配置为准。
+              质检不通过时自动重跑写作步骤的上限默认值（默认 3）。员工配置里配置了自动修正上限时以员工配置为准。
             </div>
           </div>
         </div>
