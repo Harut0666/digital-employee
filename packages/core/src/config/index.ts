@@ -17,6 +17,29 @@ export {
   saveDemoSettings,
   writeSettingsObject,
 } from "./workspace";
+export {
+  DEFAULT_CONNECTIONS,
+  DEFAULT_DEFAULT_CONNECTION,
+  DEFAULT_DEFAULT_MODEL,
+  SETTINGS_FILE_NAME,
+  applyAppSettingsPatch,
+  appSettingsWithDefaults,
+  ensureSettingsFile,
+  modelSettingsOf,
+  normalizeSettingsDocument,
+  parseAppSettingsPatch,
+  readRawSettingsObject,
+  readSettingsDocument,
+  serializeSettingsDocument,
+  settingsDocumentOfImportBody,
+  settingsDocumentView,
+  settingsExport,
+  settingsPathFor,
+  updateSettingsDocument,
+  validateSettingsDocumentInput,
+  writeSettingsDocument,
+  type SettingsValidation,
+} from "./settings-document";
 export { collectWritingRequirements, validateFormSchemaPurposes } from "./form";
 export { CONFIG_ROOT_FILES, describeConfigFiles, isWritableConfigPath, listConfigFiles, normalizeConfigPath, readConfigFileText, readConfigFiles } from "./files";
 export { prepareConfigText, type ConfigFileInput, type PrepareConfigResult } from "./write";
