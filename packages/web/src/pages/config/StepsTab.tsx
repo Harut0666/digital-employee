@@ -59,7 +59,7 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
         type="info"
         showIcon
         message="步骤顺序与数量由计算步骤之间的数据依赖决定，这里只能修改参数；标为“可选”的步骤可以关闭。"
-        description="判断步骤的“思考强度”不设置时跟随模型连接上的默认档位（都没配置按“关闭”）；步骤超时以秒为单位。"
+        description="判断步骤的“思考强度”不设置时跟随模型连接上的默认档位（都没配置按“关闭”）；步骤超时与质检自动修正次数留空时，用设置页「执行与预算」里的值（内置 120 秒 / 3 次）。"
       />
 
       <Card size="small" title="任务级上限">
@@ -107,7 +107,7 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
             />
           </label>
           <label>
-            <Typography.Text type="secondary">工具重试退避（毫秒，逗号分隔）</Typography.Text>
+            <Typography.Text type="secondary">工具重试退避（毫秒，留空用设置值）</Typography.Text>
             <Input
               style={{ width: 180 }}
               value={asArray<number>(toolRetry.backoffMs).join(",")}
@@ -122,14 +122,16 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
             />
           </label>
           <label>
-            <Typography.Text type="secondary">质检自动修正次数</Typography.Text>
+            <Typography.Text type="secondary">质检自动修正次数（留空用设置值）</Typography.Text>
             <InputNumber
               min={0}
+              placeholder="默认（设置值）"
               value={limits.qcAutofix}
               onChange={(value) =>
                 update((draft) => {
                   draft.limits = draft.limits ?? {};
-                  draft.limits.qcAutofix = value ?? 0;
+                  if (value === null) delete draft.limits.qcAutofix;
+                  else draft.limits.qcAutofix = value;
                 })
               }
             />
@@ -190,11 +192,18 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
                     />
                   </label>
                   <label>
-                    <Typography.Text type="secondary">步骤超时（秒）</Typography.Text>
+                    <Typography.Text type="secondary">步骤超时（秒，留空用设置值）</Typography.Text>
                     <InputNumber
                       min={1}
+                      placeholder="默认（设置值）"
                       value={stepLimits.durationSec}
-                      onChange={(value) => updateStep(index, (draft) => void (((draft.limits ??= {}).durationSec = value ?? 1)))}
+                      onChange={(value) =>
+                        updateStep(index, (draft) => {
+                          draft.limits = draft.limits ?? {};
+                          if (value === null) delete draft.limits.durationSec;
+                          else draft.limits.durationSec = value;
+                        })
+                      }
                     />
                   </label>
                   <label>

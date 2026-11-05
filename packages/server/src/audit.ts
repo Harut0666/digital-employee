@@ -25,7 +25,7 @@ export const AUDIT_ACTIONS = [
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** 结果：前端取消不发请求，因此服务端只可能知道成功与失败。 */
-export const AUDIT_RESULTS = ["success", "failure", "cancelled"] as const;
+export const AUDIT_RESULTS = ["success", "failure"] as const;
 export type AuditResult = (typeof AUDIT_RESULTS)[number];
 
 export interface AuditInput {

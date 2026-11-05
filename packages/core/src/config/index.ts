@@ -12,10 +12,8 @@ export {
   isDeepSeekConnection,
   loadDemoSettings,
   loadSettings,
-  readSettingsObject,
   resolveWorkspace,
   saveDemoSettings,
-  writeSettingsObject,
 } from "./workspace";
 export {
   DEFAULT_CONNECTIONS,
@@ -23,7 +21,6 @@ export {
   DEFAULT_DEFAULT_MODEL,
   SETTINGS_FILE_NAME,
   applyAppSettingsPatch,
-  appSettingsWithDefaults,
   ensureSettingsFile,
   modelSettingsOf,
   normalizeSettingsDocument,

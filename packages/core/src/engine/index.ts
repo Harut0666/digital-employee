@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { createJudgmentRunner } from "../agent";
+import { createJudgmentRunner, resolveQcAutofix, resolveToolRetryBackoffMs } from "../agent";
 import { loadEmployeeConfigSync, loadDemoSettings, readSettingsDocument, saveDemoSettings } from "../config";
 import { collectWritingRequirements } from "../config/form";
 import { createQcEngine, renderSlots } from "../qc";
@@ -501,6 +501,8 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
   async function runCompute(rt: Runtime, step: Extract<StepConfig, { kind: "compute" }>, args: Record<string, unknown>): Promise<"done" | "paused"> {
     const retry = rt.config.workflow.limits.toolRetry;
+    // 退避：员工配置写了非空数组就以它为准，空数组时用设置里的 execution.retryBackoffMs
+    const backoffMs = resolveToolRetryBackoffMs(retry.backoffMs, executionDefaults());
     let result: ToolCallResult = { ok: false, error: "未调用", retryable: false };
     let tried = 0;
     for (let attempt = 1; attempt <= retry.attempts; attempt++) {
@@ -521,7 +523,7 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
         resultSha256: result.ok ? sha256(JSON.stringify(result.data ?? null)) : undefined,
       });
       if (result.ok || !result.retryable || attempt === retry.attempts) break;
-      const wait = retry.backoffMs[Math.min(attempt - 1, retry.backoffMs.length - 1)] ?? 0;
+      const wait = backoffMs[Math.min(attempt - 1, backoffMs.length - 1)] ?? 0;
       if (wait > 0) await sleep(wait);
     }
     if (!result.ok) {
@@ -691,7 +693,8 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
     }
     const issues = failed.flatMap((c) => c.issues.map((i) => `${c.label}：${i}`));
     const fixable = failed.every((c) => c.fixStep && stepsOf(rt).some((s) => s.id === c.fixStep));
-    const limit = rt.config.workflow.limits.qcAutofix;
+    // 自动修正上限：员工配置写了就以它为准，否则用设置里的 execution.qcAutofix（内置 3）
+    const limit = resolveQcAutofix(rt.config.workflow.limits.qcAutofix, executionDefaults());
     if (fixable && proj.autofixCount < limit) {
       transition(rt, "qc_autofix", "system");
       return;

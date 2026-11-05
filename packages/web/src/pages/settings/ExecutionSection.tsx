@@ -67,7 +67,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
       setRevision(view.revision);
       setDraft(draftOf(view.execution));
       setProblem(undefined);
-      message.success("已保存，对之后的新任务生效");
+      message.success("已保存，对之后开始的步骤生效");
     } catch (e) {
       const text = e instanceof Error ? e.message : "保存失败";
       setProblem(text);
@@ -89,15 +89,15 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
     <div>
       <h2 style={{ margin: 0, fontSize: 24 }}>执行与预算</h2>
       <div style={{ color: "var(--muted)", margin: "4px 0 16px" }}>
-        步骤超时、模型重试与质检自动修正的默认值。保存后对<strong>之后的新任务</strong>生效，运行中的步骤不改变。
+        步骤超时、模型重试、工具退避与质检自动修正的默认值。保存后对<strong>之后开始的步骤</strong>生效；正在执行的步骤沿用旧值。
       </div>
 
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="员工配置里的值优先"
-        description="员工配置的“工作步骤”里显式配置了步骤超时、重试次数与自动修正上限时，以员工配置为准；这里的值只作为未配置时的默认值。"
+        message="员工配置与连接配置优先"
+        description="员工配置里显式写了步骤超时、工具重试退避或质检自动修正上限时，以员工配置为准；连接上写了模型重试次数时以连接为准。这里的值只在这些地方没写时兜底。"
       />
 
       <div style={card}>
@@ -124,7 +124,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
             />
             <div style={hintStyle}>
               单个工作步骤的最大执行时间（{STEP_TIMEOUT_MIN_MS}–{STEP_TIMEOUT_MAX_MS} 毫秒，默认 120000）。
-              员工配置里给步骤配置了超时的以员工配置为准；对之后的新任务生效。
+              员工配置里给步骤写了“步骤超时”的以员工配置为准；步骤没写时用这里的值，对之后开始的步骤生效。
             </div>
           </div>
         </div>
@@ -142,7 +142,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
               onChange={(value) => set("modelMaxRetries", value)}
             />
             <div style={hintStyle}>
-              模型调用失败后的重试次数（0 表示不重试，默认 2）。连接上配置了重试次数时以连接为准；对之后的新任务生效。
+              模型调用失败后的重试次数（0 表示不重试，默认 2）。连接上配置了重试次数时以连接为准，否则用这里的值；对之后开始的步骤生效。
             </div>
           </div>
         </div>
@@ -158,6 +158,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
             />
             <div style={hintStyle}>
               逗号分隔的毫秒数，第 N 次重试取第 N 项；最多 10 项、单项不超过 600000 毫秒。默认 500, 1500, 4000。
+              员工配置的“工具重试退避”不为空时以员工配置为准；留空（或为空数组）时用这里的值。
             </div>
           </div>
         </div>
@@ -175,7 +176,7 @@ export function ExecutionSection({ api }: { api: SettingsApi }) {
               onChange={(value) => set("qcAutofix", value)}
             />
             <div style={hintStyle}>
-              质检不通过时自动重跑写作步骤的上限默认值（默认 3）。员工配置里配置了自动修正上限时以员工配置为准。
+              质检不通过时自动重跑写作步骤的上限默认值（默认 3）。员工配置里写了自动修正上限时以员工配置为准；留空时用这里的值。
             </div>
           </div>
         </div>

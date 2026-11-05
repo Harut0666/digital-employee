@@ -13,12 +13,13 @@ import {
 } from "@ant-design/icons";
 import type { AppSettingsView, ApprovalPolicy, DefaultRole, SandboxMode } from "@de/core/contract";
 import type { SettingsApi } from "../../api/settings";
+import { useSetApprovalPolicy } from "../../components/ApprovalPolicy";
 import { useDangerConfirm } from "../../components/ConfirmDialog";
+import { ROLE_LABELS } from "../../view/permissions";
 import { SettingsTransfer } from "./SettingsTransfer";
 import {
   APPROVAL_OPTIONS,
   DEFAULT_ROLE_OPTIONS,
-  ROLE_LABELS,
   SANDBOX_PRESETS,
   SECURITY_DETAIL,
   SECURITY_NOTE,
@@ -38,6 +39,7 @@ const labelStyle: React.CSSProperties = { width: 132, flex: "none", color: "var(
 export function PermissionsSection({ api }: { api: SettingsApi }) {
   const { message } = AntApp.useApp();
   const confirmDanger = useDangerConfirm();
+  const setApprovalPolicy = useSetApprovalPolicy();
   const [view, setView] = useState<AppSettingsView>();
   const [defaultRole, setDefaultRole] = useState<DefaultRole>("initiator");
   const [saving, setSaving] = useState<string>();
@@ -48,6 +50,8 @@ export function PermissionsSection({ api }: { api: SettingsApi }) {
       (next) => {
         setView(next);
         setDefaultRole(next.permissions.defaultRole);
+        // 导入设置或别处改动后，确认框要按最新审批策略走
+        setApprovalPolicy(next.permissions.approvalPolicy);
       },
       (e) => message.error(e instanceof Error ? e.message : "读取权限设置失败"),
     );
@@ -68,6 +72,7 @@ export function PermissionsSection({ api }: { api: SettingsApi }) {
     try {
       const next = await api.patchAppSettings({ revision: view.revision, permissions: body });
       setView(next);
+      setApprovalPolicy(next.permissions.approvalPolicy);
       message.success("已保存");
     } catch (e) {
       message.error(e instanceof Error ? e.message : "保存权限设置失败");

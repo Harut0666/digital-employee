@@ -2,7 +2,7 @@
 //
 // T20：思考强度与执行参数不再写死——
 //   思考强度  步骤 model.thinking → 连接默认档位 → off（由模型提供者的 resolve 决定）
-//   步骤超时  step.limits.durationSec → settings.execution.stepTimeoutMs → 内置 120s
+//   步骤超时  step.limits.durationSec（可省略）→ settings.execution.stepTimeoutMs → 内置 120s
 //   模型重试  连接 maxRetries → settings.execution.modelMaxRetries → 内置 2 次
 // 执行默认值由引擎通过 `execution` 取值函数传入（每步读取，设置改动即时生效）。
 
@@ -259,8 +259,9 @@ async function run(input: JudgmentStepInput, execution: Partial<ExecutionSetting
   const timers: ReturnType<typeof setTimeout>[] = [];
   const untilDeadline = input.budget.deadline - Date.now();
   if (untilDeadline <= 0) return fail("task_duration", "任务总时长已到");
-  // 步骤超时：步骤配置 → 设置 execution 默认 → 内置 120 秒
-  const stepTimeoutMs = resolveStepTimeoutMs(step.limits?.durationSec !== undefined ? step.limits.durationSec * 1000 : undefined, execution);
+  // 步骤超时：步骤配置（可省略）→ 设置 execution 默认 → 内置 120 秒
+  const stepDurationSec = step.limits.durationSec;
+  const stepTimeoutMs = resolveStepTimeoutMs(stepDurationSec === undefined ? undefined : stepDurationSec * 1000, execution);
   timers.push(setTimeout(() => stop("step_duration", `超过本步骤的时长上限（${describeSeconds(stepTimeoutMs)} 秒）`), stepTimeoutMs));
   timers.push(setTimeout(() => stop("task_duration", "任务总时长已到"), untilDeadline));
   const onAbort = () => stop("model_error", "步骤已被取消");

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createJudgmentRunner, createScriptedModelProvider } from "../../src/agent";
-import { DEFAULT_EXECUTION_SETTINGS, type JudgeStepConfig } from "../../src/contract";
+import { DEFAULT_EXECUTION_SETTINGS } from "../../src/contract";
 import { callTool, makeInput, makeStep, makeToolClient, submit } from "./helpers";
 
 const runner = createJudgmentRunner();
@@ -227,14 +227,24 @@ describe("步骤超时：步骤配置 → 设置默认 → 内置值", () => {
   test("步骤没配时长时用设置里的默认超时", async () => {
     const runnerWithDefaults = createJudgmentRunner({ execution: () => execution({ stepTimeoutMs: 60 }) });
     const model = createScriptedModelProvider({ s1: [{ delayMs: 2_000, then: submit("太慢") }] });
-    // 旧配置里可能的写法：只有轮次、没有时长（交给设置默认值兜底）
-    const step = makeStep({ limits: { rounds: 6 } as JudgeStepConfig["limits"] });
+    // 契约里 durationSec 可省略：不写时交给设置默认值兜底
+    const step = makeStep({ limits: { rounds: 6 } });
     const { input } = makeInput({ model, step });
 
     const started = Date.now();
     const result = await runnerWithDefaults.run(input);
     expect(result).toMatchObject({ ok: false, failure: "step_duration" });
+    expect(result.ok ? "" : result.message).toContain("0.06 秒");
     expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("步骤没配时长、设置也没给时用内置 120 秒（慢 0.2 秒的一轮不会超时）", async () => {
+    // 只注入空 execution：解析器要继续回落到内置值，而不是变成 0 / NaN
+    const runnerWithBuiltin = createJudgmentRunner({ execution: () => ({}) });
+    const model = createScriptedModelProvider({ s1: [{ delayMs: 200, then: submit("慢但没超") }] });
+    const step = makeStep({ limits: { rounds: 6 } });
+
+    expect((await runnerWithBuiltin.run(makeInput({ model, step }).input)).ok).toBe(true);
   });
 });
 

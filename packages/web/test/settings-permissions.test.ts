@@ -1,10 +1,10 @@
 // 权限与审批的纯函数（接缝 D）：三档预设、审批策略、危险确认文案与固定提示。
 // 这些文案要能直接给评委看：既不能夸大（本机模式没有系统级沙箱），也要说清确认后的后果。
 import { describe, expect, test } from "bun:test";
+import { ROLE_LABELS } from "../src/view/permissions";
 import {
   APPROVAL_OPTIONS,
   DEFAULT_ROLE_OPTIONS,
-  ROLE_LABELS,
   SANDBOX_PRESETS,
   SECURITY_DETAIL,
   SECURITY_NOTE,
@@ -12,7 +12,6 @@ import {
   approvalLabel,
   isDangerousApprovalPolicy,
   isDangerousSandboxMode,
-  needsDangerConfirm,
   presetOf,
   sandboxConfirmContent,
 } from "../src/pages/settings/permissions";
@@ -45,10 +44,6 @@ describe("权限预设与审批纯函数", () => {
     expect(isDangerousSandboxMode("workspace-write")).toBe(false);
     expect(isDangerousApprovalPolicy("never")).toBe(true);
     expect(isDangerousApprovalPolicy("ask")).toBe(false);
-    expect(needsDangerConfirm({ sandboxMode: "danger-full-access" })).toBe(true);
-    expect(needsDangerConfirm({ approvalPolicy: "never" })).toBe(true);
-    expect(needsDangerConfirm({ sandboxMode: "workspace-write", approvalPolicy: "ask" })).toBe(false);
-    expect(needsDangerConfirm({})).toBe(false);
   });
 
   test("固定提示必须诚实：本机模式、无系统级文件沙箱、不改真实文件权限", () => {
