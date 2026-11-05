@@ -13,6 +13,7 @@ import {
   type DefaultRole,
   type DiagnosticsExportResult,
   type DiagnosticsInfo,
+  type ModelOptions,
   type SettingsExportResult,
   type SettingsImportResult,
   type SettingsRoleResult,
@@ -26,6 +27,12 @@ export interface SettingsConnectionView {
   name: string;
   baseUrl: string;
   models: string[];
+  /** 每模型高级参数（Spec 0004）：上下文窗口、输出上限、推理档位 */
+  modelOptions?: Record<string, ModelOptions>;
+  /** 连接级 HTTP 超时（毫秒） */
+  timeoutMs?: number;
+  /** 连接级模型调用重试次数 */
+  maxRetries?: number;
   /** 只给末 4 位；没配置时为 null */
   apiKeyLast4: string | null;
   hasKey: boolean;
@@ -47,6 +54,12 @@ export interface SaveConnectionInput {
   /** 空字符串或省略 = 保持原值 */
   apiKey?: string;
   models?: string[];
+  /** 每模型高级参数；省略保持原值，null 清除 */
+  modelOptions?: Record<string, ModelOptions> | null;
+  /** 连接级超时；省略保持原值，null 清除 */
+  timeoutMs?: number | null;
+  /** 连接级重试次数；省略保持原值，null 清除 */
+  maxRetries?: number | null;
 }
 
 export interface ConnectionTestResult {
@@ -281,6 +294,23 @@ function createMockSettingsApi(): SettingsApi {
     void apiKey;
     return { ...rest, isDefault: c.name === defaultConnection };
   };
+  /** 模拟保存时的“省略=保留、null=清除”约定。 */
+  const advancedOf = (
+    existing: MockConnection | undefined,
+    input: SaveConnectionInput,
+  ): Pick<SettingsConnectionView, "modelOptions" | "timeoutMs" | "maxRetries"> => {
+    const out: Pick<SettingsConnectionView, "modelOptions" | "timeoutMs" | "maxRetries"> = {};
+    if (input.modelOptions !== undefined ? input.modelOptions !== null : existing?.modelOptions !== undefined) {
+      out.modelOptions = structuredClone(input.modelOptions ?? existing!.modelOptions!);
+    }
+    if (input.timeoutMs !== undefined ? input.timeoutMs !== null : existing?.timeoutMs !== undefined) {
+      out.timeoutMs = (input.timeoutMs ?? existing!.timeoutMs)!;
+    }
+    if (input.maxRetries !== undefined ? input.maxRetries !== null : existing?.maxRetries !== undefined) {
+      out.maxRetries = (input.maxRetries ?? existing!.maxRetries)!;
+    }
+    return out;
+  };
   const workspace = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee";
 
   // ---- 设置文档 v2 的内存模拟（T19 起的接口）
@@ -314,6 +344,9 @@ function createMockSettingsApi(): SettingsApi {
       baseUrl: c.baseUrl,
       apiKey: includeKeys ? c.apiKey : "",
       models: [...c.models],
+      ...(c.modelOptions !== undefined ? { modelOptions: structuredClone(c.modelOptions) } : {}),
+      ...(c.timeoutMs !== undefined ? { timeoutMs: c.timeoutMs } : {}),
+      ...(c.maxRetries !== undefined ? { maxRetries: c.maxRetries } : {}),
     })),
     defaultConnection,
     defaultModel: defaultModelOf(),
@@ -346,6 +379,7 @@ function createMockSettingsApi(): SettingsApi {
           hasKey: apiKey !== "",
           source: apiKey ? "file" : "none",
           isDefault: name === defaultConnection,
+          ...advancedOf(existing, input),
         };
         connections = existing ? connections.map((c) => (c.name === name ? next : c)) : [...connections, next];
         if (!connections.some((c) => c.name === defaultConnection)) defaultConnection = name;
