@@ -43,6 +43,7 @@ import {
   type ToolName,
 } from "@de/core";
 import { apiError } from "../http";
+import { consoleLogger, setConsoleLogLevel } from "../log";
 import { copyEmployeeConfigs } from "../bootstrap";
 import type { ConnectionProbe, FileOpener, FolderOpener, RouteDeps } from "./deps";
 
@@ -428,6 +429,12 @@ export function createSettingsRoutes(deps: RouteDeps) {
         return conflictBody(current.revision);
       }
       const written = updateSettingsDocument(workspaceDir, (doc) => applyAppSettingsPatch(doc, parsed.patch));
+      // 日志级别即时生效（Spec 0004）：与 start.ts 共用同一个 consoleLogger；重启后按文件值生效
+      setConsoleLogLevel(written.diagnostics.logLevel);
+      const changed = (["ui", "execution", "diagnostics", "permissions"] as const).filter(
+        (key) => parsed.patch[key] !== undefined,
+      );
+      consoleLogger.debug(`设置已保存：revision ${written.revision}${changed.length > 0 ? `（${changed.join("、")}）` : ""}`);
       return settingsDocumentView(written, env());
     })
     .put("/role", ({ body, set }) => {
@@ -472,6 +479,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
       // 导入的文档可能带着其它机器的 revision：以本机当前值 +1 继续，避免客户端旧 revision 误判
       imported.revision = current.revision;
       const written = writeSettingsDocument(workspaceDir, imported);
+      setConsoleLogLevel(written.diagnostics.logLevel);
       const warning = await notifySettingsSaved();
       // 导入的 demo 段也可能变了：同步运行时开关与工具子进程
       if (deps.faults) {
@@ -497,6 +505,18 @@ export function createSettingsRoutes(deps: RouteDeps) {
       const path = uniqueFile(dir, `diagnostic-${compactStamp(now())}.json`);
       writeFileSync(path, `${JSON.stringify(info, null, 2)}\n`);
       return { ok: true as const, path, generatedAt: info.generatedAt };
+    })
+    .post("/diagnostics/open", async () => {
+      // 导出成功后“打开所在目录”：诊断包统一落在 <workspace>/diagnostics
+      const dir = join(workspaceDir, "diagnostics");
+      mkdirSync(dir, { recursive: true });
+      const open: FolderOpener = deps.openFolder ?? ((target) => openFolderWithSystem(target));
+      try {
+        await open(dir);
+      } catch (error) {
+        return internalError(`打开诊断目录失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+      return { ok: true as const, path: dir };
     })
     .post("/open-file", async () => {
       // 没有 settings.json 时先写一份默认文档，保证“打开设置文件”总能打开点什么

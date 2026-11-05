@@ -9,8 +9,8 @@ import {
   createModelProvider,
   createScriptedModelProvider,
   createTaskEngine,
-  loadDemoSettings,
   loadSettings,
+  readSettingsDocument,
   resolveWorkspace,
   type EngineDeps,
   type FaultHooks,
@@ -22,6 +22,7 @@ import {
 } from "@de/core";
 import { createApp } from "./index";
 import { choosePort, isPortAvailable } from "./port";
+import { consoleLogger, createLogger, setConsoleLogLevel, type Logger } from "./log";
 
 export interface StartServerOptions {
   /** 工作区根目录，缺省 resolveWorkspace()（%APPDATA%/digital-employee，DE_WORKSPACE 可覆盖） */
@@ -57,12 +58,23 @@ export interface RunningServer {
 
 /** 启动服务端并开始监听；返回后可继续做别的事（例如打开浏览器）。 */
 export async function startServer(options: StartServerOptions): Promise<RunningServer> {
-  const log = options.log ?? ((line: string) => console.log(line));
   const workspaceDir = options.workspaceDir ?? resolveWorkspace();
   mkdirSync(join(workspaceDir, "tasks"), { recursive: true });
 
+  // 诊断日志级别（Spec 0004）：启动时按 settings.json 生效；
+  // 设置页保存 diagnostics.logLevel 后由设置路由就地调整（不重启也生效）。
+  const settingsDoc = readSettingsDocument(workspaceDir);
+  setConsoleLogLevel(settingsDoc.diagnostics.logLevel);
+  const logLine = options.log;
+  const logger: Logger = logLine
+    ? createLogger({ level: settingsDoc.diagnostics.logLevel, sink: (_level, line) => logLine(line) })
+    : consoleLogger;
+  logger.debug(
+    `设置文档：v${settingsDoc.version} revision ${settingsDoc.revision}；日志级别 ${settingsDoc.diagnostics.logLevel}`,
+  );
+
   // 演示开关持久化在 settings.json；运行时可变对象与引擎、设置路由共享。
-  const demo = loadDemoSettings(workspaceDir);
+  const demo = settingsDoc.demo;
   const faults: FaultHooks = {
     corruptTraceability: demo.corruptTraceability,
     crashOnNextStep: demo.crashOnNextStep,
@@ -78,12 +90,13 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   const toolClient = await createMcpToolClient(
     new StdioClientTransport({ command: options.toolServer.command, args: options.toolServer.args, stderr: "inherit" }),
   );
+  logger.debug(`工具子进程：${options.toolServer.command} ${options.toolServer.args.join(" ")}`);
 
   // 启动时恢复上次演示留下的工具故障（设置页把开关持久化在 settings.json）
   try {
     await toolClient.call("admin_set_faults", { tools: demo.toolFaults });
   } catch (error) {
-    log(`工具故障开关恢复失败：${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`工具故障开关恢复失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
   // deps.model 由引擎在每个判断步骤读取：保存设置后替换它，对新的判断步骤生效
@@ -120,8 +133,11 @@ export async function startServer(options: StartServerOptions): Promise<RunningS
   app.listen({ port, idleTimeout: 120 });
 
   const url = `http://localhost:${port}`;
-  log(
+  logger.info(
     `digital-employee 服务已启动：${url}（工作区 ${workspaceDir}${scriptFile ? `，剧本式模型 ${scriptFile}` : ""}）`,
+  );
+  logger.debug(
+    `监听端口 ${port}（首选 ${options.port ?? 8787}，最多尝试 ${options.portAttempts ?? 1} 个）；员工目录 ${options.employeesDir}`,
   );
 
   const close = async () => {

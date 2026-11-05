@@ -661,6 +661,72 @@ describe("诊断", () => {
     expect(written).not.toContain(KEY);
     expect(JSON.parse(written).runtime.platform).toBe(process.platform);
   });
+
+  test("PATCH execution / diagnostics 后：GET 与诊断包都反映新值，密钥仍在文件里", async () => {
+    const ws = settingsWorkspace();
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    const res = await call(
+      "/api/settings/app",
+      jsonRequest("PATCH", {
+        revision: 0,
+        execution: { stepTimeoutMs: 45000, modelMaxRetries: 3, retryBackoffMs: [200, 800], qcAutofix: 1 },
+        diagnostics: { logLevel: "debug" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    const patched = await bodyOf(res);
+    expect(patched).toMatchObject({
+      ok: true,
+      revision: 1,
+      execution: { stepTimeoutMs: 45000, modelMaxRetries: 3, retryBackoffMs: [200, 800], qcAutofix: 1 },
+      diagnostics: { logLevel: "debug" },
+    });
+
+    const stored = storedSettings(ws);
+    expect(stored.execution.retryBackoffMs).toEqual([200, 800]);
+    expect(stored.diagnostics.logLevel).toBe("debug");
+    expect(stored.connections[0].apiKey).toBe(KEY);
+
+    const diagnostics = await bodyOf(await call("/api/settings/diagnostics"));
+    expect(diagnostics.settings.execution).toMatchObject({ stepTimeoutMs: 45000, retryBackoffMs: [200, 800] });
+    expect(diagnostics.settings.diagnostics).toEqual({ logLevel: "debug" });
+
+    const exported = await bodyOf(await call("/api/settings/diagnostics/export", { method: "POST" }));
+    const written = readFileSync(exported.path, "utf8");
+    expect(written).not.toContain(KEY);
+    expect(JSON.parse(written).settings.diagnostics.logLevel).toBe("debug");
+  });
+
+  test("非法退避数组 / 日志级别：400 且不写盘", async () => {
+    const ws = settingsWorkspace();
+    const before = readFileSync(join(ws, "settings.json"), "utf8");
+    const { call } = setup({ workspaceDir: ws, env: {} });
+
+    for (const bad of [
+      { execution: { retryBackoffMs: [-1] } },
+      { execution: { retryBackoffMs: Array.from({ length: 11 }, () => 100) } },
+      { execution: { retryBackoffMs: "500,1500" } },
+      { execution: { retryBackoffMs: [600001] } },
+      { diagnostics: { logLevel: "verbose" } },
+    ]) {
+      const res = await call("/api/settings/app", jsonRequest("PATCH", { revision: 0, ...bad }));
+      expect(res.status).toBe(400);
+    }
+    expect(readFileSync(join(ws, "settings.json"), "utf8")).toBe(before);
+  });
+
+  test("POST /api/settings/diagnostics/open：打开诊断目录（不存在时先建出来）", async () => {
+    const ws = settingsWorkspace();
+    const opened: string[] = [];
+    const { call } = setup({ workspaceDir: ws, env: {}, openFolder: (dir: string) => void opened.push(dir) });
+    const res = await call("/api/settings/diagnostics/open", { method: "POST" });
+    expect(res.status).toBe(200);
+    const body = await bodyOf(res);
+    expect(body).toMatchObject({ ok: true, path: join(ws, "diagnostics") });
+    expect(opened).toEqual([join(ws, "diagnostics")]);
+    expect(existsSync(join(ws, "diagnostics"))).toBe(true);
+  });
 });
 
 describe("POST /api/settings/open-file", () => {
