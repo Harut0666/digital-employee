@@ -168,6 +168,8 @@ describe("桌面后端（共享装配 · 目录资源 · InMemoryTransport 工�
       expect(download.headers.get("content-type")).toContain("wordprocessingml.document");
       const bytes = new Uint8Array(await download.arrayBuffer());
       expect(new TextDecoder().decode(bytes.subarray(0, 2))).toBe("PK");
+      // 两张图表真的渲染进了 Word（空白图会让 docx 只剩十几 KB）
+      expect(bytes.length).toBeGreaterThan(20_000);
       const downloaded = join(root, "downloaded.docx");
       writeFileSync(downloaded, bytes);
       const text = readDocxText(downloaded);

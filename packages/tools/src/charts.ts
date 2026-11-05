@@ -1,15 +1,17 @@
 // 图表：ECharts 服务端渲染出 SVG，再用 resvg-wasm 转成 PNG（Word 里嵌 PNG 最稳）。
 // resvg wasm 不再用 `with { type: "file" }` 静态导入（Hutch/Electrobun 打包器不保证支持）：
 // 由工具服务器选项注入路径或字节——exe/CLI/test 用 Bun 文件导入，桌面版读随包拷贝的 wasm。
-import * as echarts from "echarts";
+// 用 echarts/core + 显式 use()：Hutch 的打包器会 tree-shake 掉 `echarts` 全量入口里的 use() 调用，
+// 只留渲染器而丢掉图表/组件注册（实测桌面包里图表变成空白 PNG）。显式注册对打包器无歧义。
+import * as echarts from "echarts/core";
+import { BarChart, LineChart } from "echarts/charts";
+import { GridComponent, LegendComponent, TitleComponent } from "echarts/components";
 import { SVGRenderer } from "echarts/renderers";
 import { Resvg, initWasm } from "@resvg/resvg-wasm";
 import { existsSync, readFileSync } from "node:fs";
 import type { WeeklyFacts } from "@de/core/contract";
 
-// 显式注册 SVG 渲染器：`import * as echarts from "echarts"` 自带的 use() 在打包器 tree-shake
-// 后可能被去掉（Hutch 的压缩构建实测会丢），这里显式引用，保证 SSR 渲染器一定在。
-echarts.use([SVGRenderer]);
+echarts.use([BarChart, LineChart, GridComponent, LegendComponent, TitleComponent, SVGRenderer]);
 
 /** resvg wasm 的来源：文件路径或直接给字节。 */
 export type ResvgWasm = string | Uint8Array;
