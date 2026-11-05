@@ -42,6 +42,8 @@ export interface SetupOptions {
   faults?: FaultHooks;
   probeConnection?: ConnectionProbe;
   openFolder?: FolderOpener;
+  /** 用系统编辑器打开设置文件（设置页“打开设置文件”） */
+  openFile?: (path: string) => void | Promise<void>;
   env?: Record<string, string | undefined>;
   now?: () => Date;
 }

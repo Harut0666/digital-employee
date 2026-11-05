@@ -30,6 +30,8 @@ export interface ServerOptions {
   probeConnection?: (connection: ModelConnection, model: string) => Promise<ModelConnectionTest>;
   /** 打开文件夹的可注入实现 */
   openFolder?: (dir: string) => void | Promise<void>;
+  /** 用系统编辑器打开设置文件的可注入实现 */
+  openFile?: (path: string) => void | Promise<void>;
   /** 读取环境变量（DEEPSEEK_API_KEY 等），测试注入 */
   env?: Record<string, string | undefined>;
   /** 测试注入时钟 */
@@ -53,6 +55,7 @@ export function createApp(options: ServerOptions) {
     defaultEmployeesDir: options.defaultEmployeesDir,
     probeConnection: options.probeConnection,
     openFolder: options.openFolder,
+    openFile: options.openFile,
     env: options.env,
     now: options.now,
   };

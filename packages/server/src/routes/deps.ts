@@ -17,6 +17,9 @@ export type ConnectionProbe = (connection: ModelConnection, model: string) => Pr
 /** 打开工作区文件夹：Windows 用 explorer，测试注入假实现。 */
 export type FolderOpener = (dir: string) => void | Promise<void>;
 
+/** 用系统编辑器打开一个文件（设置页“打开设置文件”）；测试注入假实现。 */
+export type FileOpener = (path: string) => void | Promise<void>;
+
 export interface RouteDeps {
   engine: TaskEngine;
   employeesDir: string;
@@ -33,6 +36,8 @@ export interface RouteDeps {
   probeConnection?: ConnectionProbe;
   /** 打开文件夹的可注入实现；不传时按平台调用 explorer/open/xdg-open。 */
   openFolder?: FolderOpener;
+  /** 用系统编辑器打开文件的可注入实现；不传时按平台调用 notepad/open/xdg-open。 */
+  openFile?: FileOpener;
   /** 读取环境变量（DEEPSEEK_API_KEY），测试注入；默认 process.env。 */
   env?: Record<string, string | undefined>;
   /** 测试注入时钟（备份目录时间戳）。 */
