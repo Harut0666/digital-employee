@@ -6,7 +6,8 @@ export default {
   },
   scripts: {
     install: ["hutch", "install"],
-    dev: ["hutch", "electrobun", "dev", "--env=stable", "--watch"],
+    // dev 与根 dev:desktop 同款：先准备前端产物与 resvg wasm，再起 Electrobun dev
+    dev: ["bun", "scripts/dev-desktop.ts"],
     build: ["bun", "run", "build:desktop"],
   },
 };
