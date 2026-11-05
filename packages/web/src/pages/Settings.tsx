@@ -1,21 +1,24 @@
-// 设置页（T10）：模型连接、演示与调试、工作区三个子页（docs/ui/final/07-settings.png）。
+// 设置页（T10/T21）：模型连接、外观与交互、演示与调试、工作区（docs/ui/final/07-settings.png）。
 import { useMemo, useState } from "react";
-import { DatabaseOutlined, FolderOutlined, PlayCircleOutlined } from "@ant-design/icons";
-import { createSettingsApi } from "../api/settings";
+import { BgColorsOutlined, DatabaseOutlined, FolderOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { createSettingsApi, type SettingsApi } from "../api/settings";
+import { AppearanceSection } from "./settings/Appearance";
 import { DemoDebug } from "./settings/DemoDebug";
 import { ModelConnections } from "./settings/ModelConnections";
 import { WorkspaceSection } from "./settings/WorkspaceSection";
 
-type Section = "models" | "demo" | "workspace";
+type Section = "models" | "appearance" | "demo" | "workspace";
 
 const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: "models", label: "模型连接", icon: <DatabaseOutlined /> },
+  { key: "appearance", label: "外观与交互", icon: <BgColorsOutlined /> },
   { key: "demo", label: "演示与调试", icon: <PlayCircleOutlined /> },
   { key: "workspace", label: "工作区", icon: <FolderOutlined /> },
 ];
 
-export function SettingsPage() {
-  const api = useMemo(() => createSettingsApi(), []);
+export function SettingsPage({ api: providedApi }: { api?: SettingsApi } = {}) {
+  // 优先用 App 传下来的实例（与外观偏好共用一份，模拟模式下也能共享状态）
+  const api = useMemo(() => providedApi ?? createSettingsApi(), [providedApi]);
   const [section, setSection] = useState<Section>("models");
 
   return (
@@ -49,6 +52,7 @@ export function SettingsPage() {
       </div>
       <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 32px 32px" }}>
         {section === "models" && <ModelConnections api={api} />}
+        {section === "appearance" && <AppearanceSection />}
         {section === "demo" && <DemoDebug api={api} />}
         {section === "workspace" && <WorkspaceSection api={api} />}
       </div>
