@@ -98,7 +98,7 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 
 `bun run dev:desktop` 用 Hutch 的 dev 模式起窗口并在改主进程后自动重建。
 
-**实测**（Windows 11 x64，2026-11-05）：安装包 **51.0MB**、便携包 62.2MB、安装后 **142.0MB**（exe 为 105.8MB）；冷启动到 `/api/employees` 可用 **0.61–1.06 秒**（多点测量）；剧本模式 A-01 在桌面版后端跑到 delivered 约 **3.6 秒**。详见[桌面版结果文档](docs/results/electrobun-desktop.md)。
+**实测**（Windows 11 x64，2026-11-05）：安装包 **51.1MB**、便携包 62.3MB、安装后 **142.5MB**（exe 为 105.8MB）；冷启动到 `/api/employees` 可用 **0.61–1.08 秒**（多点测量）；剧本模式 A-01 在桌面版后端跑到 delivered 约 **3.3 秒**。详见[桌面版结果文档](docs/results/electrobun-desktop.md)。
 
 **与 exe 的关系**：两套产物共用 `%APPDATA%\digital-employee` 工作区（设置、Key、任务、样例通用），但**不要同时运行**——两个进程会同时写任务目录与设置。桌面版不提供 `init` / `mcp-server` / `run-cases` 等命令行子命令，这些继续用 exe；桌面化出问题随时退回 exe。
 
@@ -285,7 +285,7 @@ employees/weekly-report/
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 30 条（6 条公开样例 + 24 条 S 系列）在剧本模式 30/30 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
 - 单文件 exe 已落地（设计 §14）：`bun run build:exe` → `dist/digital-employee.exe`（约 105.8MB），首次启动释放工作区，欢迎页可一键载入公开样例；`scripts/smoke-exe.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面”。
-- 桌面窗口（Electrobun）已落地（设计 §14、[ADR-0003](docs/adr/0003-electrobun-desktop-shell.md)）：`bun run build:desktop` → `dist/desktop/` 下安装包（51.0MB）、便携 zip（62.2MB）与绿色目录（安装后 142.0MB）；冷启动 0.61–1.06 秒，剧本模式 A-01 约 3.6 秒；`scripts/smoke-desktop.ps1` 覆盖“启动 → 接口/首页 → HTTP 跑 A-01 到 delivered 并断言 docx”。体积与人工目视清单见[桌面版结果](docs/results/electrobun-desktop.md)。
+- 桌面窗口（Electrobun）已落地（设计 §14、[ADR-0003](docs/adr/0003-electrobun-desktop-shell.md)）：`bun run build:desktop` → `dist/desktop/` 下安装包（51.1MB）、便携 zip（62.3MB）与绿色目录（安装后 142.5MB）；冷启动 0.61–1.08 秒，剧本模式 A-01 约 3.3 秒；`scripts/smoke-desktop.ps1` 覆盖“启动 → 接口/首页 → HTTP 跑 A-01 到 delivered 并断言 docx”。体积与人工目视清单见[桌面版结果](docs/results/electrobun-desktop.md)。
 - 已知限制：
   - 字体未嵌入。ticket 里的“思源黑体子集（OFL）”需要仓库里不存在、也没找到可合法分发来源的字体文件，因此**跳过字体嵌入**并保留回退：图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（`noto` 等缺失时由阅读端回退），不嵌入字体二进制。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
   - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时跑 `digital-employee.exe fixtures`（源数据已嵌入，输出到工作区 `samples/fixtures/`，约 31 秒）或源码 `de fixtures`；8 条依赖夹具的 S 用例要先这样生成夹具才能跑。
