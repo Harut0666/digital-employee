@@ -18,6 +18,7 @@
 - **工具走 MCP**：工具服务器独立进程、stdio 协议，内置故障注入（超时 / 报错 / 非法输出），可现场演示工具故障与重试。
 - **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝。
 - **单文件 exe**：`bun build --compile` 把服务端、前端构建产物、员工配置、公开样例和 resvg wasm 打进一个 exe；双击即用，首次启动自动建 `%APPDATA%\digital-employee` 工作区，端口冲突自动换端口 —— 见[设计文档 §14](docs/design.md)。
+- **原生桌面窗口**：同一个 Bun 主进程内嵌 Elysia，Electrobun 只套一个系统 WebView2 窗口（不额外带 Chromium），打出 51.1MB 安装包与免安装便携包；与 exe 共用工作区 —— 见[方式二](#方式二桌面窗口electrobun)与 [ADR-0003](docs/adr/0003-electrobun-desktop-shell.md)。
 - **全栈 TypeScript**：Bun + Elysia + React/Vite + antd；前后端共享契约类型。
 
 ## 目录结构
