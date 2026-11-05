@@ -11,6 +11,10 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statS
 import { join, resolve } from "node:path";
 import { Elysia } from "elysia";
 import {
+  CONNECTION_RETRIES_MAX,
+  CONNECTION_TIMEOUT_MAX_MS,
+  CONNECTION_TIMEOUT_MIN_MS,
+  ModelOptionsSchema,
   SetRoleRequestSchema,
   applyAppSettingsPatch,
   describeSettingsProblems,
@@ -35,6 +39,7 @@ import {
   type DiagnosticsTaskSummary,
   type FaultMode,
   type ModelConnection,
+  type ModelOptions,
   type ModelSettings,
   type SettingsConflictBody,
   type SettingsExportResult,
@@ -160,6 +165,47 @@ function employeeDirsOf(dir: string): string[] {
     .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, "workflow.yaml")))
     .map((e) => e.name)
     .sort();
+}
+
+// ---- T20：连接卡片“高级”区（每模型参数 + 连接级超时/重试）
+// 约定：字段缺省 = 保留原值；显式 null = 清除；值 = 校验后写入。
+
+type ParsedField<T> = { ok: true; value: T | null } | { ok: false; message: string };
+
+/** 每模型高级参数（按模型 id）；未知字段或超范围一律 400。 */
+function modelOptionsOf(value: unknown): ParsedField<Record<string, ModelOptions>> {
+  if (value === null) return { ok: true, value: null };
+  if (!isRecord(value)) return { ok: false, message: "modelOptions 必须是 模型 id → 高级参数 的对象" };
+  const options: Record<string, ModelOptions> = {};
+  for (const [modelId, raw] of Object.entries(value)) {
+    if (modelId.trim() === "" || modelId.trim() !== modelId) {
+      return { ok: false, message: "modelOptions 的模型 id 不能为空，也不能有首尾空格" };
+    }
+    const parsed = ModelOptionsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, message: `模型 ${modelId} 的高级参数不合法（${describeSettingsProblems(parsed.error)}）` };
+    }
+    options[modelId] = parsed.data;
+  }
+  return { ok: true, value: options };
+}
+
+/** 连接级超时（毫秒，整数，1 秒–1 小时）。 */
+function connectionTimeoutOf(value: unknown): ParsedField<number> {
+  if (value === null) return { ok: true, value: null };
+  if (typeof value !== "number" || !Number.isInteger(value) || value < CONNECTION_TIMEOUT_MIN_MS || value > CONNECTION_TIMEOUT_MAX_MS) {
+    return { ok: false, message: `timeoutMs 必须是 ${CONNECTION_TIMEOUT_MIN_MS}–${CONNECTION_TIMEOUT_MAX_MS} 之间的整数` };
+  }
+  return { ok: true, value };
+}
+
+/** 连接级重试次数（0–10，0 表示不重试）。 */
+function connectionRetriesOf(value: unknown): ParsedField<number> {
+  if (value === null) return { ok: true, value: null };
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > CONNECTION_RETRIES_MAX) {
+    return { ok: false, message: `maxRetries 必须是 0–${CONNECTION_RETRIES_MAX} 之间的整数` };
+  }
+  return { ok: true, value };
 }
 
 export function createSettingsRoutes(deps: RouteDeps) {
@@ -339,6 +385,33 @@ export function createSettingsRoutes(deps: RouteDeps) {
         return apiError("invalid_input", "models 必须是非空字符串数组");
       }
 
+      // 高级参数：先校验，全部合法才动文件
+      const advanced: Pick<ModelConnection, "modelOptions" | "timeoutMs" | "maxRetries"> = {};
+      if (fields.modelOptions !== undefined) {
+        const parsed = modelOptionsOf(fields.modelOptions);
+        if (!parsed.ok) {
+          set.status = 400;
+          return apiError("invalid_input", parsed.message);
+        }
+        if (parsed.value !== null) advanced.modelOptions = parsed.value;
+      }
+      if (fields.timeoutMs !== undefined) {
+        const parsed = connectionTimeoutOf(fields.timeoutMs);
+        if (!parsed.ok) {
+          set.status = 400;
+          return apiError("invalid_input", parsed.message);
+        }
+        if (parsed.value !== null) advanced.timeoutMs = parsed.value;
+      }
+      if (fields.maxRetries !== undefined) {
+        const parsed = connectionRetriesOf(fields.maxRetries);
+        if (!parsed.ok) {
+          set.status = 400;
+          return apiError("invalid_input", parsed.message);
+        }
+        if (parsed.value !== null) advanced.maxRetries = parsed.value;
+      }
+
       const next: ModelConnection = {
         name,
         baseUrl: typeof baseUrl === "string" ? baseUrl.trim() : existing!.baseUrl,
@@ -350,6 +423,19 @@ export function createSettingsRoutes(deps: RouteDeps) {
       if (existing?.modelOptions !== undefined) next.modelOptions = existing.modelOptions;
       if (existing?.timeoutMs !== undefined) next.timeoutMs = existing.timeoutMs;
       if (existing?.maxRetries !== undefined) next.maxRetries = existing.maxRetries;
+      // 传了就以新值为准（null 已在上面转成“清除”）
+      if (fields.modelOptions !== undefined) {
+        if (advanced.modelOptions !== undefined) next.modelOptions = advanced.modelOptions;
+        else delete next.modelOptions;
+      }
+      if (fields.timeoutMs !== undefined) {
+        if (advanced.timeoutMs !== undefined) next.timeoutMs = advanced.timeoutMs;
+        else delete next.timeoutMs;
+      }
+      if (fields.maxRetries !== undefined) {
+        if (advanced.maxRetries !== undefined) next.maxRetries = advanced.maxRetries;
+        else delete next.maxRetries;
+      }
       if (existing) settings.connections[existingIndex] = next;
       else settings.connections.push(next);
       // 第一个连接自动成为默认连接

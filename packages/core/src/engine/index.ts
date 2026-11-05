@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { createJudgmentRunner } from "../agent";
-import { loadEmployeeConfigSync, loadDemoSettings, saveDemoSettings } from "../config";
+import { loadEmployeeConfigSync, loadDemoSettings, readSettingsDocument, saveDemoSettings } from "../config";
 import { collectWritingRequirements } from "../config/form";
 import { createQcEngine, renderSlots } from "../qc";
 import {
@@ -17,6 +17,7 @@ import {
   type DraftReport,
   type EmployeeConfig,
   type EngineDeps,
+  type ExecutionSettings,
   type FaultHooks,
   type JudgmentFailure,
   type JudgmentRunner,
@@ -169,7 +170,21 @@ export function createTaskEngine(deps: EngineDeps, internals: EngineInternals = 
 
   let judgment = internals.judgment;
   let qcEngine = internals.qc;
-  const getJudgment = () => (judgment ??= createJudgmentRunner());
+
+  /**
+   * 执行与预算的默认值（settings.execution，Spec 0004）。
+   * 每个判断步骤开始时读一次：设置页保存后对之后新建/新开始的步骤立即生效；
+   * 设置文件缺失或损坏时返回 undefined，由运行器退回内置值（120s / 2 次）。
+   */
+  function executionDefaults(): Partial<ExecutionSettings> | undefined {
+    try {
+      return readSettingsDocument(workspaceDir).execution;
+    } catch {
+      return undefined;
+    }
+  }
+
+  const getJudgment = () => (judgment ??= createJudgmentRunner({ execution: executionDefaults }));
   const getQc = () => (qcEngine ??= createQcEngine());
 
   // ---------------------------------------------------------------- 事件与运行时

@@ -3,24 +3,36 @@
 // 另提供“测试连接”：发一条极短请求，只报告可用性、延迟与错误（错误里不包含 API Key）。
 
 import { completeSimple, streamSimple, type Model } from "@mariozechner/pi-ai";
-import type { ModelConnection, ModelProvider, ModelConnectionTest, ModelSettings } from "../contract";
-import type { JudgmentModelProvider, ModelRef } from "./provider";
+import type { ModelConnection, ModelOptions, ModelProvider, ModelConnectionTest, ModelSettings } from "../contract";
+import { normalizeThinkingLevel, type JudgmentModelProvider, type ModelRef } from "./provider";
 
 const PROBE_TIMEOUT_MS = 15_000;
 const PROBE_MAX_TOKENS = 8;
 
-function toPiModel(connection: ModelConnection, modelId: string): Model<"openai-completions"> {
+/** 缺省上下文窗口 / 输出上限：没配高级参数时行为与 T20 之前一致。 */
+export const DEFAULT_CONTEXT_WINDOW = 128_000;
+export const DEFAULT_MAX_TOKENS = 8_192;
+
+/** 这个模型是否声明了推理能力：配了默认档位或可用档位列表即视为支持。 */
+function declaresReasoning(options: ModelOptions | undefined): boolean {
+  if (!options) return false;
+  return options.defaultReasoningEffort !== undefined || (options.reasoningEfforts?.length ?? 0) > 0;
+}
+
+function toPiModel(connection: ModelConnection, modelId: string, reasoning: boolean): Model<"openai-completions"> {
+  // 每模型参数（Spec 0004）：按模型 id 取，缺省沿用 128k / 8192
+  const options = connection.modelOptions?.[modelId];
   return {
     id: modelId,
     name: modelId,
     api: "openai-completions",
     provider: connection.name,
     baseUrl: connection.baseUrl,
-    reasoning: false,
+    reasoning,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 128_000,
-    maxTokens: 8_192,
+    contextWindow: options?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxTokens: options?.maxTokens ?? DEFAULT_MAX_TOKENS,
   };
 }
 
@@ -38,7 +50,18 @@ export function createModelProvider(settings: ModelSettings): ModelProvider {
       const connection = settings.connections.find((c) => c.name === connectionName);
       if (!connection) throw new Error(`未找到模型连接“${connectionName}”`);
       const modelId = ref.model === "default" ? settings.defaultModel : ref.model;
-      return { model: toPiModel(connection, modelId), streamFn: streamSimple, apiKey: connection.apiKey };
+      // 档位：步骤 thinking → 连接上的模型默认档位 → off（未知值按 off）
+      const options = connection.modelOptions?.[modelId];
+      const thinkingLevel = normalizeThinkingLevel(ref.thinking ?? options?.defaultReasoningEffort);
+      const reasoning = thinkingLevel !== "off" || declaresReasoning(options);
+      return {
+        model: toPiModel(connection, modelId, reasoning),
+        streamFn: streamSimple,
+        apiKey: connection.apiKey,
+        thinkingLevel,
+        ...(connection.timeoutMs !== undefined ? { timeoutMs: connection.timeoutMs } : {}),
+        ...(connection.maxRetries !== undefined ? { maxRetries: connection.maxRetries } : {}),
+      };
     },
   };
   return provider;
@@ -59,7 +82,7 @@ export async function testModelConnection(
   }
   try {
     const message = await completeSimple(
-      toPiModel(connection, modelId),
+      toPiModel(connection, modelId, declaresReasoning(connection.modelOptions?.[modelId])),
       { messages: [{ role: "user", content: "请只回复 OK", timestamp: Date.now() }] },
       { apiKey: connection.apiKey, maxTokens: PROBE_MAX_TOKENS, signal: AbortSignal.timeout(timeoutMs) },
     );

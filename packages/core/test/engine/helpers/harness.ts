@@ -94,6 +94,8 @@ export interface HarnessOptions {
   qc?: QcEngine;
   /** 注入模型（如 createScriptedModelProvider），配合真实 judgment 检查模型看到了什么 */
   model?: ModelProvider;
+  /** 不注入判断执行器，用引擎自带的那个（验证引擎接线，如 settings.execution 的注入） */
+  useBuiltInJudgment?: boolean;
   now?: () => Date;
   faults?: FaultHooks;
 }
@@ -143,7 +145,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
       faults: merged.faults,
     };
     return createTaskEngine(deps, {
-      judgment: merged.judgment ?? createStubJudgment().runner,
+      judgment: merged.useBuiltInJudgment ? undefined : (merged.judgment ?? createStubJudgment().runner),
       qc: merged.qc ?? createStubQc().engine,
     });
   };
