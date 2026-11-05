@@ -30,6 +30,7 @@
         "@de/server": "workspace:*",
         "@de/tools": "workspace:*",
         "@opentelemetry/api": "^1.9.0",
+        "@resvg/resvg-wasm": "^2.6.2",
       },
     },
     "packages/cli": {
@@ -42,6 +43,7 @@
         "@de/core": "workspace:*",
         "@de/tools": "workspace:*",
         "@modelcontextprotocol/sdk": "^1.32.2",
+        "@resvg/resvg-wasm": "^2.6.2",
         "exceljs": "^4.4.0",
         "jszip": "^3.10.2",
         "mammoth": "^1.13.0",
@@ -58,6 +60,17 @@
         "typebox": "^1.4.3",
         "yaml": "^2.9.1",
         "zod": "^4.6.7",
+      },
+    },
+    "packages/desktop": {
+      "name": "@de/desktop",
+      "version": "0.0.0",
+      "dependencies": {
+        "@de/app": "workspace:*",
+        "@de/core": "workspace:*",
+        "@de/server": "workspace:*",
+        "@de/tools": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.32.2",
       },
     },
     "packages/server": {
@@ -190,6 +203,8 @@
     "@de/cli": ["@de/cli@workspace:packages/cli"],
 
     "@de/core": ["@de/core@workspace:packages/core"],
+
+    "@de/desktop": ["@de/desktop@workspace:packages/desktop"],
 
     "@de/employees": ["@de/employees@workspace:employees"],
 
