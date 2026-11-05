@@ -1,16 +1,21 @@
-// 设置页（T10）：模型连接、演示与调试、工作区三个子页（docs/ui/final/07-settings.png）。
+// 设置页（T10）：模型连接、执行与预算（T22）、演示与调试、诊断与关于（T22）、工作区。
+// 后续 ticket（T21 外观与交互、T23 权限与审批）在同一份 NAV 里各加一项。
 import { useMemo, useState } from "react";
-import { DatabaseOutlined, FolderOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { ClockCircleOutlined, DatabaseOutlined, FolderOutlined, InfoCircleOutlined, PlayCircleOutlined } from "@ant-design/icons";
 import { createSettingsApi } from "../api/settings";
 import { DemoDebug } from "./settings/DemoDebug";
+import { DiagnosticsSection } from "./settings/DiagnosticsSection";
+import { ExecutionSection } from "./settings/ExecutionSection";
 import { ModelConnections } from "./settings/ModelConnections";
 import { WorkspaceSection } from "./settings/WorkspaceSection";
 
-type Section = "models" | "demo" | "workspace";
+type Section = "models" | "execution" | "demo" | "diagnostics" | "workspace";
 
 const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
   { key: "models", label: "模型连接", icon: <DatabaseOutlined /> },
+  { key: "execution", label: "执行与预算", icon: <ClockCircleOutlined /> },
   { key: "demo", label: "演示与调试", icon: <PlayCircleOutlined /> },
+  { key: "diagnostics", label: "诊断与关于", icon: <InfoCircleOutlined /> },
   { key: "workspace", label: "工作区", icon: <FolderOutlined /> },
 ];
 
@@ -49,7 +54,9 @@ export function SettingsPage() {
       </div>
       <div style={{ flex: 1, minWidth: 0, overflow: "auto", padding: "20px 32px 32px" }}>
         {section === "models" && <ModelConnections api={api} />}
+        {section === "execution" && <ExecutionSection api={api} />}
         {section === "demo" && <DemoDebug api={api} />}
+        {section === "diagnostics" && <DiagnosticsSection api={api} />}
         {section === "workspace" && <WorkspaceSection api={api} />}
       </div>
     </div>
