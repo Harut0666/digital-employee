@@ -101,6 +101,55 @@ func TestPrepareWorkspace(t *testing.T) {
 	}
 }
 
+func TestPrepareWorkspaceEmbeddedFallback(t *testing.T) {
+	// 没有仓库目录（单 exe 被复制到任意目录）时，从 go:embed 的内嵌资源释放。
+	workspace := filepath.Join(t.TempDir(), "ws")
+	prepared, err := PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.EmployeesDir != filepath.Join(workspace, "employees") {
+		t.Fatalf("员工目录不对：%s", prepared.EmployeesDir)
+	}
+	if !fileExists(filepath.Join(workspace, "employees", "weekly-report", "workflow.yaml")) {
+		t.Fatal("内嵌员工配置未释放")
+	}
+	if fileExists(filepath.Join(workspace, "employees", "package.json")) || fileExists(filepath.Join(workspace, "employees", "test")) {
+		t.Fatal("只应释放含 workflow.yaml 的员工目录，不应带 package.json / test")
+	}
+	if !fileExists(filepath.Join(workspace, "samples", "cases", "A-01.json")) {
+		t.Fatal("内嵌公开用例未释放")
+	}
+	if !fileExists(filepath.Join(workspace, "samples", "cases", "scripts", "A-01.json")) {
+		t.Fatal("内嵌剧本未释放")
+	}
+	if !fileExists(filepath.Join(workspace, "samples", "scenario-a", "销售明细.xlsx")) {
+		t.Fatal("内嵌场景 A 样例未释放")
+	}
+	if !fileExists(filepath.Join(workspace, ".runtime", "web", "index.html")) {
+		t.Fatal("内嵌前端产物未释放")
+	}
+	if prepared.WebDistDir != filepath.Join(workspace, ".runtime", "web") {
+		t.Fatalf("webDistDir 不对：%s", prepared.WebDistDir)
+	}
+	if !fileExists(filepath.Join(workspace, ".runtime", "default-employees", "weekly-report", "workflow.yaml")) {
+		t.Fatal("内嵌默认员工副本未释放")
+	}
+	if prepared.Settings != "written" {
+		t.Fatalf("应写默认 settings.json：%s", prepared.Settings)
+	}
+
+	// 已有文件不覆盖：改一下员工配置再释放一次
+	writeFile(t, filepath.Join(workspace, "employees", "weekly-report", "SKILL.md"), "# 用户改过\n")
+	if _, err := PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(workspace, "employees", "weekly-report", "SKILL.md"))
+	if string(data) != "# 用户改过\n" {
+		t.Fatalf("内嵌释放不应覆盖用户改过的员工配置：%q", string(data))
+	}
+}
+
 func TestFindRepoRoot(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "employees"), 0o755); err != nil {

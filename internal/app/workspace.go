@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	assets "digital-employee"
 )
 
 // runtimeDir 运行时资源目录（前端构建产物、默认员工配置副本）。
@@ -152,45 +154,66 @@ func PrepareWorkspace(options PrepareOptions) (*PreparedWorkspace, error) {
 	prepared := &PreparedWorkspace{WorkspaceDir: workspaceDir}
 	repoRoot := options.RepoRoot
 
-	// 员工配置：已有文件不覆盖
+	// 资源来源：仓库目录优先（开发态可直接改），找不到仓库时回退到内嵌资源（单 exe 自包含）。
 	workspaceEmployees := filepath.Join(workspaceDir, "employees")
-	if options.EmployeesDir != "" {
-		prepared.EmployeesDir = options.EmployeesDir
-	} else if repoRoot != "" && dirExists(filepath.Join(repoRoot, "employees")) {
-		files := []ReleaseFile{}
-		if err := collectEmployeeDirs(filepath.Join(repoRoot, "employees"), &files); err != nil {
+	repoEmployeesDir := ""
+	if repoRoot != "" && dirExists(filepath.Join(repoRoot, "employees")) {
+		repoEmployeesDir = filepath.Join(repoRoot, "employees")
+	}
+	employeeFiles := []ReleaseFile{}
+	if repoEmployeesDir != "" {
+		if err := collectEmployeeDirs(repoEmployeesDir, &employeeFiles); err != nil {
 			return nil, err
 		}
-		outcome, err := releaseFiles(files, workspaceEmployees, false)
+	} else if err := collectEmbeddedEmployeeDirs(assets.Employees, "employees", &employeeFiles); err != nil {
+		return nil, err
+	}
+	if options.EmployeesDir != "" {
+		prepared.EmployeesDir = options.EmployeesDir
+	} else {
+		outcome, err := releaseFiles(employeeFiles, workspaceEmployees, false)
 		if err != nil {
 			return nil, err
 		}
 		prepared.Employees = outcome
 		prepared.EmployeesDir = workspaceEmployees
-	} else {
-		prepared.EmployeesDir = workspaceEmployees
 	}
 
-	// 公开样例：samples/scenario-a 与 samples/cases
+	// 公开样例：samples/scenario-a 与 samples/cases（每个子目录独立回退到内嵌资源）
 	workspaceSamples := filepath.Join(workspaceDir, "samples")
-	if repoRoot != "" {
-		files := []ReleaseFile{}
-		for _, name := range []string{"scenario-a", "cases"} {
-			source := filepath.Join(repoRoot, "samples", name)
-			if !dirExists(source) {
-				continue
-			}
-			if err := collectDir(source, name, &files); err != nil {
-				return nil, err
+	sampleFiles := []ReleaseFile{}
+	sampleSources := []struct {
+		name string
+		root string
+		fsys fs.FS
+	}{
+		{"scenario-a", "samples/scenario-a", assets.ScenarioA},
+		{"cases", "samples/cases", assets.SamplesCases},
+	}
+	for _, source := range sampleSources {
+		repoSample := ""
+		if repoRoot != "" {
+			candidate := filepath.Join(repoRoot, "samples", source.name)
+			if dirExists(candidate) {
+				repoSample = candidate
 			}
 		}
-		if len(files) > 0 {
-			outcome, err := releaseFiles(files, workspaceSamples, false)
-			if err != nil {
+		if repoSample != "" {
+			if err := collectDir(repoSample, source.name, &sampleFiles); err != nil {
 				return nil, err
 			}
-			prepared.Samples = outcome
+			continue
 		}
+		if err := collectEmbedded(source.fsys, source.root, source.name, &sampleFiles); err != nil {
+			return nil, err
+		}
+	}
+	if len(sampleFiles) > 0 {
+		outcome, err := releaseFiles(sampleFiles, workspaceSamples, false)
+		if err != nil {
+			return nil, err
+		}
+		prepared.Samples = outcome
 	}
 
 	// 前端构建产物：内部资源，整体覆盖
@@ -198,36 +221,31 @@ func PrepareWorkspace(options PrepareOptions) (*PreparedWorkspace, error) {
 	if options.WebDistDir != "" {
 		prepared.WebDistDir = options.WebDistDir
 	}
-	if prepared.WebDistDir == "" && repoRoot != "" {
-		source := filepath.Join(repoRoot, "packages", "web", "dist")
-		if dirExists(source) {
-			files := []ReleaseFile{}
-			if err := collectDir(source, "", &files); err != nil {
+	if prepared.WebDistDir == "" {
+		webFiles := []ReleaseFile{}
+		if repoRoot != "" && dirExists(filepath.Join(repoRoot, "packages", "web", "dist")) {
+			if err := collectDir(filepath.Join(repoRoot, "packages", "web", "dist"), "", &webFiles); err != nil {
 				return nil, err
 			}
-			target := filepath.Join(workspaceDir, runtimeDir, "web")
-			outcome, err := releaseFiles(files, target, true)
-			if err != nil {
-				return nil, err
-			}
-			prepared.Web = outcome
-			prepared.WebDistDir = target
+		} else if err := collectEmbedded(assets.WebDist, "packages/web/dist", "", &webFiles); err != nil {
+			return nil, err
 		}
+		target := filepath.Join(workspaceDir, runtimeDir, "web")
+		outcome, err := releaseFiles(webFiles, target, true)
+		if err != nil {
+			return nil, err
+		}
+		prepared.Web = outcome
+		prepared.WebDistDir = target
 	}
 
 	// 默认员工配置副本：设置页“恢复默认员工配置”的来源，整体覆盖
 	prepared.DefaultEmployeesDir = filepath.Join(workspaceDir, runtimeDir, "default-employees")
-	if repoRoot != "" && dirExists(filepath.Join(repoRoot, "employees")) {
-		files := []ReleaseFile{}
-		if err := collectEmployeeDirs(filepath.Join(repoRoot, "employees"), &files); err != nil {
-			return nil, err
-		}
-		outcome, err := releaseFiles(files, prepared.DefaultEmployeesDir, true)
-		if err != nil {
-			return nil, err
-		}
-		prepared.Defaults = outcome
+	outcome, err := releaseFiles(employeeFiles, prepared.DefaultEmployeesDir, true)
+	if err != nil {
+		return nil, err
 	}
+	prepared.Defaults = outcome
 
 	// 默认 settings.json（不含任何 API Key）；已有则原样保留
 	settingsFile := filepath.Join(workspaceDir, "settings.json")
@@ -240,6 +258,52 @@ func PrepareWorkspace(options PrepareOptions) (*PreparedWorkspace, error) {
 		prepared.Settings = "written"
 	}
 	return prepared, nil
+}
+
+// collectEmbeddedEmployeeDirs 从内嵌 FS 只收集含 workflow.yaml 的员工目录
+// （与仓库路径的 collectEmployeeDirs 一致，不释放 employees/package.json、test 等非员工内容）。
+func collectEmbeddedEmployeeDirs(fsys fs.FS, root string, out *[]ReleaseFile) error {
+	entries, err := fs.ReadDir(fsys, root)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := root + "/" + entry.Name()
+		if _, err := fs.Stat(fsys, dir+"/workflow.yaml"); err != nil {
+			continue
+		}
+		if err := collectEmbedded(fsys, dir, entry.Name(), out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectEmbedded 从内嵌 FS 读出目录下的全部文件：key 相对 root（prefix 非空时前置）。
+// 用于单 exe 找不到仓库目录时的资源释放。
+func collectEmbedded(fsys fs.FS, root, prefix string, out *[]ReleaseFile) error {
+	return fs.WalkDir(fsys, root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(fsys, path)
+		if err != nil {
+			return err
+		}
+		rel := strings.TrimPrefix(strings.TrimPrefix(path, root), "/")
+		key := rel
+		if prefix != "" {
+			key = prefix + "/" + rel
+		}
+		*out = append(*out, ReleaseFile{Path: key, Data: data})
+		return nil
+	})
 }
 
 // collectEmployeeDirs 收集 employees/ 下含 workflow.yaml 的员工目录（不收集 node_modules、test 等）。

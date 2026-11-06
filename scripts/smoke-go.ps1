@@ -86,7 +86,7 @@ function Read-SseFirstFrame([string]$sseUrl) {
 
 try {
   # ---- 1. 构建 ----
-  Say "1/4 构建"
+  Say "1/5 构建"
   if ($SkipBuild) {
     Pass "跳过构建（-SkipBuild）"
   } elseif (-not (Test-Path (Join-Path $root "go.mod"))) {
@@ -94,7 +94,7 @@ try {
   } else {
     Push-Location $root
     try {
-      $buildOutput = & go build -o $Exe ./cmd/digital-employee 2>&1
+      $buildOutput = & go build -trimpath -ldflags "-s -w" -o $Exe ./cmd/digital-employee 2>&1
       $buildCode = $LASTEXITCODE
     } finally {
       Pop-Location
@@ -111,7 +111,7 @@ try {
     Fail "找不到 exe：$Exe（先 go build 或传 -Exe）"
   } else {
     # ---- 2. 初始化工作区 ----
-    Say "2/4 exe init（释放员工配置/样例、写默认 settings.json）"
+    Say "2/5 exe init（释放员工配置/样例、写默认 settings.json）"
     $initOutput = & $Exe init 2>&1
     $initCode = $LASTEXITCODE
     if ($initCode -ne 0) {
@@ -128,7 +128,7 @@ try {
     if (-not (Test-Path $settingsFile)) { Fail "默认 settings.json 没有写入：$settingsFile" }
 
     # ---- 3. 剧本模式跑 A-01 ----
-    Say "3/4 exe run-case A-01（剧本模式）"
+    Say "3/5 exe run-case A-01（剧本模式）"
     $out = Join-Path $temp "out"
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     if ((Test-Path $caseFile) -and (Test-Path $scriptFile)) {
@@ -164,7 +164,7 @@ try {
     }
 
     # ---- 4. 服务端模式 ----
-    Say "4/4 exe --serve-only（接口 + 静态资源 + SSE）"
+    Say "4/5 exe --serve-only（接口 + 静态资源 + SSE）"
     $env:DE_SCRIPTED = $scriptFile
     $log = Join-Path $temp "serve.log"
     $errLog = Join-Path $temp "serve.err.log"
@@ -250,6 +250,134 @@ try {
       }
     }
   }
+  # ---- 5. 独立目录：exe 复制到仓库外，验证 go:embed 内嵌资源自包含 ----
+  if (Test-Path $Exe) {
+    Say "5/5 独立目录（内嵌资源、仓库不可见）"
+    $standaloneDir = Join-Path $temp "standalone"
+    New-Item -ItemType Directory -Force -Path $standaloneDir | Out-Null
+    $standaloneExe = Join-Path $standaloneDir "digital-employee.exe"
+    Copy-Item -Path $Exe -Destination $standaloneExe -Force
+    $standaloneWs = Join-Path $standaloneDir "workspace"
+    Push-Location $standaloneDir
+    try {
+      if ((Test-Path (Join-Path $standaloneDir "employees")) -or (Test-Path (Join-Path $standaloneDir "packages"))) {
+        Fail "独立目录里不应有仓库资源目录"
+      } else {
+        Pass "独立目录只有 exe（员工配置/样例/前端产物均不可见）"
+      }
+
+      # 5.1 init 单独可跑（注意把工作区指到独立目录，别复用第 2 步的仓库工作区）
+      $env:DE_WORKSPACE = $standaloneWs
+      $env:DE_NO_OPEN = "1"
+      $standaloneInit = & $standaloneExe init 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        Fail ("独立目录 exe init 失败：" + ($standaloneInit -join " "))
+      } else {
+        Pass "独立目录 exe init 可跑"
+      }
+
+      # 5.2 工作区里出现内嵌资源
+      $need = @(
+        (Join-Path $standaloneWs "employees\weekly-report\workflow.yaml"),
+        (Join-Path $standaloneWs "samples\cases\A-01.json"),
+        (Join-Path $standaloneWs "samples\cases\scripts\A-01.json"),
+        (Join-Path $standaloneWs "samples\scenario-a\销售明细.xlsx"),
+        (Join-Path $standaloneWs ".runtime\web\index.html")
+      )
+      $missing = @($need | Where-Object { -not (Test-Path $_) })
+      if ($missing.Count -gt 0) {
+        Fail ("内嵌资源没有释放到工作区：" + ($missing -join "、"))
+      } else {
+        Pass "内嵌资源已释放：employees/、samples/、.runtime/web/"
+      }
+
+      # 5.3 用工作区里的样例跑 A-01
+      $standaloneOut = Join-Path $standaloneDir "out"
+      & $standaloneExe run-case (Join-Path $standaloneWs "samples\cases\A-01.json") `
+        --scripted (Join-Path $standaloneWs "samples\cases\scripts\A-01.json") --out $standaloneOut | Out-Null
+      if ($LASTEXITCODE -ne 0) {
+        Fail "独立目录 run-case 失败（退出码 $LASTEXITCODE）"
+      } else {
+        $standaloneResult = Get-Content (Join-Path $standaloneOut "result.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($standaloneResult.finalState -ne "delivered") {
+          Fail "独立目录 A-01 终态应为 delivered，实际 $($standaloneResult.finalState)"
+        } else {
+          Pass "独立目录 run-case A-01 delivered"
+        }
+      }
+
+      # 5.4 独立目录起服务端：员工/首页/静态资源/SSE
+      if ($script:proc -and -not $script:proc.HasExited) {
+        & taskkill /PID $script:proc.Id /T /F | Out-Null
+        $script:proc = $null
+      }
+      $env:DE_WORKSPACE = $standaloneWs
+      $env:DE_SCRIPTED = Join-Path $standaloneWs "samples\cases\scripts\A-01.json"
+      $env:DE_NO_OPEN = "1"
+      $env:DE_PORT = "18789"
+      $standaloneLog = Join-Path $standaloneDir "serve.log"
+      $standaloneErrLog = Join-Path $standaloneDir "serve.err.log"
+      $script:proc = Start-Process -FilePath $standaloneExe -ArgumentList "--serve-only" -PassThru -NoNewWindow `
+        -RedirectStandardOutput $standaloneLog -RedirectStandardError $standaloneErrLog
+      $standaloneUrl = $null
+      for ($i = 0; $i -lt 60 -and -not $standaloneUrl; $i++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-Path $standaloneLog) {
+          $standaloneMatch = Select-String -Path $standaloneLog -Pattern "http://localhost:(\d+)" | Select-Object -First 1
+          if ($standaloneMatch) { $standaloneUrl = "http://localhost:" + $standaloneMatch.Matches[0].Groups[1].Value }
+        }
+      }
+      if (-not $standaloneUrl) {
+        Fail "独立目录服务端 30 秒内没有就绪（看 $standaloneLog）"
+      } else {
+        $standaloneEmployees = @(Invoke-RestMethod -Uri "$standaloneUrl/api/employees" -TimeoutSec 15)
+        $weekly = $standaloneEmployees | Where-Object { $_.id -eq "weekly-report" } | Select-Object -First 1
+        if (-not $weekly) {
+          Fail "独立目录 /api/employees 里没有 weekly-report"
+        } elseif (-not $weekly.formSchema.properties) {
+          Fail "独立目录员工信息缺少 formSchema"
+        } else {
+          Pass "独立目录 GET /api/employees（weekly-report + formSchema）"
+        }
+        try {
+          $standaloneIndex = Invoke-WebRequest -Uri "$standaloneUrl/" -UseBasicParsing -TimeoutSec 15
+          $standaloneAsset = [regex]::Match($standaloneIndex.Content, 'assets/[^"]+\.js').Value
+          if ($standaloneIndex.StatusCode -ne 200 -or $standaloneAsset -eq "") {
+            Fail "独立目录首页/静态资源不对（状态 $($standaloneIndex.StatusCode)）"
+          } else {
+            $standaloneJs = Invoke-WebRequest -Uri "$standaloneUrl/$standaloneAsset" -UseBasicParsing -TimeoutSec 15
+            if ($standaloneJs.StatusCode -ne 200) {
+              Fail "独立目录 $standaloneAsset 状态码 $($standaloneJs.StatusCode)"
+            } else {
+              Pass "独立目录 GET / 与 $standaloneAsset 可访问"
+            }
+          }
+        } catch {
+          Fail "独立目录首页/静态资源校验失败：$($_.Exception.Message)"
+        }
+        try {
+          $standaloneCreated = Invoke-RestMethod -Uri "$standaloneUrl/api/tasks" -Method Post -TimeoutSec 15 `
+            -Headers @{ "x-role" = "initiator" } -ContentType "application/json" `
+            -Body '{"employee":"weekly-report","form":{"period":{"year":2026,"week":44}}}'
+          $standaloneFrame = Read-SseFirstFrame "$standaloneUrl/api/tasks/$($standaloneCreated.id)/stream?after=0"
+          if (-not $standaloneFrame -or $standaloneFrame -notmatch "event: ") {
+            Fail "独立目录 SSE 没有收到事件"
+          } else {
+            Pass ("独立目录 SSE 收到事件：" + ([regex]::Match($standaloneFrame, "event: (\S+)")).Groups[1].Value)
+          }
+        } catch {
+          Fail "独立目录 SSE 校验失败：$($_.Exception.Message)"
+        }
+      }
+      if ($script:proc -and -not $script:proc.HasExited) {
+        & taskkill /PID $script:proc.Id /T /F | Out-Null
+      }
+      $script:proc = $null
+    } finally {
+      Pop-Location
+    }
+  }
+
 } catch {
   Fail ("未捕获异常：" + $_.Exception.Message)
 } finally {
@@ -262,7 +390,7 @@ try {
 $elapsed = [math]::Round(((Get-Date) - $started).TotalSeconds, 1)
 Write-Host ""
 if ($script:failures -eq 0) {
-  Write-Host "SMOKE PASS  Go 版单 exe 可构建、可初始化工作区、可跑 A-01、可起服务端并提供界面与 SSE（耗时 ${elapsed}s）" -ForegroundColor Green
+  Write-Host "SMOKE PASS  Go 版单 exe 自包含：可构建、可初始化工作区、可跑 A-01、可起服务端（接口/静态资源/SSE），且在仓库外独立目录同样可用（耗时 ${elapsed}s）" -ForegroundColor Green
   exit 0
 }
 Write-Host "SMOKE FAIL  $($script:failures) 项失败（耗时 ${elapsed}s）" -ForegroundColor Red
