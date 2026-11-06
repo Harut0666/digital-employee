@@ -42,12 +42,19 @@ var _ contract.ToolClient = (*Registry)(nil)
 // defaultFaultTimeout 与 TS 版默认值一致。
 const defaultFaultTimeout = 30 * time.Second
 
-// NewRegistry 创建工具注册表。
+// NewRegistry 创建工具注册表。render_report_docx 默认转调 internal/render，
+// 可用 Options.Render 或 SetRenderer 覆盖（传 nil 表示不接入）。
 func NewRegistry(opts ...Options) *Registry {
-	r := &Registry{faults: make(map[string]contract.FaultMode), faultTime: defaultFaultTimeout}
+	r := &Registry{
+		faults:    make(map[string]contract.FaultMode),
+		faultTime: defaultFaultTimeout,
+		render:    DefaultRenderer,
+	}
 	if len(opts) > 0 {
 		o := opts[0]
-		r.render = o.Render
+		if o.Render != nil {
+			r.render = o.Render
+		}
 		if o.FaultTimeoutMs > 0 {
 			r.faultTime = time.Duration(o.FaultTimeoutMs) * time.Millisecond
 		}

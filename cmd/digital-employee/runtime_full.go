@@ -1,93 +1,156 @@
-//go:build de_full
+//go:build !de_stub
 
-// 真实接线（构建标签 de_full）：internal/engine / internal/tools 就绪后在这里接上。
+// 真实接线（默认构建）：internal/engine + internal/tools + internal/render。
 //
-// ============================ 交接约定（给 Lead） ============================
-// 本文件由 Lead 在 engine/tools 落地后填写；默认构建（!de_full）走 runtime_stub.go，
-// 因此 `go build ./cmd/digital-employee` 始终可编译、可用占位引擎联调 HTTP 契约。
+// 这份文件由 Lead 维护；占位实现见 runtime_stub.go（构建标签 de_stub），
+// 用 `go build -tags de_stub` 可得到不带真实引擎的联调版本。
 //
-// 需要在这里实现的四个函数（签名固定，不要改）：
-//
-//	func fullMode() bool
-//	func appEngineFactory(deps app.EngineDeps) (contract.Engine, error)
-//	func appToolFactory() (contract.ToolClient, error)
-//	func cliEngineFactory(options cli.EngineOptions) (contract.Engine, error)
-//	func cliToolFactory() (contract.ToolClient, error)
-//
-// 期望的构造器签名（若 engine/tools 实际签名不同，在下面做一层适配即可）：
-//
-//	// internal/tools
-//	func NewRegistry() *Registry            // 实现 contract.ToolClient
-//	// 或 func NewClient() (contract.ToolClient, error)
-//
-//	// internal/engine
-//	type Options struct {
-//	    WorkspaceDir  string
-//	    EmployeesDir  string
-//	    ToolClient    contract.ToolClient
-//	    Faults        *contract.FaultHooks
-//	    ScriptFile    string                  // 非空 → 剧本式模型（CLI --scripted / DE_SCRIPTED）
-//	    ModelSettings contract.ModelSettings  // ScriptFile 为空时按它连真实模型
-//	    ExitOnCrash   bool                    // 服务端/CLI 默认 true
-//	}
-//	func New(options Options) (*Engine, error) // *Engine 实现 contract.Engine
-//
-// 映射关系：
-//
-//	appEngineFactory(deps)   → engine.New(engine.Options{WorkspaceDir: deps.WorkspaceDir,
-//	                          EmployeesDir: deps.EmployeesDir, ToolClient: deps.ToolClient,
-//	                          Faults: deps.Faults, ScriptFile: deps.ScriptFile,
-//	                          ModelSettings: deps.ModelSettings, ExitOnCrash: true})
-//	appToolFactory()        → tools.NewRegistry()（没有错误分支时包一层 nil error）
-//	cliEngineFactory(opts)  → engine.New(engine.Options{...同上，ExitOnCrash: true})
-//	cliToolFactory()        → tools.NewRegistry()
-//
-// 还有一处服务端钩子：onSettingsSaved(settings contract.ModelSettings) error ——
-// 设置页保存后由服务端调用，需要用新的 ModelSettings 重建模型提供者（engine 若暴露
-// SetModelSettings/UpdateModel 之类的方法就在这里转调；拿不到 engine 引用时可以在
-// appEngineFactory 里把 engine 存到包级变量）。占位实现返回 nil 即可。
-//
-// 构建方式：go build -tags de_full ./cmd/digital-employee
-// ============================================================================
+// 接线内容：
+//   - 工具客户端：internal/tools.Registry，render_report_docx 转调 internal/render
+//   - 引擎：internal/engine.New，模型提供者按 --scripted / DE_SCRIPTED 选择剧本式或真实
+//   - 设置页保存后的模型热替换：引擎实现 SetModelProvider 时自动生效，否则下次启动生效
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"sync"
 
+	"digital-employee/internal/agent"
 	"digital-employee/internal/app"
 	"digital-employee/internal/cli"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/engine"
+	"digital-employee/internal/render"
+	"digital-employee/internal/tools"
 )
 
 // fullMode 当前是否真实接线。
 func fullMode() bool { return true }
 
-var errNotWired = fmt.Errorf("de_full 接线尚未完成：请在 cmd/digital-employee/runtime_full.go 里接入 internal/engine 与 internal/tools")
+var (
+	engineMu     sync.RWMutex
+	activeEngine *engine.Engine
+	// lastModelSettings 最近一次保存的模型设置。
+	lastModelSettings contract.ModelSettings
+)
+
+// newToolClient 构造工具注册表：render_report_docx 走纯 Go 渲染实现。
+func newToolClient() (contract.ToolClient, error) {
+	return tools.NewRegistry(tools.Options{
+		Render: func(input contract.RenderReportInput) (contract.RenderReportOutput, error) {
+			return render.RenderReportDocx(input, render.Options{})
+		},
+	}), nil
+}
+
+// newModelProvider 按剧本文件或模型设置构造模型提供者。
+func newModelProvider(scriptFile string, modelSettings contract.ModelSettings) (agent.ModelProvider, error) {
+	if scriptFile != "" {
+		raw, err := os.ReadFile(scriptFile)
+		if err != nil {
+			return nil, fmt.Errorf("读取剧本文件 %s 失败: %w", scriptFile, err)
+		}
+		var script agent.ModelScript
+		if err := json.Unmarshal(raw, &script); err != nil {
+			return nil, fmt.Errorf("解析剧本文件 %s 失败: %w", scriptFile, err)
+		}
+		return agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{}), nil
+	}
+	return agent.NewModelProvider(modelSettings), nil
+}
+
+// newEngine 按统一参数构造真实引擎。
+func newEngine(options cli.EngineOptions, faults *contract.FaultHooks) (contract.Engine, error) {
+	toolClient := options.ToolClient
+	if toolClient == nil {
+		var err error
+		toolClient, err = newToolClient()
+		if err != nil {
+			return nil, err
+		}
+	}
+	model, err := newModelProvider(options.ScriptFile, options.ModelSettings)
+	if err != nil {
+		return nil, err
+	}
+	eng, err := engine.New(engine.Deps{
+		WorkspaceDir: options.WorkspaceDir,
+		EmployeesDir: options.EmployeesDir,
+		ToolClient:   toolClient,
+		Model:        model,
+		Faults:       faults,
+		ExitOnCrash:  true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	engineMu.Lock()
+	activeEngine = eng
+	lastModelSettings = options.ModelSettings
+	engineMu.Unlock()
+	return eng, nil
+}
 
 // appEngineFactory 服务端模式的引擎工厂。
 func appEngineFactory(deps app.EngineDeps) (contract.Engine, error) {
-	_ = deps
-	return nil, errNotWired
+	return newEngine(cli.EngineOptions{
+		WorkspaceDir:  deps.WorkspaceDir,
+		EmployeesDir:  deps.EmployeesDir,
+		ToolClient:    deps.ToolClient,
+		ScriptFile:    deps.ScriptFile,
+		ModelSettings: deps.ModelSettings,
+	}, deps.Faults)
 }
 
 // appToolFactory 服务端模式的工具客户端工厂。
-func appToolFactory() (contract.ToolClient, error) {
-	return nil, errNotWired
-}
+func appToolFactory() (contract.ToolClient, error) { return newToolClient() }
 
 // cliEngineFactory CLI 模式的引擎工厂。
 func cliEngineFactory(options cli.EngineOptions) (contract.Engine, error) {
-	_ = options
-	return nil, errNotWired
+	return newEngine(options, nil)
 }
 
 // cliToolFactory CLI 模式的工具客户端工厂。
-func cliToolFactory() (contract.ToolClient, error) {
-	return nil, errNotWired
+func cliToolFactory() (contract.ToolClient, error) { return newToolClient() }
+
+// modelSwapper 引擎若支持模型热替换则实现它（engine 的 SetModelProvider）。
+type modelSwapper interface {
+	SetModelProvider(agent.ModelProvider)
 }
 
-// onSettingsSaved 设置保存后重建模型提供者（占位，接入 engine 后实现）。
+// onSettingsSaved 设置保存后重建模型提供者。
+// 剧本模式（DE_SCRIPTED / --scripted）下不覆盖剧本；否则按新设置重建。
 func onSettingsSaved(settings contract.ModelSettings) error {
-	_ = settings
+	engineMu.Lock()
+	eng := activeEngine
+	lastModelSettings = settings
+	engineMu.Unlock()
+
+	if eng == nil {
+		return nil // 还没建引擎（例如命令行 init），下次启动生效
+	}
+	provider, err := newModelProvider(scriptFileIfScripted(), settings)
+	if err != nil {
+		return err
+	}
+	if swapper, ok := any(eng).(modelSwapper); ok {
+		swapper.SetModelProvider(provider)
+		return nil
+	}
+	// 引擎暂不支持热替换：不报错，保留设置，重启后生效。
+	fmt.Fprintln(os.Stderr, "[info] 模型设置已保存；当前引擎不支持热替换，新设置从下次启动开始生效")
 	return nil
+}
+
+// scriptFileIfScripted 返回当前进程的剧本文件（--scripted 会设置 DE_SCRIPTED）。
+func scriptFileIfScripted() string {
+	if v := os.Getenv("DE_SCRIPTED"); v != "" {
+		return v
+	}
+	if v := os.Getenv("DE_SCRIPT_FILE"); v != "" {
+		return v
+	}
+	return ""
 }

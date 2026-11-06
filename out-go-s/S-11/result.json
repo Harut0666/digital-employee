@@ -1,0 +1,57 @@
+{
+  "caseId": "S-11",
+  "title": "边界：周中截止且无纪要 → 两次继续（按已有数据 + 无纪要）",
+  "passed": true,
+  "taskId": "20261106034303-144048",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_initiator",
+      "pauseCode": "period_incomplete",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "initiator",
+      "command": "continue_with_partial",
+      "ok": true,
+      "state": "awaiting_initiator",
+      "pauseCode": "minutes_missing",
+      "failures": []
+    },
+    {
+      "index": 2,
+      "actor": "initiator",
+      "command": "continue_without_minutes",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 3,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "state": "delivered",
+      "failures": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-11\\tasks\\20261106034303-144048\\deliverables\\report-20261106034303-144048-render_document-r0-7e0c74e01cf4fc7d-49f20ece9926.docx",
+      "sha256": "47d918fef6289a3056f7521765cf76d6731741ffbbc2dc9efde59e8afd05ebc9"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-11\\tasks\\20261106034303-144048\\deliverables\\qc_record-r0.json",
+      "sha256": "3dbd4a3b0223329003a973d29f03e819cee37c5f7f4b2ff1033ef53c7a21adc8"
+    }
+  ],
+  "failures": []
+}

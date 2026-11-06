@@ -232,6 +232,10 @@ func TestExportImportDiagnostics(t *testing.T) {
 	ts, _ := newServerWith(t, Options{WorkspaceDir: workspace})
 	base := ts.URL
 
+	// 先写一次设置，保证 settings.json 存在（导入时才有可备份的旧文件）
+	if status, body, _ := jsonRequest(t, http.MethodPatch, base+"/api/settings/app", `{"revision":0,"ui":{"theme":"dark"}}`, nil); status != 200 {
+		t.Fatalf("先写设置失败：%d %s", status, body)
+	}
 	status, body, headers := jsonRequest(t, http.MethodGet, base+"/api/settings/export", "", nil)
 	if status != 200 {
 		t.Fatalf("导出失败：%d %s", status, body)

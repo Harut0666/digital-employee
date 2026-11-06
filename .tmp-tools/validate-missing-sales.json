@@ -1,1 +1,0 @@
-{"ok":false,"pause":{"code":"missing_sales","message":"缺少销售明细：未找到 xlsx 或 csv 格式的销售数据，无法生成周报。请上传《销售明细.xlsx》后继续。","detail":{"missing":["销售明细"]}},"dimensions":{"stores":false,"products":false,"targets":false},"minutes":[{"path":"D:\\program4claude\\competition\\digital-employee\\samples\\scenario-a\\周会纪要_2026W44.docx","week":{"year":2026,"week":44}}]}

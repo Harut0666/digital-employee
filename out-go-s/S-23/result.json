@@ -1,0 +1,39 @@
+{
+  "caseId": "S-23",
+  "title": "流程：漏引用纪要矛盾 → 质检不通过 → 自动修正后通过",
+  "passed": true,
+  "taskId": "20261106034329-9dc903",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "state": "delivered",
+      "failures": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-23\\tasks\\20261106034329-9dc903\\deliverables\\report-20261106034329-9dc903-render_document-r0-d49a2ac6d4ae3b9b-f08a93c1f1ab.docx",
+      "sha256": "60666fae06590d023357c6558082b8e175c86479472944008ccb0a506b9f03df"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-23\\tasks\\20261106034329-9dc903\\deliverables\\qc_record-r0.json",
+      "sha256": "e38600418a6b766ec935df48597b13445fd703cacf53b90fbefdd1b6f0d28873"
+    }
+  ],
+  "failures": []
+}

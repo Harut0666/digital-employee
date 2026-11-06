@@ -1,0 +1,28 @@
+{
+  "caseId": "S-24",
+  "title": "流程：质检自动修正用尽 → 转人工 → 操作员终止",
+  "passed": true,
+  "taskId": "20261106034332-6dca20",
+  "finalState": "terminated",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_operator",
+      "pauseCode": "qc_exhausted",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "operator",
+      "command": "terminate",
+      "ok": true,
+      "state": "terminated",
+      "failures": []
+    }
+  ],
+  "deliverables": [],
+  "failures": []
+}

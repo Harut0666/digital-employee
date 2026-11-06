@@ -1,0 +1,48 @@
+{
+  "caseId": "S-09",
+  "title": "边界：数据在周中截止 → 选择“按已有数据继续”",
+  "passed": true,
+  "taskId": "20261106034256-2ed0e1",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_initiator",
+      "pauseCode": "period_incomplete",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "initiator",
+      "command": "continue_with_partial",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 2,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "state": "delivered",
+      "failures": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-09\\tasks\\20261106034256-2ed0e1\\deliverables\\report-20261106034256-2ed0e1-render_document-r0-21ab3f9116bd5d7d-1e3e70cd3855.docx",
+      "sha256": "4d18994cbea86bdde1bd6c932664891f05110abd21345c19787ff62f4884a679"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-09\\tasks\\20261106034256-2ed0e1\\deliverables\\qc_record-r0.json",
+      "sha256": "07825272062e30b5cbac7c9d4f8136fcaa5068af0d1ac3345bd7e87996dacd30"
+    }
+  ],
+  "failures": []
+}

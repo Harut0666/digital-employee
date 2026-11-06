@@ -47,40 +47,38 @@ PASSED=$(grep -o '"passed"[[:space:]]*:[[:space:]]*\(true\|false\)' "$OUT/result
 [ "$STATE" = "delivered" ] && pass "finalState=delivered" || fail "finalState=$STATE（期望 delivered）"
 [ "$PASSED" = "true" ] && pass "passed=true" || fail "passed=$PASSED"
 
-say "4/5 事件序列对齐"
-if [ -f "$OUT/events.jsonl" ] && [ -f "$GOLDEN/events.normalized.jsonl" ]; then
-  python - "$OUT/events.jsonl" "$GOLDEN/events.normalized.jsonl" <<'PY'
-import json, sys
-def types(path, norm):
-    out = []
-    for line in open(path, encoding='utf-8'):
-        line = line.strip()
-        if not line:
-            continue
-        e = json.loads(line)
-        out.append((e.get('type'), e.get('stepId', '')))
-    return out
-got = types(sys.argv[1], False)
-want = types(sys.argv[2], True)
-if got == want:
-    print("ok   事件序列一致（%d 条）" % len(got))
-    sys.exit(0)
-print("FAIL 事件序列不一致：期望 %d 条，实际 %d 条" % (len(want), len(got)))
-import difflib
-for i, (a, b) in enumerate(zip(want, got)):
-    if a != b:
-        print("  第一处差异 @ %d: 期望 %s，实际 %s" % (i + 1, a, b))
-        break
-sys.exit(1)
-PY
-  [ $? -eq 0 ] || fail "事件序列"
+say "4/5 事件结构化对齐（归一化后逐字段 diff）"
+if [ -f "$OUT/events.jsonl" ] && [ -f "$GOLDEN/events.jsonl" ]; then
+  python scripts/normalize-events.py "$GOLDEN/events.jsonl" > /tmp/golden-events.norm.jsonl
+  python scripts/normalize-events.py "$OUT/events.jsonl" > /tmp/go-events.norm.jsonl
+  GOLDEN_N=$(wc -l < /tmp/golden-events.norm.jsonl | tr -d ' ')
+  GO_N=$(wc -l < /tmp/go-events.norm.jsonl | tr -d ' ')
+  if diff -q /tmp/golden-events.norm.jsonl /tmp/go-events.norm.jsonl > /dev/null 2>&1; then
+    pass "事件与 golden 完全一致（$GO_N 条，归一化后逐字段相同）"
+  else
+    fail "事件与 golden 不一致（golden $GOLDEN_N 条，go $GO_N 条）"
+    diff -u /tmp/golden-events.norm.jsonl /tmp/go-events.norm.jsonl | head -24
+  fi
 else
-  fail "缺少 $OUT/events.jsonl 或 golden"
+  fail "缺少 $OUT/events.jsonl 或 $GOLDEN/events.jsonl"
 fi
 
 say "5/5 交付物"
-DOCX=$(find "$OUT" "$WS" -name '*.docx' 2>/dev/null | head -1)
-if [ -n "$DOCX" ]; then
+# 从 result.json 的 deliverables 里取 docx；不能用 find | head -1：
+# 工作区里还有附件（周会纪要.docx），排序在前会误取附件。
+DOCX=$(python - "$OUT/result.json" <<'PY'
+import json, sys
+try:
+    result = json.load(open(sys.argv[1], encoding='utf-8'))
+except Exception:
+    sys.exit(0)
+for deliverable in result.get('deliverables', []):
+    if deliverable.get('kind') == 'docx' and deliverable.get('path'):
+        print(deliverable['path'])
+        break
+PY
+)
+if [ -n "$DOCX" ] && [ -f "$DOCX" ]; then
   pass "docx: $DOCX"
   N=$(python - "$DOCX" <<'PY'
 import sys, zipfile

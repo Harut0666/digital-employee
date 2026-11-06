@@ -1,0 +1,117 @@
+{
+  "id": "20261106034310-b9e8a2",
+  "employee": "weekly-report",
+  "configHash": "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb",
+  "state": "awaiting_initiator",
+  "pause": {
+    "code": "period_out_of_range",
+    "message": "所选周期（2026 年第 35 周，2026-08-24 至 2026-08-30）超出销售数据覆盖范围：数据实际覆盖 2026-08-31 至 2026-11-01。请改选范围内的周次，或补充对应日期的销售数据。",
+    "options": [
+      "supplement",
+      "terminate"
+    ],
+    "detail": {
+      "coverage": {
+        "from": "2026-08-31",
+        "to": "2026-11-01"
+      },
+      "period": {
+        "from": "2026-08-24",
+        "to": "2026-08-30",
+        "week": 35,
+        "year": 2026
+      }
+    }
+  },
+  "form": {
+    "period": {
+      "week": 35,
+      "year": 2026
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-15\\tasks\\20261106034310-b9e8a2\\attachments\\销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W42.docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-15\\tasks\\20261106034310-b9e8a2\\attachments\\周会纪要_2026W42.docx"
+    }
+  ],
+  "steps": [
+    {
+      "id": "admission",
+      "label": "准入校验",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "load_data",
+      "label": "读取并清洗销售数据",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "compute_metrics",
+      "label": "计算指标与异常",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "parse_minutes",
+      "label": "解析周会纪要",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "interpret_feedback",
+      "label": "解读退回意见",
+      "kind": "judge",
+      "status": "skipped"
+    },
+    {
+      "id": "match_causes",
+      "label": "从纪要匹配异常原因",
+      "kind": "judge",
+      "status": "pending"
+    },
+    {
+      "id": "detect_contradictions",
+      "label": "判定纪要矛盾",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "write_report",
+      "label": "撰写周报叙述",
+      "kind": "judge",
+      "status": "pending"
+    },
+    {
+      "id": "render_document",
+      "label": "生成 Word 周报",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "qc",
+      "label": "质检",
+      "kind": "qc",
+      "status": "pending"
+    }
+  ],
+  "budget": {
+    "modelCalls": {
+      "used": 0,
+      "limit": 30
+    },
+    "elapsedMs": {
+      "used": 2625,
+      "limit": 600000
+    }
+  },
+  "reworkRound": 0,
+  "deliverables": [],
+  "lastSeq": 7
+}

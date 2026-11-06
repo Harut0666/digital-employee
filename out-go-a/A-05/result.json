@@ -1,0 +1,21 @@
+{
+  "caseId": "A-05",
+  "title": "超出数据范围",
+  "passed": true,
+  "taskId": "20261106034214-ef045e",
+  "finalState": "awaiting_initiator",
+  "pauseCode": "period_out_of_range",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_initiator",
+      "pauseCode": "period_out_of_range",
+      "failures": []
+    }
+  ],
+  "deliverables": [],
+  "failures": []
+}

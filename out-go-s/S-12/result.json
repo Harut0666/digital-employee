@@ -1,0 +1,21 @@
+{
+  "caseId": "S-12",
+  "title": "缺材料：缺少“销售目标”工作表",
+  "passed": true,
+  "taskId": "20261106034305-901958",
+  "finalState": "awaiting_initiator",
+  "pauseCode": "missing_dimensions",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_initiator",
+      "pauseCode": "missing_dimensions",
+      "failures": []
+    }
+  ],
+  "deliverables": [],
+  "failures": []
+}

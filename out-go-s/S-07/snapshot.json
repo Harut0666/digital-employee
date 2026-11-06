@@ -1,0 +1,156 @@
+{
+  "id": "20261106034250-833f4c",
+  "employee": "weekly-report",
+  "configHash": "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb",
+  "state": "delivered",
+  "form": {
+    "period": {
+      "week": 44,
+      "year": 2026
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-07\\tasks\\20261106034250-833f4c\\attachments\\销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W43.docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-07\\tasks\\20261106034250-833f4c\\attachments\\周会纪要_2026W43.docx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-07\\tasks\\20261106034250-833f4c\\attachments\\周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "id": "admission",
+      "label": "准入校验",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "load_data",
+      "label": "读取并清洗销售数据",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "compute_metrics",
+      "label": "计算指标与异常",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "parse_minutes",
+      "label": "解析周会纪要",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "interpret_feedback",
+      "label": "解读退回意见",
+      "kind": "judge",
+      "status": "skipped"
+    },
+    {
+      "id": "match_causes",
+      "label": "从纪要匹配异常原因",
+      "kind": "judge",
+      "status": "done"
+    },
+    {
+      "id": "detect_contradictions",
+      "label": "判定纪要矛盾",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "write_report",
+      "label": "撰写周报叙述",
+      "kind": "judge",
+      "status": "done"
+    },
+    {
+      "id": "render_document",
+      "label": "生成 Word 周报",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "qc",
+      "label": "质检",
+      "kind": "qc",
+      "status": "done"
+    }
+  ],
+  "budget": {
+    "modelCalls": {
+      "used": 2,
+      "limit": 30
+    },
+    "elapsedMs": {
+      "used": 2997,
+      "limit": 600000
+    }
+  },
+  "reworkRound": 0,
+  "qc": [
+    {
+      "id": "structure",
+      "label": "结构完整",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "traceability",
+      "label": "数据溯源",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "anomaly_coverage",
+      "label": "异常覆盖",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "quote_integrity",
+      "label": "引用真实",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "contradiction_coverage",
+      "label": "纪要矛盾覆盖",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "forbidden_terms",
+      "label": "禁用指标",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "length",
+      "label": "篇幅",
+      "passed": true,
+      "issues": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-07\\tasks\\20261106034250-833f4c\\deliverables\\report-20261106034250-833f4c-render_document-r0-a9d7e530322fd9e9-fe6eb8b06ff2.docx",
+      "sha256": "38981de5343aa6a3d6214b339e444b40ac7f6ab2590652891fbc238f82c45d70"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-07\\tasks\\20261106034250-833f4c\\deliverables\\qc_record-r0.json",
+      "sha256": "0ede7cfec978ed766ba1434939cb1ca5cffbdb4e23fb0ea8a1119fc49fb1a3f4"
+    }
+  ],
+  "lastSeq": 49
+}

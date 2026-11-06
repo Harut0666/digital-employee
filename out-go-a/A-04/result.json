@@ -1,0 +1,39 @@
+{
+  "caseId": "A-04",
+  "title": "数据缺失与退货",
+  "passed": true,
+  "taskId": "20261106034211-8c9f67",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "state": "delivered",
+      "failures": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\A-04\\tasks\\20261106034211-8c9f67\\deliverables\\report-20261106034211-8c9f67-render_document-r0-41ba8251322af0cc-24bd34f95816.docx",
+      "sha256": "9773b6f78e1b20eaad9cac7eb2815688277746ca21878d8496d1e36a00b47036"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\A-04\\tasks\\20261106034211-8c9f67\\deliverables\\qc_record-r0.json",
+      "sha256": "551ea6772211f7b70461fea70461c008f310b72c7c23274a2dd6f209abbc3981"
+    }
+  ],
+  "failures": []
+}

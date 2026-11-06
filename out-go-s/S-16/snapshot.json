@@ -1,0 +1,105 @@
+{
+  "id": "20261106034313-1fe51e",
+  "employee": "weekly-report",
+  "configHash": "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb",
+  "state": "awaiting_initiator",
+  "pause": {
+    "code": "invalid_input",
+    "message": "销售数据文件无法读取（销售明细.xlsx）：zip: not a valid zip file。请确认文件未损坏且包含“销售明细”表后重新上传。",
+    "options": [
+      "supplement",
+      "terminate"
+    ]
+  },
+  "form": {
+    "period": {
+      "week": 44,
+      "year": 2026
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-16\\tasks\\20261106034313-1fe51e\\attachments\\销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-16\\tasks\\20261106034313-1fe51e\\attachments\\周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "id": "admission",
+      "label": "准入校验",
+      "kind": "compute",
+      "status": "done"
+    },
+    {
+      "id": "load_data",
+      "label": "读取并清洗销售数据",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "compute_metrics",
+      "label": "计算指标与异常",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "parse_minutes",
+      "label": "解析周会纪要",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "interpret_feedback",
+      "label": "解读退回意见",
+      "kind": "judge",
+      "status": "skipped"
+    },
+    {
+      "id": "match_causes",
+      "label": "从纪要匹配异常原因",
+      "kind": "judge",
+      "status": "pending"
+    },
+    {
+      "id": "detect_contradictions",
+      "label": "判定纪要矛盾",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "write_report",
+      "label": "撰写周报叙述",
+      "kind": "judge",
+      "status": "pending"
+    },
+    {
+      "id": "render_document",
+      "label": "生成 Word 周报",
+      "kind": "compute",
+      "status": "pending"
+    },
+    {
+      "id": "qc",
+      "label": "质检",
+      "kind": "qc",
+      "status": "pending"
+    }
+  ],
+  "budget": {
+    "modelCalls": {
+      "used": 0,
+      "limit": 30
+    },
+    "elapsedMs": {
+      "used": 6,
+      "limit": 600000
+    }
+  },
+  "reworkRound": 0,
+  "deliverables": [],
+  "lastSeq": 7
+}

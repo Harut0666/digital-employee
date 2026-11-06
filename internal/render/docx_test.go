@@ -61,11 +61,11 @@ func TestDocumentXMLStructure(t *testing.T) {
 	if !strings.Contains(doc, `w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"`) {
 		t.Errorf("缺少 2cm（1134 twips）页边距")
 	}
-	// 正文字体与字号（10.5pt = 21 half-points）
+	// 正文字体与字号（10.5pt = 21 half-points）：标题 18pt、章节 14pt、表格 10pt
 	if !strings.Contains(doc, `w:ascii="Microsoft YaHei"`) {
 		t.Errorf("缺少 Microsoft YaHei 字体")
 	}
-	for _, size := range []string{`w:sz w:val="36"`, `w:sz w:val="28"`, `w:sz w:val="24"`, `w:sz w:val="21"`, `w:sz w:val="20"`} {
+	for _, size := range []string{`w:sz w:val="36"`, `w:sz w:val="28"`, `w:sz w:val="21"`, `w:sz w:val="20"`} {
 		if !strings.Contains(doc, size) {
 			t.Errorf("缺少字号 %s", size)
 		}

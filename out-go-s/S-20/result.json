@@ -1,0 +1,48 @@
+{
+  "caseId": "S-20",
+  "title": "流程：审核人退回摘要意见 → 重做 → 通过并交付",
+  "passed": true,
+  "taskId": "20261106034320-6efade",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 1,
+      "actor": "reviewer",
+      "command": "return",
+      "ok": true,
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review",
+      "failures": []
+    },
+    {
+      "index": 2,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "state": "delivered",
+      "failures": []
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-20\\tasks\\20261106034320-6efade\\deliverables\\report-20261106034320-6efade-render_document-r1-6ac45acf53f953be-a56caf51b9eb.docx",
+      "sha256": "03a6ef0964f11cc803e25db5862e692af83a9c81df33107c13835b7aa4f591af"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.allcase-ws\\S-20\\tasks\\20261106034320-6efade\\deliverables\\qc_record-r1.json",
+      "sha256": "e50426a3a84320a1cd5fa108a94a7911e9cc595fb4915a355c4b9210d3647e6d"
+    }
+  ],
+  "failures": []
+}

@@ -1,8 +1,7 @@
-//go:build !de_full
+//go:build de_stub
 
-// 默认构建的接线：占位引擎 + 占位工具客户端。
-// internal/engine、internal/tools 接入后，用 -tags de_full 构建由 runtime_full.go 接管，
-// 或把本文件删除并把 runtime_full.go 的构建标签去掉。
+// 占位接线（构建标签 de_stub）：占位引擎 + 占位工具客户端，用于不接真实引擎的 HTTP 契约联调。
+// 默认构建走 runtime_full.go（真实引擎）。
 package main
 
 import (

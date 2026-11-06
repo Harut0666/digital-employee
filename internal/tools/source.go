@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xuri/excelize/v2"
@@ -449,22 +450,48 @@ func readCsv(path string) (*SalesSource, error) {
 }
 
 // readSalesSource 读取销售数据源（xlsx 或 csv）。
+// 同一文件（路径 + 大小 + 修改时间）在进程内只解析一次，与 TS 版一致。
 func readSalesSource(path string) (*SalesSource, error) {
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("文件不存在：%s", path)
 		}
 		return nil, err
 	}
+	key := fmt.Sprintf("%s|%d|%d", path, info.Size(), info.ModTime().UnixNano())
+	sourceCache.mu.Lock()
+	if sourceCache.key == key && sourceCache.value != nil {
+		hit := sourceCache.value
+		sourceCache.mu.Unlock()
+		return hit, nil
+	}
+	sourceCache.mu.Unlock()
+
 	ext := strings.ToLower(filepath.Ext(path))
+	var src *SalesSource
 	switch ext {
 	case ".csv":
-		return readCsv(path)
+		src, err = readCsv(path)
 	case ".xlsx":
-		return readXlsx(path)
+		src, err = readXlsx(path)
 	default:
 		return nil, fmt.Errorf("不支持的销售数据格式：%s", ext)
 	}
+	if err != nil {
+		return nil, err
+	}
+	sourceCache.mu.Lock()
+	sourceCache.key = key
+	sourceCache.value = src // 只缓存最近一份，避免内存占用
+	sourceCache.mu.Unlock()
+	return src, nil
+}
+
+var sourceCache struct {
+	mu    sync.Mutex
+	key   string
+	value *SalesSource
 }
 
 // coverageOf 数据覆盖的日期范围，没有可识别日期时返回 nil。
