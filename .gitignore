@@ -17,3 +17,9 @@ out/
 build/
 artifacts/
 packages/desktop/assets/resvg.wasm
+
+# Go 迁移本地产物
+.parity-ws/
+parity-out/
+.tmp-ws/
+.mygo/
