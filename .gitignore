@@ -27,3 +27,4 @@ golden-a01-ws/
 .smoke-ws/
 .tmp-*/
 out-go*/
+.render-spike/

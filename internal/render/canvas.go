@@ -161,6 +161,47 @@ func (c *canvas) circle(cx, cy, r float64, col color.RGBA) {
 	}
 }
 
+// ring 空心圆：先画外圈描边色，再填内圈（ECharts 折线 symbol：白底 + 系列色描边 2px）。
+func (c *canvas) ring(cx, cy, r, strokeWidth float64, fill, stroke color.RGBA) {
+	c.circle(cx, cy, r+strokeWidth/2, stroke)
+	c.circle(cx, cy, r-strokeWidth/2, fill)
+}
+
+// roundRect 圆角矩形（ECharts 图例的柱子图标：14×8、圆角 2）。
+func (c *canvas) roundRect(x, y, w, h, radius float64, col color.RGBA) {
+	if w <= 0 || h <= 0 {
+		return
+	}
+	if radius*2 > w {
+		radius = w / 2
+	}
+	if radius*2 > h {
+		radius = h / 2
+	}
+	CX, CY := (x+w/2)*c.scale, (y+h/2)*c.scale
+	W, H, R := w*c.scale, h*c.scale, radius*c.scale
+	hw, hh := W/2-R, H/2-R
+	minX := int(math.Floor(CX - W/2 - 1))
+	maxX := int(math.Ceil(CX + W/2 + 1))
+	minY := int(math.Floor(CY - H/2 - 1))
+	maxY := int(math.Ceil(CY + H/2 + 1))
+	for py := minY; py <= maxY; py++ {
+		for px := minX; px <= maxX; px++ {
+			dx := math.Max(math.Abs(float64(px)+0.5-CX)-hw, 0)
+			dy := math.Max(math.Abs(float64(py)+0.5-CY)-hh, 0)
+			d := math.Hypot(dx, dy) - R
+			c.blend(px, py, col, 0.5-d)
+		}
+	}
+}
+
+// textBold 合成粗体：同一字符串叠加绘制两遍（右移 0.6 逻辑像素），
+// 免得为标题单独加载一个粗体字库文件；无字体回退时同样有效。
+func (c *canvas) textBold(x, y float64, s string, size float64, col color.RGBA, a align) {
+	c.text(x, y, s, size, col, a)
+	c.text(x+0.6, y+0.15, s, size, col, a)
+}
+
 // textWidth 文本的逻辑宽度。
 func (c *canvas) textWidth(s string, size float64) float64 {
 	if s == "" {

@@ -25,6 +25,7 @@ var (
 	splitColor  = color.RGBA{0xdb, 0xde, 0xe4, 0xff} // splitLine（neutral15）
 	prevBarCol  = color.RGBA{0xb7, 0xc4, 0xd9, 0xff}
 	companyCol  = color.RGBA{0x33, 0x33, 0x33, 0xff}
+	whiteCol    = color.RGBA{0xff, 0xff, 0xff, 0xff}
 	// seriesColors 与 charts.ts 的 COLORS 一致。
 	seriesColors = []color.RGBA{
 		{0x2f, 0x6f, 0xdb, 0xff},
@@ -196,10 +197,10 @@ func drawLegend(c *canvas, entries []legendEntry, fontSize float64) {
 			c.roundRect(x, legendRowTop, itemW, 8, 2, e.col)
 		case legendLine:
 			c.line(x, iconCy, x+itemW, iconCy, 2, e.col)
-			c.ring(x+itemW*0.73, iconCy, 3.2, 2, color.White, e.col)
+			c.ring(x+itemW*0.73, iconCy, 3.2, 2, whiteCol, e.col)
 		case legendLineDashed:
 			c.dashedPolyline([][2]float64{{x, iconCy}, {x + itemW, iconCy}}, 8, 4, 2, e.col)
-			c.ring(x+itemW*0.73, iconCy, 3.2, 2, color.White, e.col)
+			c.ring(x+itemW*0.73, iconCy, 3.2, 2, whiteCol, e.col)
 		}
 		c.text(x+itemW+iconTextGap, legendTextBaseline, e.name, fontSize, labelColor, alignLeft)
 		x += widths[i] + itemGap
@@ -374,7 +375,7 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 		}
 		c.dashedPolyline(pts, 8, 4, 2, companyCol)
 		for _, p := range pts {
-			c.ring(p[0], p[1], 3.5, 2, color.White, companyCol)
+			c.ring(p[0], p[1], 3.5, 2, whiteCol, companyCol)
 		}
 		for ri := range regionNames {
 			pts := make([][2]float64, n)
@@ -384,7 +385,7 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 			col := seriesColor(ri)
 			c.polyline(pts, 2, col)
 			for _, p := range pts {
-				c.ring(p[0], p[1], 3.5, 2, color.White, col)
+				c.ring(p[0], p[1], 3.5, 2, whiteCol, col)
 			}
 		}
 		for i := 0; i < n; i++ {
