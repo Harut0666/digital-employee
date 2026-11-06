@@ -128,20 +128,20 @@ func FindTransition(from TaskState, trigger TransitionTrigger) (Transition, bool
 type PauseCode string
 
 const (
-	PauseMissingSales        PauseCode = "missing_sales"
-	PauseMissingDimensions   PauseCode = "missing_dimensions"
-	PausePeriodOutOfRange    PauseCode = "period_out_of_range"
-	PausePeriodIncomplete    PauseCode = "period_incomplete"
-	PauseMinutesMissing      PauseCode = "minutes_missing"
-	PauseMinutesWeekMismatch PauseCode = "minutes_week_mismatch"
-	PauseInvalidInput        PauseCode = "invalid_input"
-	PauseListDirection       PauseCode = "list_direction_mismatch"
+	PauseMissingSales         PauseCode = "missing_sales"
+	PauseMissingDimensions    PauseCode = "missing_dimensions"
+	PausePeriodOutOfRange     PauseCode = "period_out_of_range"
+	PausePeriodIncomplete     PauseCode = "period_incomplete"
+	PauseMinutesMissing       PauseCode = "minutes_missing"
+	PauseMinutesWeekMismatch  PauseCode = "minutes_week_mismatch"
+	PauseInvalidInput         PauseCode = "invalid_input"
+	PauseListDirection        PauseCode = "list_direction_mismatch"
 	PauseInsufficientMaterial PauseCode = "insufficient_material"
-	PauseToolFailed          PauseCode = "tool_failed"
-	PauseLimitExceeded       PauseCode = "limit_exceeded"
-	PauseQcExhausted         PauseCode = "qc_exhausted"
-	PauseReworkNeedsHuman    PauseCode = "rework_needs_human"
-	PauseAwaitingReview      PauseCode = "awaiting_review"
+	PauseToolFailed           PauseCode = "tool_failed"
+	PauseLimitExceeded        PauseCode = "limit_exceeded"
+	PauseQcExhausted          PauseCode = "qc_exhausted"
+	PauseReworkNeedsHuman     PauseCode = "rework_needs_human"
+	PauseAwaitingReview       PauseCode = "awaiting_review"
 )
 
 // PauseReason 暂停原因：给人看的中文说明 + 本暂停下允许发起的命令。

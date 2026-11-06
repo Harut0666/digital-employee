@@ -93,19 +93,19 @@ type BudgetItem struct {
 
 // TaskSnapshot 任务快照：`GET /api/tasks/:id` 的响应体，前端据此渲染。
 type TaskSnapshot struct {
-	ID          TaskID          `json:"id"`
-	Employee    string          `json:"employee"`
-	ConfigHash  string          `json:"configHash"`
-	State       TaskState       `json:"state"`
-	Pause       *PauseReason    `json:"pause,omitempty"`
-	Form        map[string]any  `json:"form"`
-	Attachments []AttachmentRef `json:"attachments"`
-	Steps       []StepStatus    `json:"steps"`
-	Budget      Budget          `json:"budget"`
-	ReworkRound int             `json:"reworkRound"`
-	QC          []QcCheckResult `json:"qc,omitempty"`
+	ID           TaskID           `json:"id"`
+	Employee     string           `json:"employee"`
+	ConfigHash   string           `json:"configHash"`
+	State        TaskState        `json:"state"`
+	Pause        *PauseReason     `json:"pause,omitempty"`
+	Form         map[string]any   `json:"form"`
+	Attachments  []AttachmentRef  `json:"attachments"`
+	Steps        []StepStatus     `json:"steps"`
+	Budget       Budget           `json:"budget"`
+	ReworkRound  int              `json:"reworkRound"`
+	QC           []QcCheckResult  `json:"qc,omitempty"`
 	Deliverables []DeliverableRef `json:"deliverables"`
-	LastSeq     int64           `json:"lastSeq"`
+	LastSeq      int64            `json:"lastSeq"`
 }
 
 // TaskSummary 任务列表项。
@@ -144,13 +144,13 @@ type ToolClient interface {
 
 // ModelConnection 模型连接（settings.json 的 connections[]）。
 type ModelConnection struct {
-	Name       string                  `json:"name"`
-	BaseURL    string                  `json:"baseUrl"`
-	APIKey     string                  `json:"apiKey"`
-	Models     []string                `json:"models"`
+	Name         string                  `json:"name"`
+	BaseURL      string                  `json:"baseUrl"`
+	APIKey       string                  `json:"apiKey"`
+	Models       []string                `json:"models"`
 	ModelOptions map[string]ModelOptions `json:"modelOptions,omitempty"`
-	TimeoutMS  *int                    `json:"timeoutMs,omitempty"`
-	MaxRetries *int                    `json:"maxRetries,omitempty"`
+	TimeoutMS    *int                    `json:"timeoutMs,omitempty"`
+	MaxRetries   *int                    `json:"maxRetries,omitempty"`
 }
 
 // ModelSettings 模型设置。
@@ -170,10 +170,10 @@ type ModelConnectionTest struct {
 
 // FaultHooks 运行时可变故障开关（演示与调试），服务端与引擎共享同一对象。
 type FaultHooks struct {
-	CrashAtStep          string            `json:"-"`
-	CrashOnNextStep      bool              `json:"crashOnNextStep"`
-	CorruptTraceability  bool              `json:"corruptTraceability"`
-	Tools                map[string]string `json:"tools,omitempty"`
+	CrashAtStep         string            `json:"-"`
+	CrashOnNextStep     bool              `json:"crashOnNextStep"`
+	CorruptTraceability bool              `json:"corruptTraceability"`
+	Tools               map[string]string `json:"tools,omitempty"`
 }
 
 // Engine 任务引擎：HTTP 层、CLI、测试共用的唯一入口。

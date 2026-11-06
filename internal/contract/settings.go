@@ -21,18 +21,18 @@ var (
 
 // 范围常量（与 settings.ts 一致）。
 const (
-	FontSizeMin        = 12
-	FontSizeMax        = 18
-	StepTimeoutMinMS   = 1_000
-	StepTimeoutMaxMS   = 3_600_000
-	ModelRetriesMax    = 10
-	RetryBackoffMax    = 10
-	RetryBackoffItemMaxMS = 600_000
-	QcAutofixMax       = 10
-	ContextWindowMin   = 1_000
-	ContextWindowMax   = 4_000_000
-	MaxTokensMin       = 1
-	MaxTokensMax       = 2_000_000
+	FontSizeMin            = 12
+	FontSizeMax            = 18
+	StepTimeoutMinMS       = 1_000
+	StepTimeoutMaxMS       = 3_600_000
+	ModelRetriesMax        = 10
+	RetryBackoffMax        = 10
+	RetryBackoffItemMaxMS  = 600_000
+	QcAutofixMax           = 10
+	ContextWindowMin       = 1_000
+	ContextWindowMax       = 4_000_000
+	MaxTokensMin           = 1
+	MaxTokensMax           = 2_000_000
 	ConnectionTimeoutMinMS = 1_000
 	ConnectionTimeoutMaxMS = 3_600_000
 	ConnectionRetriesMax   = 10
@@ -85,12 +85,12 @@ type DemoSettings struct {
 
 // AppSettings 四个分区 + 版本/锁。
 type AppSettings struct {
-	Version     int                `json:"version"`
-	Revision    int                `json:"revision"`
-	UI          UiSettings         `json:"ui"`
-	Execution   ExecutionSettings  `json:"execution"`
+	Version     int                 `json:"version"`
+	Revision    int                 `json:"revision"`
+	UI          UiSettings          `json:"ui"`
+	Execution   ExecutionSettings   `json:"execution"`
 	Diagnostics DiagnosticsSettings `json:"diagnostics"`
-	Permissions PermissionSettings `json:"permissions"`
+	Permissions PermissionSettings  `json:"permissions"`
 }
 
 // SettingsDocument 完整设置文档。

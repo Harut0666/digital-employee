@@ -31,10 +31,10 @@ type Metric struct {
 type StoreType string
 
 const (
-	StoreMall     StoreType = "商场店"
-	StoreStreet   StoreType = "街边店"
+	StoreMall      StoreType = "商场店"
+	StoreStreet    StoreType = "街边店"
 	StoreCommunity StoreType = "社区店"
-	StoreOffice   StoreType = "写字楼店"
+	StoreOffice    StoreType = "写字楼店"
 )
 
 // StoreMetric 门店指标。
@@ -56,10 +56,10 @@ type CategoryMetric struct {
 
 // RegionCategoryMetric 某区域某品类本周与上周的实收、毛利率。
 type RegionCategoryMetric struct {
-	RevenueCents         int64    `json:"revenueCents"`
-	PrevRevenueCents     *int64   `json:"prevRevenueCents"`
-	GrossMarginRate      *float64 `json:"grossMarginRate"`
-	PrevGrossMarginRate  *float64 `json:"prevGrossMarginRate"`
+	RevenueCents        int64    `json:"revenueCents"`
+	PrevRevenueCents    *int64   `json:"prevRevenueCents"`
+	GrossMarginRate     *float64 `json:"grossMarginRate"`
+	PrevGrossMarginRate *float64 `json:"prevGrossMarginRate"`
 }
 
 // ReturnGroup 一笔具名退货：同一门店、同一日期、同一单品合并成一组。
@@ -75,16 +75,16 @@ type ReturnGroup struct {
 
 // Anomaly 环比超过阈值的区域或门店。
 type Anomaly struct {
-	ID                    string    `json:"id"`
-	Level                 string    `json:"level"` // region | store
-	Key                   string    `json:"key"`
-	Name                  string    `json:"name"`
-	Region                string    `json:"region"`
-	StoreType             StoreType `json:"storeType,omitempty"`
-	Wow                   float64   `json:"wow"`
-	RevenueCents          int64     `json:"revenueCents"`
-	PrevRevenueCents      int64     `json:"prevRevenueCents"`
-	BaseWeekHasMissingDays bool     `json:"baseWeekHasMissingDays"`
+	ID                     string    `json:"id"`
+	Level                  string    `json:"level"` // region | store
+	Key                    string    `json:"key"`
+	Name                   string    `json:"name"`
+	Region                 string    `json:"region"`
+	StoreType              StoreType `json:"storeType,omitempty"`
+	Wow                    float64   `json:"wow"`
+	RevenueCents           int64     `json:"revenueCents"`
+	PrevRevenueCents       int64     `json:"prevRevenueCents"`
+	BaseWeekHasMissingDays bool      `json:"baseWeekHasMissingDays"`
 }
 
 // StoreDay 未营业/无数据的门店日。
@@ -125,8 +125,8 @@ type DataQualityReport struct {
 		RevenueCents int64         `json:"revenueCents"`
 		Groups       []ReturnGroup `json:"groups"`
 	} `json:"returns"`
-	StoreDays          []StoreDay `json:"storeDays"`
-	PrevWeekStoreDays  []StoreDay `json:"prevWeekStoreDays"`
+	StoreDays         []StoreDay `json:"storeDays"`
+	PrevWeekStoreDays []StoreDay `json:"prevWeekStoreDays"`
 }
 
 // TrendPoint 近 4 周实收趋势的一个点。
@@ -145,17 +145,17 @@ type TopProduct struct {
 
 // WeeklyFacts 场景 A 的全部事实。
 type WeeklyFacts struct {
-	Period           PeriodRange                              `json:"period"`
-	DataCoverage     DateRange                                `json:"dataCoverage"`
-	Company          Metric                                   `json:"company"`
-	Regions          map[string]Metric                        `json:"regions"`
-	Stores           []StoreMetric                            `json:"stores"`
-	Categories       []CategoryMetric                         `json:"categories"`
+	Period           PeriodRange                                `json:"period"`
+	DataCoverage     DateRange                                  `json:"dataCoverage"`
+	Company          Metric                                     `json:"company"`
+	Regions          map[string]Metric                          `json:"regions"`
+	Stores           []StoreMetric                              `json:"stores"`
+	Categories       []CategoryMetric                           `json:"categories"`
 	RegionCategories map[string]map[string]RegionCategoryMetric `json:"regionCategories"`
-	TopProducts      []TopProduct                             `json:"topProducts"`
-	Anomalies        []Anomaly                                `json:"anomalies"`
-	Trend            []TrendPoint                             `json:"trend"`
-	Quality          DataQualityReport                        `json:"quality"`
+	TopProducts      []TopProduct                               `json:"topProducts"`
+	Anomalies        []Anomaly                                  `json:"anomalies"`
+	Trend            []TrendPoint                               `json:"trend"`
+	Quality          DataQualityReport                          `json:"quality"`
 }
 
 // SlotFormat 槽位渲染格式，由字段名后缀决定。
@@ -169,14 +169,14 @@ const (
 
 // SlotFormats 字段名 → 渲染格式。
 var SlotFormats = map[string]SlotFormat{
-	"revenue":            SlotYuan,
-	"revenueCents":       SlotYuan,
-	"prevRevenueCents":   SlotYuan,
-	"targetCents":        SlotYuan,
-	"wow":                SlotPercent1,
-	"grossMarginRate":    SlotPercent1,
+	"revenue":             SlotYuan,
+	"revenueCents":        SlotYuan,
+	"prevRevenueCents":    SlotYuan,
+	"targetCents":         SlotYuan,
+	"wow":                 SlotPercent1,
+	"grossMarginRate":     SlotPercent1,
 	"prevGrossMarginRate": SlotPercent1,
-	"achievement":        SlotPercent1,
-	"deliveryShare":      SlotPercent1,
-	"count":              SlotCount,
+	"achievement":         SlotPercent1,
+	"deliveryShare":       SlotPercent1,
+	"count":               SlotCount,
 }

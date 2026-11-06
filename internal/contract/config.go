@@ -34,9 +34,9 @@ type StepLimits struct {
 //	judge:   prompt + input + tools + outputSchema + limits + model + rework + when
 //	qc:      无
 type StepConfig struct {
-	ID     string `json:"id" yaml:"id"`
-	Label  string `json:"label" yaml:"label"`
-	Kind   string `json:"kind" yaml:"kind"` // compute | judge | qc
+	ID    string `json:"id" yaml:"id"`
+	Label string `json:"label" yaml:"label"`
+	Kind  string `json:"kind" yaml:"kind"` // compute | judge | qc
 
 	Tool   string         `json:"tool,omitempty" yaml:"tool,omitempty"`
 	Prompt string         `json:"prompt,omitempty" yaml:"prompt,omitempty"`
@@ -171,27 +171,27 @@ type QCConfig struct {
 
 // EmployeeConfig 加载后的完整员工配置。
 type EmployeeConfig struct {
-	ID        string         `json:"id"`
-	Dir       string         `json:"dir"`
-	Hash      string         `json:"hash"`
-	Skill     string         `json:"skill"`
-	Frontdesk string         `json:"frontdesk"`
-	Workflow  EmployeeWorkflow `json:"workflow"`
-	QC        QCConfig       `json:"qc"`
-	FormSchema map[string]any `json:"formSchema"`
-	FormUI     map[string]any `json:"formUi,omitempty"`
-	Prompts        map[string]string            `json:"prompts"`
-	OutputSchemas  map[string]map[string]any    `json:"outputSchemas"`
+	ID            string                    `json:"id"`
+	Dir           string                    `json:"dir"`
+	Hash          string                    `json:"hash"`
+	Skill         string                    `json:"skill"`
+	Frontdesk     string                    `json:"frontdesk"`
+	Workflow      EmployeeWorkflow          `json:"workflow"`
+	QC            QCConfig                  `json:"qc"`
+	FormSchema    map[string]any            `json:"formSchema"`
+	FormUI        map[string]any            `json:"formUi,omitempty"`
+	Prompts       map[string]string         `json:"prompts"`
+	OutputSchemas map[string]map[string]any `json:"outputSchemas"`
 }
 
 // 质检模板名。
 const (
-	TemplateForbiddenTerms   = "forbidden_terms"
-	TemplateRequiredTerms    = "required_terms"
+	TemplateForbiddenTerms     = "forbidden_terms"
+	TemplateRequiredTerms      = "required_terms"
 	TemplateSectionMustContain = "section_must_contain"
-	TemplateMaxItems         = "max_items"
-	TemplateMaxPages         = "max_pages"
-	TemplateNumberRange      = "number_range"
+	TemplateMaxItems           = "max_items"
+	TemplateMaxPages           = "max_pages"
+	TemplateNumberRange        = "number_range"
 )
 
 // 表单字段用途（form.ts）。

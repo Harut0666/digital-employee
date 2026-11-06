@@ -102,7 +102,7 @@ var EventTypes = []string{
 	EventReviewDecision, EventDeliverableCreated, EventFaultInjected,
 }
 
-func IntPtr(v int) *int       { return &v }
-func Int64Ptr(v int64) *int64 { return &v }
-func BoolPtr(v bool) *bool    { return &v }
+func IntPtr(v int) *int          { return &v }
+func Int64Ptr(v int64) *int64    { return &v }
+func BoolPtr(v bool) *bool       { return &v }
 func StringPtr(v string) *string { return &v }

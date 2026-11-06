@@ -5,15 +5,15 @@ package contract
 
 // 工具名常量（白名单也用它）。
 const (
-	ToolValidateSubmission  = "validate_submission"
-	ToolLoadSales           = "load_sales"
-	ToolComputeMetrics      = "compute_metrics"
+	ToolValidateSubmission   = "validate_submission"
+	ToolLoadSales            = "load_sales"
+	ToolComputeMetrics       = "compute_metrics"
 	ToolDetectContradictions = "detect_contradictions"
-	ToolParseMinutes        = "parse_minutes"
-	ToolRenderReportDocx    = "render_report_docx"
-	ToolQueryTask           = "query_task"
-	ToolWebSearch           = "web_search"
-	ToolAdminSetFaults      = "admin_set_faults"
+	ToolParseMinutes         = "parse_minutes"
+	ToolRenderReportDocx     = "render_report_docx"
+	ToolQueryTask            = "query_task"
+	ToolWebSearch            = "web_search"
+	ToolAdminSetFaults       = "admin_set_faults"
 )
 
 // ToolNames 全部工具名。
@@ -31,26 +31,26 @@ type AttachmentRef struct {
 // ---- validate_submission ----
 
 type ValidateSubmissionInput struct {
-	Period             IsoWeek         `json:"period"`
-	Attachments        []AttachmentRef `json:"attachments"`
-	AllowMissingMinutes bool           `json:"allowMissingMinutes,omitempty"`
-	AllowPartialPeriod  bool           `json:"allowPartialPeriod,omitempty"`
+	Period              IsoWeek         `json:"period"`
+	Attachments         []AttachmentRef `json:"attachments"`
+	AllowMissingMinutes bool            `json:"allowMissingMinutes,omitempty"`
+	AllowPartialPeriod  bool            `json:"allowPartialPeriod,omitempty"`
 }
 
 // MinutesDetection 纪要文件的周次识别结果。
 type MinutesDetection struct {
-	Path string  `json:"path"`
+	Path string   `json:"path"`
 	Week *IsoWeek `json:"week"` // 识别不出为 null
 }
 
 // ValidateSubmissionOutput 准入校验结果。OK=false 时 Pause 给出最根本的一个原因。
 type ValidateSubmissionOutput struct {
-	OK         bool              `json:"ok"`
-	Pause      *PauseReason      `json:"pause,omitempty"`
-	Sales      *SalesFile        `json:"sales,omitempty"`
-	Dimensions Dimensions        `json:"dimensions"`
+	OK         bool               `json:"ok"`
+	Pause      *PauseReason       `json:"pause,omitempty"`
+	Sales      *SalesFile         `json:"sales,omitempty"`
+	Dimensions Dimensions         `json:"dimensions"`
 	Minutes    []MinutesDetection `json:"minutes"`
-	Coverage   *DateRange        `json:"coverage,omitempty"`
+	Coverage   *DateRange         `json:"coverage,omitempty"`
 }
 
 // SalesFile 识别出的销售明细文件。
@@ -211,8 +211,8 @@ type RenderReportInput struct {
 
 // RenderedReport 已用事实渲染完槽位的报告内容。
 type RenderedReport struct {
-	Title    string              `json:"title"`
-	Sections []RenderedSection   `json:"sections"`
+	Title    string            `json:"title"`
+	Sections []RenderedSection `json:"sections"`
 }
 
 type RenderedSection struct {
@@ -223,10 +223,10 @@ type RenderedSection struct {
 }
 
 type RenderReportOutput struct {
-	DocxPath      string `json:"docxPath"`
-	SHA256        string `json:"sha256"`
+	DocxPath       string  `json:"docxPath"`
+	SHA256         string  `json:"sha256"`
 	EstimatedPages float64 `json:"estimatedPages"`
-	ChartCount    int    `json:"chartCount"`
+	ChartCount     int     `json:"chartCount"`
 }
 
 // ---- 故障注入 ----
@@ -248,6 +248,6 @@ type AdminSetFaultsInput struct {
 }
 
 type AdminSetFaultsOutput struct {
-	OK    bool                `json:"ok"`
+	OK    bool                 `json:"ok"`
 	Tools map[string]FaultMode `json:"tools"`
 }

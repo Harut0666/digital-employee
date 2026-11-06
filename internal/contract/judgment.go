@@ -24,18 +24,18 @@ type DraftCause struct {
 
 // RevisionNote 重做时的修改说明。
 type RevisionNote struct {
-	Comment string   `json:"comment"`
+	Comment  string   `json:"comment"`
 	Sections []string `json:"sections"`
-	Change  string   `json:"change"`
+	Change   string   `json:"change"`
 }
 
 // DraftReport 判断步骤写出的报告草稿：叙述里只含槽位 {{path}}，不含裸数字。
 type DraftReport struct {
-	Title      string            `json:"title"`
-	Sections   []RenderedSection `json:"sections"`
-	Causes     []DraftCause      `json:"causes"`
-	RevisionNotes []RevisionNote `json:"revisionNotes,omitempty"`
-	ContradictionRefs []string   `json:"contradictionRefs,omitempty"`
+	Title             string            `json:"title"`
+	Sections          []RenderedSection `json:"sections"`
+	Causes            []DraftCause      `json:"causes"`
+	RevisionNotes     []RevisionNote    `json:"revisionNotes,omitempty"`
+	ContradictionRefs []string          `json:"contradictionRefs,omitempty"`
 }
 
 // RenderedStats 渲染后的统计（render_report_docx 的返回）。
@@ -52,15 +52,15 @@ type Feedback struct {
 
 // QcInput 质检输入。
 type QcInput struct {
-	Config        QCConfig                `json:"config"`
-	Draft         DraftReport             `json:"draft"`
-	Facts         WeeklyFacts             `json:"facts"`
-	Minutes       ParseMinutesOutput      `json:"minutes"`
+	Config         QCConfig                `json:"config"`
+	Draft          DraftReport             `json:"draft"`
+	Facts          WeeklyFacts             `json:"facts"`
+	Minutes        ParseMinutesOutput      `json:"minutes"`
 	Contradictions []DetectedContradiction `json:"contradictions,omitempty"`
-	Rendered      *RenderedStats          `json:"rendered,omitempty"`
-	PreviousDraft *DraftReport            `json:"previousDraft,omitempty"`
-	Feedback      *Feedback               `json:"feedback,omitempty"`
-	FixSteps      *QCFixSteps             `json:"fixSteps,omitempty"`
+	Rendered       *RenderedStats          `json:"rendered,omitempty"`
+	PreviousDraft  *DraftReport            `json:"previousDraft,omitempty"`
+	Feedback       *Feedback               `json:"feedback,omitempty"`
+	FixSteps       *QCFixSteps             `json:"fixSteps,omitempty"`
 }
 
 // JudgmentFailure 判断步骤失败原因。
@@ -87,10 +87,10 @@ type JudgmentResult struct {
 
 // ModelTurn 一次模型调用的产物（写 model_called 事件、断点恢复时按日志重放）。
 type ModelTurn struct {
-	Turn       int             `json:"turn"`
-	Response   any             `json:"response"`
-	Usage      *EventUsage     `json:"usage,omitempty"`
-	DurationMS int64           `json:"durationMs"`
+	Turn       int         `json:"turn"`
+	Response   any         `json:"response"`
+	Usage      *EventUsage `json:"usage,omitempty"`
+	DurationMS int64       `json:"durationMs"`
 }
 
 // 槽位渲染：把 {{path}} 替换为格式化后的事实值；Unresolved 为无法解析的槽位。

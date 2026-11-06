@@ -32,3 +32,6 @@ out-go*/
 .real-ws/
 .real-out/
 .ui-e2e*/
+.case-ws/
+.allcase-ws/
+.parity-ws/
