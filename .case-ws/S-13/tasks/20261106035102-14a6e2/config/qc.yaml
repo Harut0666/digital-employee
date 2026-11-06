@@ -1,0 +1,52 @@
+# 经营周报员工 · 质检规则（docs/design.md §10.5）
+# 内置质检只能调参数，不能删除。自定义规则从 6 种模板里选一种再填参数（见 custom）。
+builtin:
+  # 1 结构完整：章节齐全且顺序正确，摘要、下周关注事项有数量上限，图表有下限
+  structure:
+    enabled: true
+    sections:
+      - { id: summary, heading: 本周摘要 }
+      - { id: metrics, heading: 核心指标 }
+      - { id: categories, heading: 品类表现 }
+      - { id: anomalies, heading: 异常与原因 }
+      - { id: data_quality, heading: 数据质量说明 }
+      - { id: next_week, heading: 下周关注事项 }
+    summaryMaxSentences: 5
+    nextWeekMaxItems: 5
+    minCharts: 2
+  # 2 数据溯源：叙述里没有裸数字，槽位都能对上事实
+  traceability:
+    enabled: true
+  # 3 异常覆盖：环比超过阈值（±10%，严格大于）的区域和门店都要写进“异常与原因”
+  anomaly_coverage:
+    enabled: true
+    threshold: 0.10
+  # 4 引用真实：原文摘录必须是所注周次纪要原文的连续片段
+  quote_integrity:
+    enabled: true
+  # 5 纪要矛盾覆盖：程序判出的每条矛盾都要写进“异常与原因”，并在草稿里引用矛盾 id
+  contradiction_coverage:
+    enabled: true
+  # 6 禁用指标：数据里没有的指标不得出现
+  forbidden_terms:
+    enabled: true
+    terms: [客单价, 同比, 复购率, 坪效, 人效]
+  # 7 篇幅：按版式估算，正文不超过 3 页
+  length:
+    enabled: true
+    maxPages: 3
+  # 8 意见响应：仅重做时检查
+  feedback_response:
+    enabled: true
+
+# 纪要矛盾的判定阈值（design.md §10.3），比例按小数计：0.05 即 5%
+contradiction:
+  # 纪要说“持平”，但实际环比的绝对值大于此值，判为矛盾
+  flatTolerance: 0.05
+  # 纪要说的方向与实际相反，且实际环比的绝对值大于此值，判为矛盾
+  directionMin: 0.02
+  # 纪要给出的幅度与实际相差超过此值（10 个百分点），判为矛盾
+  magnitudeTolerance: 0.10
+
+# 自定义规则模板：forbidden_terms / required_terms / section_must_contain / max_items / max_pages / number_range
+custom: []

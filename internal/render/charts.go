@@ -1,10 +1,11 @@
 package render
 
 // 两张图表：纯 Go 绘制（image.RGBA + image/png），复刻 packages/tools/src/charts.ts
-// 的 regionBarOption / trendLineOption：
+// 的 regionBarOption / trendLineOption。TS 版用 ECharts 6 SSR + resvg 出图，
+// 本文件按 ECharts 6.1 的实际 SVG 几何复刻（坐标、颜色、字号、图例、线型）：
 //   图 1：各区域本周与上周实收柱状对比（柱顶数值标签）
 //   图 2：近 4 周全公司与各区域实收折线趋势（全公司虚线）
-// 逻辑尺寸 640×300，2x 输出（1280×600）；版式参数取自 ECharts 的 grid/legend/title。
+// 逻辑尺寸 640×300，2x 输出（1280×600）。
 
 import (
 	"image/color"
@@ -15,12 +16,15 @@ import (
 	"digital-employee/internal/contract"
 )
 
+// ECharts 6.1 的默认视觉 token（lib/visual/tokens.js）与 charts.ts 的系列配色。
 var (
-	textColor  = color.RGBA{0x33, 0x33, 0x33, 0xff}
-	axisColor  = color.RGBA{0x6e, 0x70, 0x79, 0xff}
-	splitColor = color.RGBA{0xe0, 0xe6, 0xf1, 0xff}
-	prevBarCol = color.RGBA{0xb7, 0xc4, 0xd9, 0xff}
-	companyCol = color.RGBA{0x33, 0x33, 0x33, 0xff}
+	titleColor  = color.RGBA{0x3c, 0x3c, 0x41, 0xff} // neutral80：标题
+	labelColor  = color.RGBA{0x54, 0x55, 0x5a, 0xff} // neutral70：坐标轴标签/图例文字
+	barLabelCol = color.RGBA{0x33, 0x33, 0x33, 0xff} // 柱顶数值标签
+	axisColor   = color.RGBA{0x54, 0x55, 0x5a, 0xff} // axisLine
+	splitColor  = color.RGBA{0xdb, 0xde, 0xe4, 0xff} // splitLine（neutral15）
+	prevBarCol  = color.RGBA{0xb7, 0xc4, 0xd9, 0xff}
+	companyCol  = color.RGBA{0x33, 0x33, 0x33, 0xff}
 	// seriesColors 与 charts.ts 的 COLORS 一致。
 	seriesColors = []color.RGBA{
 		{0x2f, 0x6f, 0xdb, 0xff},
@@ -32,12 +36,27 @@ var (
 )
 
 // 版式常量（ECharts 逻辑坐标）：grid {left:56,right:44,top:56,bottom:36}，legend.top=28。
+// 标题中心 16.5、图例图标顶 35.5、图例文字中心 39.5（ECharts 6 的 padding 与垂直居中）。
 const (
 	plotLeft   = 56.0
 	plotRight  = 44.0
 	plotTop    = 56.0
 	plotBottom = 36.0
 	legendTop  = 28.0
+
+	titleFontSize     = 15.0
+	legendFontSize    = 13.0
+	axisLabelFontSize = 12.0
+	barLabelFontSize  = 11.0
+
+	// legendRowTop 图例图标顶：legend.top(28) + 7.5。
+	legendRowTop = legendTop + 7.5
+	// legendTextCenter 图例文字垂直中心（= 图标中心）。
+	legendTextCenter = legendRowTop + 4
+	// legendTextBaseline 13px 字体不带 dominant-baseline 时，基线 ≈ 中心 + 4.5。
+	legendTextBaseline = legendTextCenter + 4.5
+	// titleBaseline 标题中心 16.5（ECharts: translate(320,9) + y 7.5），15px 粗体基线 ≈ 21。
+	titleBaseline = 16.5 + 4.5
 )
 
 // seriesColor 第 i 条系列的颜色（循环使用）。
@@ -117,8 +136,8 @@ func (s yScale) splits() int {
 	return n
 }
 
-// niceInterval 取“好看”的刻度间隔，等价于 ECharts 的 niceTicks：
-// step = 10^floor(log10(raw))；raw 达到 5×step 用 10×step、达到 2×step 用 5×step。
+// niceInterval 取“好看”的刻度间隔，等价于 ECharts 6 的 niceTicks：
+// step = 10^floor(log10(raw/5))；raw 达到 5×step 用 10×step、达到 2×step 用 5×step。
 func niceInterval(maxV float64) float64 {
 	if maxV <= 0 {
 		return 1
@@ -151,8 +170,9 @@ type legendEntry struct {
 	kind legendKind
 }
 
-// drawLegend 水平居中图例（legend.top=28、itemWidth=14、itemHeight=8、itemGap=10）。
-func drawLegend(c *canvas, entries []legendEntry, size float64) {
+// drawLegend 水平居中图例：itemWidth=14、itemHeight=8、itemGap=10、图标与文字间隔 5。
+// 图标顶 35.5、文字中心 39.5（ECharts 6 legend.top=28 + 内边距 7.5）。
+func drawLegend(c *canvas, entries []legendEntry, fontSize float64) {
 	if len(entries) == 0 {
 		return
 	}
@@ -164,49 +184,56 @@ func drawLegend(c *canvas, entries []legendEntry, size float64) {
 	widths := make([]float64, len(entries))
 	total := 0.0
 	for i, e := range entries {
-		widths[i] = itemW + iconTextGap + c.textWidth(e.name, size)
+		widths[i] = itemW + iconTextGap + c.textWidth(e.name, fontSize)
 		total += widths[i]
 	}
 	total += itemGap * float64(len(entries)-1)
 	x := (chartWidth - total) / 2
-	baseline := legendTop + size*0.85
-	cy := legendTop + 6
+	iconCy := legendTextCenter
 	for i, e := range entries {
 		switch e.kind {
 		case legendBar:
-			c.rect(x, cy-4, itemW, 8, e.col)
+			c.roundRect(x, legendRowTop, itemW, 8, 2, e.col)
 		case legendLine:
-			c.line(x, cy, x+itemW, cy, 2, e.col)
-			c.circle(x+itemW/2, cy, 3.5, e.col)
+			c.line(x, iconCy, x+itemW, iconCy, 2, e.col)
+			c.ring(x+itemW*0.73, iconCy, 3.2, 2, color.White, e.col)
 		case legendLineDashed:
-			c.dashedPolyline([][2]float64{{x, cy}, {x + itemW, cy}}, 4, 2.5, 2, e.col)
-			c.circle(x+itemW/2, cy, 3.5, e.col)
+			c.dashedPolyline([][2]float64{{x, iconCy}, {x + itemW, iconCy}}, 8, 4, 2, e.col)
+			c.ring(x+itemW*0.73, iconCy, 3.2, 2, color.White, e.col)
 		}
-		c.text(x+itemW+iconTextGap, baseline, e.name, size, textColor, alignLeft)
+		c.text(x+itemW+iconTextGap, legendTextBaseline, e.name, fontSize, labelColor, alignLeft)
 		x += widths[i] + itemGap
 	}
 }
 
-// drawTitle 标题（title.left=center、top=4、fontSize=15）。
+// drawTitle 标题（title.left=center、top=4、fontSize=15、粗体、颜色 #3c3c41）。
 func drawTitle(c *canvas, title string) {
-	c.text(chartWidth/2, 4+15*0.8, title, 15, textColor, alignCenter)
+	c.textBold(chartWidth/2, titleBaseline, title, titleFontSize, titleColor, alignCenter)
 }
 
 // drawGridAndYAxis 横向分隔线与值轴标签（axisLabel.formatter=wan）。
-// 没有中文字体时用纯数字（避免“万”字画不出来只剩数字）。
+// ECharts 把 1px 线画在 tick+0.5 处，颜色 #dbdee4；没有中文字体时用纯数字。
 func drawGridAndYAxis(c *canvas, sc yScale) {
 	splits := sc.splits()
 	for i := 0; i <= splits; i++ {
 		v := sc.interval * float64(i)
 		y := sc.y(v)
-		c.line(sc.x0, y, sc.x1, y, 1, splitColor)
+		c.line(sc.x0, y+0.5, sc.x1, y+0.5, 1, splitColor)
 		label := wan(v)
 		if c.vf == nil {
 			label = trimFloat(v)
 		}
-		c.text(sc.x0-8, y+4, label, 12, textColor, alignRight)
+		c.text(sc.x0-8, y+4, label, axisLabelFontSize, labelColor, alignRight)
 	}
 }
+
+// drawAxisBottom X 轴轴线（y+0.5，颜色 #54555a）。ECharts 6 的类目轴默认不画刻度线。
+func drawAxisBottom(c *canvas, sc yScale) {
+	c.line(sc.x0, sc.y1+0.5, sc.x1, sc.y1+0.5, 1, axisColor)
+}
+
+// xAxisLabelBaseline 类目轴标签基线：ECharts 标签中心在 y1+14，12px 字体基线 ≈ 中心 + 4。
+func xAxisLabelBaseline(sc yScale) float64 { return sc.y1 + 18 }
 
 // ---- 图 1：各区域本周与上周实收对比 ----
 
@@ -240,7 +267,7 @@ func renderRegionBarPNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 
 	sc := newYScale(maxV)
 	drawGridAndYAxis(c, sc)
-	c.line(sc.x0, sc.y1, sc.x1, sc.y1, 1, axisColor)
+	drawAxisBottom(c, sc)
 
 	if len(names) > 0 {
 		band := (sc.x1 - sc.x0) / float64(len(names))
@@ -248,8 +275,11 @@ func renderRegionBarPNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 		if hasPrev {
 			seriesCount = 2
 		}
-		groupW := band * 0.8 // barCategoryGap 默认 20%
-		barW := groupW / (float64(seriesCount) + float64(seriesCount-1)*0.3)
+		// ECharts 6：类目间隙 = max(35 − 系列组数×4, 15)%，同组柱间距 = 柱宽×10%。
+		categoryGapPct := math.Max(35-float64(seriesCount)*4, 15) / 100
+		groupW := band * (1 - categoryGapPct)
+		barW := groupW / (float64(seriesCount) + float64(seriesCount-1)*0.1)
+		barGap := barW * 0.1
 		type bar struct {
 			x, w, v float64
 			col     color.RGBA
@@ -260,22 +290,18 @@ func renderRegionBarPNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 			x := center - groupW/2
 			if hasPrev {
 				bars = append(bars, bar{x: x, w: barW, v: prev[i], col: prevBarCol})
-				x += barW * 1.3 // barGap 默认 30%
+				x += barW + barGap
 			}
 			bars = append(bars, bar{x: x, w: barW, v: cur[i], col: seriesColors[0]})
 		}
 		for _, b := range bars {
 			top := sc.y(b.v)
 			c.rect(b.x, top, b.w, sc.y1-top, b.col)
-			c.text(b.x+b.w/2, top-4, trimFloat(b.v), 11, textColor, alignCenter)
-		}
-		// 类目轴：边界刻度 + 居中标签
-		for i := 0; i <= len(names); i++ {
-			x := sc.x0 + band*float64(i)
-			c.line(x, sc.y1, x, sc.y1+5, 1, axisColor)
+			// 数值标签中心在柱顶上方 5.5（ECharts label.position=top）
+			c.text(b.x+b.w/2, top-5.5+3.3, trimFloat(b.v), barLabelFontSize, barLabelCol, alignCenter)
 		}
 		for i, name := range names {
-			c.text(sc.x0+band*(float64(i)+0.5), sc.y1+18, regionDisplayName(name, i, vf), 13, textColor, alignCenter)
+			c.text(sc.x0+band*(float64(i)+0.5), xAxisLabelBaseline(sc), regionDisplayName(name, i, vf), axisLabelFontSize, labelColor, alignCenter)
 		}
 	}
 
@@ -292,7 +318,7 @@ func renderRegionBarPNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 		curName = "This week"
 	}
 	entries = append(entries, legendEntry{name: curName, col: seriesColors[0], kind: legendBar})
-	drawLegend(c, entries, 13)
+	drawLegend(c, entries, legendFontSize)
 
 	title := "各区域实收对比（" + weekLabel(facts.Period.IsoWeek) + "，元）"
 	if vf == nil {
@@ -332,7 +358,7 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 
 	sc := newYScale(maxV)
 	drawGridAndYAxis(c, sc)
-	c.line(sc.x0, sc.y1, sc.x1, sc.y1, 1, axisColor)
+	drawAxisBottom(c, sc)
 
 	if n > 0 {
 		xAt := func(i int) float64 {
@@ -346,9 +372,9 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 		for i := range trend {
 			pts[i] = [2]float64{xAt(i), sc.y(company[i])}
 		}
-		c.dashedPolyline(pts, 6, 4, 2, companyCol)
+		c.dashedPolyline(pts, 8, 4, 2, companyCol)
 		for _, p := range pts {
-			c.circle(p[0], p[1], 3.5, companyCol)
+			c.ring(p[0], p[1], 3.5, 2, color.White, companyCol)
 		}
 		for ri := range regionNames {
 			pts := make([][2]float64, n)
@@ -358,18 +384,15 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 			col := seriesColor(ri)
 			c.polyline(pts, 2, col)
 			for _, p := range pts {
-				c.circle(p[0], p[1], 3.5, col)
+				c.ring(p[0], p[1], 3.5, 2, color.White, col)
 			}
 		}
-		// 类目轴：刻度 + 周次标签
 		for i := 0; i < n; i++ {
-			x := xAt(i)
-			c.line(x, sc.y1, x, sc.y1+5, 1, axisColor)
 			label := weekLabel(trend[i].Week)
 			if vf == nil {
 				label = "W" + strconv.Itoa(trend[i].Week.Week)
 			}
-			c.text(x, sc.y1+18, label, 13, textColor, alignCenter)
+			c.text(xAt(i), xAxisLabelBaseline(sc), label, axisLabelFontSize, labelColor, alignCenter)
 		}
 	}
 
@@ -382,7 +405,7 @@ func renderTrendLinePNG(facts contract.WeeklyFacts, vf *vectorFont) ([]byte, err
 	for i, name := range regionNames {
 		entries = append(entries, legendEntry{name: regionDisplayName(name, i, vf), col: seriesColor(i), kind: legendLine})
 	}
-	drawLegend(c, entries, 13)
+	drawLegend(c, entries, legendFontSize)
 
 	title := "近 4 周实收趋势（元）"
 	if vf == nil {

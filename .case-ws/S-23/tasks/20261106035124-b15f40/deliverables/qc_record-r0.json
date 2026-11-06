@@ -1,0 +1,52 @@
+{
+  "taskId": "20261106035124-b15f40",
+  "employee": "weekly-report",
+  "configHash": "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb",
+  "reworkRound": 0,
+  "generatedAt": "2026-11-06T03:51:27.564Z",
+  "passed": true,
+  "checks": [
+    {
+      "id": "structure",
+      "label": "结构完整",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "traceability",
+      "label": "数据溯源",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "anomaly_coverage",
+      "label": "异常覆盖",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "quote_integrity",
+      "label": "引用真实",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "contradiction_coverage",
+      "label": "纪要矛盾覆盖",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "forbidden_terms",
+      "label": "禁用指标",
+      "passed": true,
+      "issues": []
+    },
+    {
+      "id": "length",
+      "label": "篇幅",
+      "passed": true,
+      "issues": []
+    }
+  ]
+}

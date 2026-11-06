@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "经营周报任务",
+  "description": "选择统计周期并上传销售明细和周会纪要，发起一份经营周报任务。",
+  "type": "object",
+  "required": ["period"],
+  "properties": {
+    "period": {
+      "type": "object",
+      "title": "统计周期",
+      "description": "要出周报的 ISO 周（周一至周日）。数据覆盖 2026 年第 36 周至第 44 周，超出范围时任务会暂停并告知实际覆盖的日期。",
+      "required": ["year", "week"],
+      "properties": {
+        "year": {
+          "type": "integer",
+          "title": "年",
+          "description": "统计周期所在的年份。",
+          "minimum": 2000,
+          "maximum": 2100,
+          "default": 2026
+        },
+        "week": {
+          "type": "integer",
+          "title": "周",
+          "description": "ISO 周序号，1 至 53。",
+          "minimum": 1,
+          "maximum": 53
+        }
+      }
+    },
+    "salesFile": {
+      "type": "string",
+      "title": "销售明细",
+      "description": "销售明细文件，建议上传含销售明细、门店信息、商品信息、销售目标四个工作表的 xlsx；只传 csv 会缺少门店和目标信息。未上传时任务会暂停，等待补充。"
+    },
+    "minutesFiles": {
+      "type": "array",
+      "title": "周会纪要",
+      "description": "经营周会纪要（docx），可上传多份。本周纪要用来解释异常原因，其他周的纪要只用来判断门店停业和说明上周基数。周次按纪要正文标题识别。",
+      "items": {
+        "type": "string",
+        "title": "纪要文件",
+        "description": "一份周会纪要文件。"
+      }
+    },
+    "remark": {
+      "type": "string",
+      "title": "备注",
+      "description": "对本次周报的补充要求，会作为写作要求交给员工，例如“摘要先写区域情况”。不能要求更改计算口径。",
+      "default": ""
+    },
+    "allowMissingMinutes": {
+      "type": "boolean",
+      "title": "无纪要继续",
+      "description": "缺少本周纪要时由发起人在暂停卡片上选择，选中后异常原因一律写“原因待核实”。不在表单里手填。",
+      "default": false
+    },
+    "allowPartialPeriod": {
+      "type": "boolean",
+      "title": "按已有数据继续",
+      "description": "统计周期的数据只到周中时由发起人在暂停卡片上选择，选中后周报首页标注“数据不完整”。不在表单里手填。",
+      "default": false
+    }
+  }
+}
