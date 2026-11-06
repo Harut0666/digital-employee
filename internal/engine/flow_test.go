@@ -923,6 +923,101 @@ func TestListAndSubscribe(t *testing.T) {
 	}
 }
 
+// TestConcurrentReadsDuringExecution 验证 HTTP 层并发读（Get/List/Events）与执行中的写事件不冲突。
+// 配合 `go test -race` 使用；server 的 SSE/REST 就是这种并发形态。
+func TestConcurrentReadsDuringExecution(t *testing.T) {
+	demo := newDemoEngine(t, demoEmployeeOptions{})
+	task := demo.create(t)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if _, ok := demo.engine.Get(task.ID); !ok {
+					t.Errorf("执行中的任务应始终可读")
+					return
+				}
+				demo.engine.List()
+				if _, err := demo.engine.Events(task.ID, 0); err != nil {
+					t.Errorf("读取事件失败：%v", err)
+					return
+				}
+				cancel := demo.engine.Subscribe(task.ID, func(contract.TaskEvent) {})
+				cancel()
+			}
+		}()
+	}
+
+	result := demo.engine.Command(task.ID, contract.TaskCommand{Type: contract.CmdSubmit}, contract.RoleInitiator)
+	if !result.OK {
+		t.Fatalf("submit 被拒绝：%+v", result)
+	}
+	snapshot, err := demo.engine.WaitForSettled(task.ID)
+	if err != nil {
+		t.Fatalf("等待停稳失败：%v", err)
+	}
+	close(stop)
+	wg.Wait()
+	if snapshot.State != contract.StateAwaitingReview {
+		t.Fatalf("状态 = %s，want awaiting_review", snapshot.State)
+	}
+}
+
+// TestConcurrentDuplicateApprove 两个 approve 同时到达时，只有一个真正生效，另一个被拒。
+func TestConcurrentDuplicateApprove(t *testing.T) {
+	demo := newDemoEngine(t, demoEmployeeOptions{})
+	task := demo.create(t)
+	demo.submit(t, task.ID)
+
+	results := make([]contract.CommandResult, 2)
+	var wg sync.WaitGroup
+	for index := 0; index < 2; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			results[index] = demo.engine.Command(task.ID, contract.TaskCommand{Type: contract.CmdApprove}, contract.RoleReviewer)
+		}(index)
+	}
+	wg.Wait()
+
+	okCount := 0
+	for _, result := range results {
+		if result.OK {
+			okCount++
+			continue
+		}
+		if result.Error != contract.ErrIllegalTransition {
+			t.Fatalf("被拒绝的命令应返回 illegal_transition，实际 %s（%s）", result.Error, result.Message)
+		}
+	}
+	if okCount != 1 {
+		t.Fatalf("approve 成功次数 = %d，want 1", okCount)
+	}
+
+	events := mustEvents(t, demo.engine, task.ID)
+	approvals := 0
+	delivered := 0
+	for _, event := range events {
+		if event.Type == contract.EventReviewDecision && event.Decision == "approve" {
+			approvals++
+		}
+		if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
+			delivered++
+		}
+	}
+	if approvals != 1 || delivered != 1 {
+		t.Fatalf("review_decision approve = %d，delivered 流转 = %d（都应为 1）", approvals, delivered)
+	}
+}
+
 func mustWait(t *testing.T, eng *Engine, taskID string) *contract.TaskSnapshot {
 	t.Helper()
 	snapshot, err := eng.WaitForSettled(taskID)

@@ -1829,7 +1829,7 @@ func (e *Engine) List() []contract.TaskSummary {
 		// 只保留活跃任务的完整 Runtime；空闲任务（草稿/暂停/终态）按需重读，
 		// 否则列一次任务就会把所有任务的全部事件与配置永久缓存下来。
 		if activeStates[view(rt, func(p *projection) contract.TaskState { return p.State })] {
-			e.cacheRuntime(rt)
+			rt = e.cacheRuntime(rt)
 		}
 		summaries = append(summaries, e.summaryOf(rt))
 	}
@@ -1950,9 +1950,7 @@ func (e *Engine) ResumeAll() error {
 			continue
 		}
 		// 只有需要恢复执行的活跃任务才留在内存里；暂停/终态任务读完就丢，和 List 一致
-		if cached == nil {
-			e.cacheRuntime(rt)
-		}
+		rt = e.cacheRuntime(rt)
 		e.kick(rt)
 	}
 	return nil
@@ -1966,13 +1964,21 @@ func (e *Engine) cachedRuntime(id string) *taskRuntime {
 	return e.runtimes[id]
 }
 
-func (e *Engine) cacheRuntime(rt *taskRuntime) {
+// cacheRuntime 缓存一个运行时并返回缓存里的唯一实例。
+//
+// HTTP 层是并发的：两个请求可能同时读盘得到两个不同实例，这里做了“谁先缓存谁生效”，
+// 保证同一个任务永远只有一个 runtime（也就只有一个 drive goroutine 在推它）。
+func (e *Engine) cacheRuntime(rt *taskRuntime) *taskRuntime {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if existing, ok := e.runtimes[rt.id]; ok {
+		return existing
+	}
 	e.runtimes[rt.id] = rt
+	return rt
 }
 
-// openRuntime 取任务的 Runtime：命中缓存则复用，否则读盘并缓存。
+// openRuntime 取任务的 Runtime：命中缓存则复用，否则读盘并缓存（并发安全，见 cacheRuntime）。
 func (e *Engine) openRuntime(id string) *taskRuntime {
 	if cached := e.cachedRuntime(id); cached != nil {
 		return cached
@@ -1981,8 +1987,7 @@ func (e *Engine) openRuntime(id string) *taskRuntime {
 	if err != nil || rt == nil {
 		return nil
 	}
-	e.cacheRuntime(rt)
-	return rt
+	return e.cacheRuntime(rt)
 }
 
 // loadRuntime 从磁盘读出一个任务的完整 Runtime，不写缓存（List 用）。
