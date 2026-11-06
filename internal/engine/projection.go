@@ -366,14 +366,14 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 		form = map[string]any{}
 	}
 	return contract.TaskSnapshot{
-		ID:         taskID,
-		Employee:   p.Employee,
-		ConfigHash: p.ConfigHash,
-		State:      p.State,
-		Pause:      p.Pause,
-		Form:       form,
+		ID:          taskID,
+		Employee:    p.Employee,
+		ConfigHash:  p.ConfigHash,
+		State:       p.State,
+		Pause:       p.Pause,
+		Form:        form,
 		Attachments: attachments,
-		Steps:      steps,
+		Steps:       steps,
 		Budget: contract.Budget{
 			ModelCalls: contract.BudgetItem{Used: int64(p.ModelCalls), Limit: int64(limits.ModelCalls)},
 			ElapsedMs:  contract.BudgetItem{Used: p.ElapsedMS(nowMS), Limit: int64(limits.DurationSec) * 1000},

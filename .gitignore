@@ -28,3 +28,7 @@ golden-a01-ws/
 .tmp-*/
 out-go*/
 .render-spike/
+.cold-ws/
+.real-ws/
+.real-out/
+.ui-e2e*/

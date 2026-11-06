@@ -108,8 +108,8 @@ func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepM
 	model := contractModelToAgent(*connection, modelID, reasoning, options)
 	connectionCopy := *connection
 	return &ResolvedStepModel{
-		Model:         model,
-		Stream:        func(ctx context.Context, model Model, request StreamRequest, streamOptions StreamOptions) (*AssistantMessage, error) {
+		Model: model,
+		Stream: func(ctx context.Context, model Model, request StreamRequest, streamOptions StreamOptions) (*AssistantMessage, error) {
 			return streamOpenAICompatible(ctx, model, request, streamOptions, thinkingLevel)
 		},
 		APIKey:        connectionCopy.APIKey,
@@ -166,9 +166,9 @@ type openAIChatResponse struct {
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		TotalTokens         int `json:"total_tokens"`
 		PromptTokensDetails struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`

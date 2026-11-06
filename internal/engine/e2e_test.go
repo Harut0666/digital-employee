@@ -2,7 +2,8 @@
 // 并把事件类型序列与 TS 版 golden 对拍。
 //
 // 这个测试是“引擎侧 A-01 验收线”的守门人：
-//   go test ./internal/engine -run TestRunCaseA01Scripted -v
+//
+//	go test ./internal/engine -run TestRunCaseA01Scripted -v
 package engine_test
 
 import (

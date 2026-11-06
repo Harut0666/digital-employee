@@ -73,8 +73,8 @@ func documentXML(report contract.RenderedReport, facts contract.WeeklyFacts, fon
 		b.WriteString(coreBlockXML("", facts, font, imageRIDs))
 	}
 
-	b.WriteString(`<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"` +
-		` w:header="851" w:footer="992" w:gutter="0"/><w:cols w:space="425"/><w:docGrid w:linePitch="312"/></w:sectPr>`)
+	b.WriteString(`<w:sectPr><w:pgSz w:w="11906" w:h="16838" w:orient="portrait"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"` +
+		` w:header="708" w:footer="708" w:gutter="0"/><w:cols w:space="425"/><w:docGrid w:linePitch="312"/></w:sectPr>`)
 	b.WriteString(`</w:body></w:document>`)
 	return b.String()
 }

@@ -193,7 +193,7 @@ type taskRuntime struct {
 	logPath string
 
 	mu        sync.Mutex
-	listeners []func(contract.TaskEvent)
+	listeners []*listenerEntry
 	driving   bool
 	done      chan struct{}
 	redrive   bool
@@ -274,8 +274,10 @@ func (e *Engine) appendLocked(rt *taskRuntime, event contract.TaskEvent) error {
 	}
 	rt.events = append(rt.events, event)
 	rt.proj.Apply(event)
-	for _, listener := range rt.listeners {
-		listener(event)
+	for _, entry := range rt.listeners {
+		if entry.active {
+			entry.fn(event)
+		}
 	}
 	return nil
 }
@@ -961,12 +963,12 @@ func (e *Engine) runCompute(rt *taskRuntime, step contract.StepConfig, args any)
 
 // judgmentPause 判断失败原因 → 暂停触发器。
 var judgmentPause = map[contract.JudgmentFailure]contract.TransitionTrigger{
-	contract.FailStepRounds:   contract.TriggerLimitExceeded,
-	contract.FailStepDuration: contract.TriggerLimitExceeded,
-	contract.FailTaskCalls:    contract.TriggerLimitExceeded,
-	contract.FailTaskDuration: contract.TriggerLimitExceeded,
-	contract.FailModelError:   contract.TriggerToolFailed,
-	contract.FailNoOutput:     contract.TriggerToolFailed,
+	contract.FailStepRounds:    contract.TriggerLimitExceeded,
+	contract.FailStepDuration:  contract.TriggerLimitExceeded,
+	contract.FailTaskCalls:     contract.TriggerLimitExceeded,
+	contract.FailTaskDuration:  contract.TriggerLimitExceeded,
+	contract.FailModelError:    contract.TriggerToolFailed,
+	contract.FailNoOutput:      contract.TriggerToolFailed,
 	contract.FailInvalidOutput: contract.TriggerToolFailed,
 }
 
@@ -1682,13 +1684,12 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 					Message: fmt.Sprintf("附件不存在：%s", attachment.SourcePath)}
 			}
 		}
-		merged := mergeForm(rt.proj.Form, command.Form)
-		rt.mu.Unlock()
 		added, err := e.copyAttachments(rt, command.Attachments)
 		if err != nil {
+			rt.mu.Unlock()
 			return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
 		}
-		rt.mu.Lock()
+		merged := mergeForm(rt.proj.Form, command.Form)
 		attachments := append(append([]contract.AttachmentRef{}, rt.proj.Attachments...), added...)
 		if err := e.appendLocked(rt, contract.TaskEvent{
 			Type: contract.EventFormUpdated, Form: merged, Attachments: attachments, Actor: actor,
@@ -1853,21 +1854,39 @@ func (e *Engine) Events(taskID string, afterSeq int64) ([]contract.TaskEvent, er
 	return out, nil
 }
 
+// listenerEntry 一个事件订阅者；取消时只把 active 置 false，不按下标删。
+type listenerEntry struct {
+	fn     func(contract.TaskEvent)
+	active bool
+}
+
 // Subscribe 订阅任务事件；返回取消函数。
+//
+// 通知在引擎的运行时锁内同步发出：订阅者必须只做“入队/写响应”，
+// 不能回调引擎（否则会与写事件的锁互相等待）。
 func (e *Engine) Subscribe(taskID string, listener func(contract.TaskEvent)) func() {
 	rt := e.openRuntime(taskID)
 	if rt == nil {
 		return func() {}
 	}
+	entry := &listenerEntry{fn: listener, active: true}
 	rt.mu.Lock()
-	rt.listeners = append(rt.listeners, listener)
-	index := len(rt.listeners) - 1
+	rt.listeners = append(rt.listeners, entry)
 	rt.mu.Unlock()
+	cancelled := false
 	return func() {
 		rt.mu.Lock()
 		defer rt.mu.Unlock()
-		if index < len(rt.listeners) {
-			rt.listeners = append(rt.listeners[:index], rt.listeners[index+1:]...)
+		if cancelled {
+			return
+		}
+		cancelled = true
+		entry.active = false
+		for index, item := range rt.listeners {
+			if item == entry {
+				rt.listeners = append(rt.listeners[:index], rt.listeners[index+1:]...)
+				break
+			}
 		}
 	}
 }
@@ -2003,10 +2022,13 @@ func (e *Engine) titleOf(rt *taskRuntime) string {
 		if value, ok := asFloat(period["week"]); ok {
 			week = value
 		}
-	} else {
+	}
+	if year == 0 {
 		if value, ok := asFloat(form["year"]); ok {
 			year = value
 		}
+	}
+	if week == 0 {
 		if value, ok := asFloat(form["week"]); ok {
 			week = value
 		}
@@ -2020,8 +2042,8 @@ func (e *Engine) titleOf(rt *taskRuntime) string {
 func (e *Engine) summaryOf(rt *taskRuntime) contract.TaskSummary {
 	return contract.TaskSummary{
 		ID: rt.id, Employee: view(rt, func(p *projection) string { return p.Employee }),
-		Title: e.titleOf(rt),
-		State: view(rt, func(p *projection) contract.TaskState { return p.State }),
+		Title:     e.titleOf(rt),
+		State:     view(rt, func(p *projection) contract.TaskState { return p.State }),
 		UpdatedAt: view(rt, func(p *projection) string { return p.LastTS }),
 	}
 }

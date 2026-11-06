@@ -15,7 +15,7 @@ import (
 func TestSpikeArtifacts(t *testing.T) {
 	outDir := os.Getenv("RENDER_SPIKE_DIR")
 	if outDir == "" {
-		outDir = filepath.Join(os.TempDir(), "de-render-spike")
+		t.Skip("设置 RENDER_SPIKE_DIR=<dir> 后运行，用于生成人工比对的 docx/PNG 产物")
 	}
 	raw, err := os.ReadFile(filepath.Join("testdata", "a01_render_input.json"))
 	if err != nil {

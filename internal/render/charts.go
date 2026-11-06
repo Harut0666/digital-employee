@@ -56,8 +56,9 @@ const (
 	legendTextCenter = legendRowTop + 4
 	// legendTextBaseline 13px 字体不带 dominant-baseline 时，基线 ≈ 中心 + 4.5。
 	legendTextBaseline = legendTextCenter + 4.5
-	// titleBaseline 标题中心 16.5（ECharts: translate(320,9) + y 7.5），15px 粗体基线 ≈ 21。
-	titleBaseline = 16.5 + 4.5
+	// titleBaseline 标题中心 16.5（ECharts: translate(320,9) + y 7.5）；
+	// 按 Go 字体度量实测再下移 1.3，使标题视觉中心与 ECharts 版对齐。
+	titleBaseline = 16.5 + 5.8
 )
 
 // seriesColor 第 i 条系列的颜色（循环使用）。

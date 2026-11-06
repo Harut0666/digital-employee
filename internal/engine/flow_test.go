@@ -19,10 +19,10 @@ import (
 // ---------------------------------------------------------------- 测试员工配置
 
 type demoEmployeeOptions struct {
-	modelCalls  int
-	timeoutSec  int
-	qcAutofix   int
-	withRework  bool
+	modelCalls int
+	timeoutSec int
+	qcAutofix  int
+	withRework bool
 }
 
 func writeDemoEmployee(t *testing.T, employeesDir string, options demoEmployeeOptions) {
