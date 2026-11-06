@@ -24,3 +24,5 @@ parity-out/
 .tmp-ws/
 .mygo/
 golden-a01-ws/
+.smoke-ws/
+.tmp-*/
