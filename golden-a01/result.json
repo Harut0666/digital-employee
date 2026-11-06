@@ -1,0 +1,39 @@
+{
+  "caseId": "A-01",
+  "title": "正常任务（含纪要与数据不一致）",
+  "passed": true,
+  "taskId": "20261106024716-7ca80b",
+  "finalState": "delivered",
+  "steps": [
+    {
+      "index": 0,
+      "actor": "initiator",
+      "command": "submit",
+      "ok": true,
+      "failures": [],
+      "state": "awaiting_review",
+      "pauseCode": "awaiting_review"
+    },
+    {
+      "index": 1,
+      "actor": "reviewer",
+      "command": "approve",
+      "ok": true,
+      "failures": [],
+      "state": "delivered"
+    }
+  ],
+  "deliverables": [
+    {
+      "kind": "docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\deliverables\\report-20261106024716-7ca80b-render_document-r0-62075fb8056cb600-f0c0f7124163.docx",
+      "sha256": "bdb7631d43fdd98691c8e589851b8118872297279952c89ad45de28eceeaa0f5"
+    },
+    {
+      "kind": "qc_record",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\deliverables\\qc_record-r0.json",
+      "sha256": "c2dfc2a6264e77bfadfb4b43f014ea0d0513c3895c4c2d1e6868f3d22d8d7ff2"
+    }
+  ],
+  "failures": []
+}
