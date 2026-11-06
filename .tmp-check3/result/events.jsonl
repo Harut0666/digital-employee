@@ -1,0 +1,2 @@
+{"type": "step_completed", "stepId": "compute_metrics", "outputPath": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-check3\\facts.json", "seq": 5}
+{"type": "state_changed", "from": "running", "to": "awaiting_review", "trigger": "qc_passed", "actor": "system", "pause": {"code": "awaiting_review", "message": "等待审核：经营周报已生成"}, "seq": 6}

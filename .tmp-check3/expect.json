@@ -1,0 +1,1 @@
+{"checks": {"numbers": [{"path": "facts:company.deliveryShare", "expected": 31.8}, {"path": "facts:quality.returns.count", "expected": 11}, {"path": "facts:quality.returns.revenueCents", "expected": -260}, {"path": "facts:stores.HZ01.wow", "expected": -38.3}], "anomalies": ["region:华东", "store:HZ01"], "pause": {"code": "awaiting_review", "messageContains": "等待审核"}}}

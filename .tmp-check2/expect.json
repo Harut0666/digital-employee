@@ -1,0 +1,1 @@
+{"checks": {"numbers": [{"path": "table:全公司/实收（元）", "expected": 573635}, {"path": "table:全公司/环比", "expected": -9.3}, {"path": "table:全公司/毛利率", "expected": 61.1}, {"path": "table:华东/目标达成率", "expected": 84.1}, {"path": "table:华南/环比", "expected": -12.7}], "mustContain": ["第 44 周纪要", "以数据为准", "生椰拿铁", "杭州湖滨店"], "mustNotContain": ["客单价", "同比"]}}

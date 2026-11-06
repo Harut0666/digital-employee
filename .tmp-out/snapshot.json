@@ -1,0 +1,43 @@
+{
+  "id": "20261106030628-111147",
+  "employee": "weekly-report",
+  "configHash": "",
+  "state": "awaiting_initiator",
+  "pause": {
+    "code": "invalid_input",
+    "message": "占位引擎：internal/engine 尚未接入，真实执行流程待接入后可用",
+    "options": [
+      "terminate"
+    ]
+  },
+  "form": {
+    "period": {
+      "week": 44,
+      "year": 2026
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\samples\\scenario-a\\销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\samples\\scenario-a\\周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [],
+  "budget": {
+    "modelCalls": {
+      "used": 0,
+      "limit": 0
+    },
+    "elapsedMs": {
+      "used": 0,
+      "limit": 0
+    }
+  },
+  "reworkRound": 0,
+  "deliverables": [],
+  "lastSeq": 3
+}

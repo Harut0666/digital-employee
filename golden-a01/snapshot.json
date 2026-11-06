@@ -1,5 +1,5 @@
 {
-  "id": "20261106024716-7ca80b",
+  "id": "20261106030802-dfa92a",
   "employee": "weekly-report",
   "configHash": "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb",
   "state": "delivered",
@@ -12,11 +12,11 @@
   "attachments": [
     {
       "name": "销售明细.xlsx",
-      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\attachments\\销售明细.xlsx"
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\golden-a01-ws\\tasks\\20261106030802-dfa92a\\attachments\\销售明细.xlsx"
     },
     {
       "name": "周会纪要_2026W44.docx",
-      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\attachments\\周会纪要_2026W44.docx"
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\golden-a01-ws\\tasks\\20261106030802-dfa92a\\attachments\\周会纪要_2026W44.docx"
     }
   ],
   "steps": [
@@ -87,7 +87,7 @@
       "limit": 30
     },
     "elapsedMs": {
-      "used": 3530,
+      "used": 3783,
       "limit": 600000
     }
   },
@@ -139,13 +139,13 @@
   "deliverables": [
     {
       "kind": "docx",
-      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\deliverables\\report-20261106024716-7ca80b-render_document-r0-62075fb8056cb600-f0c0f7124163.docx",
-      "sha256": "bdb7631d43fdd98691c8e589851b8118872297279952c89ad45de28eceeaa0f5"
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\golden-a01-ws\\tasks\\20261106030802-dfa92a\\deliverables\\report-20261106030802-dfa92a-render_document-r0-21e0d80b251f97c6-8acc76639823.docx",
+      "sha256": "a6eaedcc12590e5b7f7ce9b93be945200f50182f15e58b270481b3a10f178488"
     },
     {
       "kind": "qc_record",
-      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\.tmp-ws\\tasks\\20261106024716-7ca80b\\deliverables\\qc_record-r0.json",
-      "sha256": "c2dfc2a6264e77bfadfb4b43f014ea0d0513c3895c4c2d1e6868f3d22d8d7ff2"
+      "path": "D:\\program4claude\\competition\\digital-employee\\.worktrees\\go\\golden-a01-ws\\tasks\\20261106030802-dfa92a\\deliverables\\qc_record-r0.json",
+      "sha256": "bbb15a7348c99287644be93bcb9aefc0231b9778c95953f7c8249a037eac6420"
     }
   ],
   "lastSeq": 42

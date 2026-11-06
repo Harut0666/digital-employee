@@ -23,3 +23,4 @@ packages/desktop/assets/resvg.wasm
 parity-out/
 .tmp-ws/
 .mygo/
+golden-a01-ws/
