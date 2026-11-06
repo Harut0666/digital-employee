@@ -19,14 +19,14 @@ import (
 
 // loadedConfigView 配置页要读的加载结果（程序加载成功时才有）。
 type loadedConfigView struct {
-	Skill         string                          `json:"skill"`
-	Frontdesk     string                          `json:"frontdesk"`
-	Workflow      contract.EmployeeWorkflow       `json:"workflow"`
-	QC            contract.QCConfig               `json:"qc"`
-	FormSchema    map[string]any                  `json:"formSchema"`
-	FormUI        map[string]any                  `json:"formUi,omitempty"`
-	Prompts       map[string]string               `json:"prompts"`
-	OutputSchemas map[string]map[string]any       `json:"outputSchemas"`
+	Skill         string                    `json:"skill"`
+	Frontdesk     string                    `json:"frontdesk"`
+	Workflow      contract.EmployeeWorkflow `json:"workflow"`
+	QC            contract.QCConfig         `json:"qc"`
+	FormSchema    map[string]any            `json:"formSchema"`
+	FormUI        map[string]any            `json:"formUi,omitempty"`
+	Prompts       map[string]string         `json:"prompts"`
+	OutputSchemas map[string]map[string]any `json:"outputSchemas"`
 }
 
 // formParamView 表单字段可绑定的程序参数。
@@ -45,16 +45,16 @@ type employeeConfigViews struct {
 
 // employeeConfigResponse GET /api/employees/:id/config 的响应。
 type employeeConfigResponse struct {
-	ID               string                `json:"id"`
-	Name             string                `json:"name"`
-	Dir              string                `json:"dir"`
-	Hash             string                `json:"hash,omitempty"`
-	Files            []configFileInfo      `json:"files"`
-	Config           *loadedConfigView     `json:"config,omitempty"`
-	Views            employeeConfigViews   `json:"views"`
-	FormSchemaErrors []string              `json:"formSchemaErrors"`
-	Versions         []configVersion       `json:"versions"`
-	Error            string                `json:"error,omitempty"`
+	ID               string              `json:"id"`
+	Name             string              `json:"name"`
+	Dir              string              `json:"dir"`
+	Hash             string              `json:"hash,omitempty"`
+	Files            []configFileInfo    `json:"files"`
+	Config           *loadedConfigView   `json:"config,omitempty"`
+	Views            employeeConfigViews `json:"views"`
+	FormSchemaErrors []string            `json:"formSchemaErrors"`
+	Versions         []configVersion     `json:"versions"`
+	Error            string              `json:"error,omitempty"`
 }
 
 // saveConfigErrorBody 保存配置失败的响应（带逐条校验错误）。
@@ -119,8 +119,8 @@ func (s *Server) employeeConfigPayload(id, dir string) employeeConfigResponse {
 	}
 
 	response := employeeConfigResponse{
-		ID:   id,
-		Dir:  dir,
+		ID:    id,
+		Dir:   dir,
 		Files: files,
 		Views: employeeConfigViews{
 			Skill:       splitSkill(skillText),

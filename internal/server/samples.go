@@ -19,11 +19,11 @@ const PublicSampleID = "scenario-a"
 var sampleCaseFile = filepath.Join("cases", "A-01.json")
 
 type publicSample struct {
-	ID          string                  `json:"id"`
-	Employee    string                  `json:"employee"`
-	Title       string                  `json:"title"`
-	Form        map[string]any          `json:"form"`
-	Files       []publicSampleFile      `json:"files"`
+	ID          string             `json:"id"`
+	Employee    string             `json:"employee"`
+	Title       string             `json:"title"`
+	Form        map[string]any     `json:"form"`
+	Files       []publicSampleFile `json:"files"`
 	attachments []contract.AttachmentInput
 }
 

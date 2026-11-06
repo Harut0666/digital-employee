@@ -420,13 +420,13 @@ func cloneConnections(in []contract.ModelConnection) []contract.ModelConnection 
 // ---------------------------------------------------------------- 写
 
 type connectionJSON struct {
-	Name         string                  `json:"name"`
-	BaseURL      string                  `json:"baseUrl"`
-	APIKey       string                  `json:"apiKey"`
-	Models       []string                `json:"models"`
+	Name         string                           `json:"name"`
+	BaseURL      string                           `json:"baseUrl"`
+	APIKey       string                           `json:"apiKey"`
+	Models       []string                         `json:"models"`
 	ModelOptions map[string]contract.ModelOptions `json:"modelOptions,omitempty"`
-	TimeoutMS    *int                    `json:"timeoutMs,omitempty"`
-	MaxRetries   *int                    `json:"maxRetries,omitempty"`
+	TimeoutMS    *int                             `json:"timeoutMs,omitempty"`
+	MaxRetries   *int                             `json:"maxRetries,omitempty"`
 }
 
 func serializeConnection(conn contract.ModelConnection) connectionJSON {
@@ -574,19 +574,19 @@ type ConnectionView struct {
 
 // AppView GET /api/settings/app 的响应（v2 文档视图）。
 type AppView struct {
-	OK                bool                       `json:"ok"`
-	Version           int                        `json:"version"`
-	Revision          int                        `json:"revision"`
-	UI                contract.UiSettings        `json:"ui"`
-	Execution         contract.ExecutionSettings `json:"execution"`
+	OK                bool                         `json:"ok"`
+	Version           int                          `json:"version"`
+	Revision          int                          `json:"revision"`
+	UI                contract.UiSettings          `json:"ui"`
+	Execution         contract.ExecutionSettings   `json:"execution"`
 	Diagnostics       contract.DiagnosticsSettings `json:"diagnostics"`
-	Permissions       contract.PermissionSettings `json:"permissions"`
-	Connections       []ConnectionView           `json:"connections"`
-	DefaultConnection string                     `json:"defaultConnection"`
-	DefaultModel      string                     `json:"defaultModel"`
-	Demo              contract.DemoSettings      `json:"demo"`
-	Extra             map[string]any             `json:"extra"`
-	EnvOverride       bool                       `json:"envOverride"`
+	Permissions       contract.PermissionSettings  `json:"permissions"`
+	Connections       []ConnectionView             `json:"connections"`
+	DefaultConnection string                       `json:"defaultConnection"`
+	DefaultModel      string                       `json:"defaultModel"`
+	Demo              contract.DemoSettings        `json:"demo"`
+	Extra             map[string]any               `json:"extra"`
+	EnvOverride       bool                         `json:"envOverride"`
 }
 
 func effectiveKey(conn contract.ModelConnection, env Env) (key, source string) {

@@ -102,7 +102,7 @@ func (e *MockEngine) Command(taskID contract.TaskID, command contract.TaskComman
 		})
 		from = task.snapshot.State
 		pause := &contract.PauseReason{
-			Code: contract.PauseInvalidInput,
+			Code:    contract.PauseInvalidInput,
 			Message: "占位引擎：internal/engine 尚未接入，真实执行流程待接入后可用",
 			Options: []string{contract.CmdTerminate},
 		}

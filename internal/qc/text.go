@@ -35,6 +35,7 @@ func NarrativePieces(draft contract.DraftReport) []TextPiece {
 }
 
 // bareNumberWhitelist 裸数字白名单：这些数字不是“事实”，允许直接出现在叙述里。
+// 顺序与 TS 版一致（斜杠日期用 maskSlashDates 手工实现，见下）。
 var bareNumberWhitelist = []*regexp.Regexp{
 	regexp.MustCompile(`[A-Za-z][A-Za-z0-9_-]*\d[A-Za-z0-9_-]*`),
 	regexp.MustCompile(`\d{4}-(W\d{1,2}|\d{1,2}-\d{1,2})`),
@@ -45,6 +46,9 @@ var bareNumberWhitelist = []*regexp.Regexp{
 	regexp.MustCompile(`前\s*\d+`),
 	regexp.MustCompile(`^\s*[（(]?\d+[)）.、]`),
 }
+
+// 斜杠日期在 TS 里是白名单的第 7 条（下标 6），单独用 maskSlashDates 处理。
+const slashDateWhitelistIndex = 6
 
 var bareNumber = regexp.MustCompile(`[+\-−]?\d[\d,]*(\.\d+)?\s*[%％]?`)
 

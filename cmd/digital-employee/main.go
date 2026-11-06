@@ -90,9 +90,10 @@ func initWorkspace() (string, error) {
 
 func serve(argv []string) int {
 	options := app.Options{
-		EngineFactory: appEngineFactory,
-		ToolFactory:   appToolFactory,
-		AppVersion:    appVersion,
+		EngineFactory:   appEngineFactory,
+		ToolFactory:     appToolFactory,
+		OnSettingsSaved: onSettingsSaved,
+		AppVersion:      appVersion,
 	}
 	window := false
 	for index := 0; index < len(argv); index++ {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"digital-employee/internal/config"
 	"digital-employee/internal/contract"
 
 	"gopkg.in/yaml.v3"
@@ -382,88 +383,31 @@ func formatFrontdesk(doc frontdeskDoc) string {
 
 // ---------------------------------------------------------------- x-purpose 校验
 
-func isRecordValue(v any) (map[string]any, bool) {
-	m, ok := v.(map[string]any)
-	return m, ok
-}
-
-func hasOwnKey(m map[string]any, key string) bool {
-	_, ok := m[key]
-	return ok
-}
-
-// validateFormSchemaPurposes 保存前的用途校验：返回逐条错误（空数组表示全部合法）。
+// validateFormSchemaPurposes 保存前的用途校验（与 internal/config 共用同一份实现）。
 func validateFormSchemaPurposes(formSchema any) []string {
-	errors := []string{}
-	schema, ok := isRecordValue(formSchema)
-	if !ok {
-		return []string{"表单 Schema 必须是 JSON 对象"}
-	}
-	checkPurpose(schema, "", &errors)
-	validatePurposeProperties(schema, "properties", &errors)
-	return errors
+	return config.ValidateFormSchemaPurposes(formSchema)
 }
 
-func parseFormPurpose(value any) (string, bool) {
-	if value == nil {
-		return "", true
+// applyWorkflowDefaults 补齐契约 schema 里的默认值（qcSources / qcFixSteps）。
+// TS 的 zod schema 在读入时注入这些默认值，Go 侧在保存校验时同样补齐。
+func applyWorkflowDefaults(workflow *contract.EmployeeWorkflow) {
+	if workflow.QCSources.Draft == "" {
+		workflow.QCSources.Draft = "write_report"
 	}
-	text, ok := value.(string)
-	if !ok {
-		return `x-purpose 必须是字符串（写作要求用 writing_requirement，绑定参数用 param:<参数名>；已支持的参数：` + strings.Join(formParamNames, "、") + "）", false
+	if workflow.QCSources.Minutes == "" {
+		workflow.QCSources.Minutes = "parse_minutes"
 	}
-	if text == "" {
-		return "", true
+	if workflow.QCSources.Rendered == "" {
+		workflow.QCSources.Rendered = "render_document"
 	}
-	if text == "writing_requirement" {
-		return "", true
-	}
-	if strings.HasPrefix(text, "param:") {
-		param := strings.TrimPrefix(text, "param:")
-		if !containsStringValue(formParamNames, param) {
-			return fmt.Sprintf(`x-purpose 绑定了程序不支持的参数 %q（写作要求用 writing_requirement，绑定参数用 param:<参数名>；已支持的参数：%s）`, param, strings.Join(formParamNames, "、")), false
-		}
-		return "", true
-	}
-	return fmt.Sprintf(`无法识别的 x-purpose %q（写作要求用 writing_requirement，绑定参数用 param:<参数名>；已支持的参数：%s）`, text, strings.Join(formParamNames, "、")), false
-}
-
-func checkPurpose(schema map[string]any, path string, errors *[]string) {
-	if !hasOwnKey(schema, "x-purpose") {
-		return
-	}
-	if message, ok := parseFormPurpose(schema["x-purpose"]); !ok {
-		*errors = append(*errors, path+".x-purpose："+message)
+	if workflow.QCFixSteps.Causes == "" {
+		workflow.QCFixSteps.Causes = "match_causes"
 	}
 }
 
-func validatePurposeProperties(schema any, path string, errors *[]string) {
-	m, ok := isRecordValue(schema)
-	if !ok {
-		return
-	}
-	properties, ok := isRecordValue(m["properties"])
-	if !ok {
-		return
-	}
-	keys := make([]string, 0, len(properties))
-	for key := range properties {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		child := properties[key]
-		childPath := path + "." + key
-		childMap, childOK := isRecordValue(child)
-		if childOK {
-			checkPurpose(childMap, childPath, errors)
-			validatePurposeProperties(childMap["properties"], childPath+".properties", errors)
-			if items, ok := isRecordValue(childMap["items"]); ok {
-				checkPurpose(items, childPath+".items", errors)
-				validatePurposeProperties(items["properties"], childPath+".items.properties", errors)
-			}
-		}
-	}
+func isRecordValue(value any) (map[string]any, bool) {
+	record, ok := value.(map[string]any)
+	return record, ok
 }
 
 // ---------------------------------------------------------------- 保存前校验
@@ -644,7 +588,7 @@ func validateWorkflow(data any) []string {
 			return []string{"workflow.yaml：" + err.Error()}
 		}
 		applyWorkflowDefaults(&workflow)
-		errors = append(errors, workflowConsistencyProblems(workflow)...)
+		errors = append(errors, config.ConsistencyProblems(&workflow)...)
 	}
 	return errors
 }
@@ -732,9 +676,7 @@ func prepareWorkflow(input configFileInput, currentText *string) (string, []stri
 		return *input.Content, nil
 	}
 	if currentText != nil {
-		// 结构化保存：直接整份重写（注：不保留原文件注释；界面上的表单视图即数据来源）
-		merged := mergeMapData(*currentText, data, "workflow.yaml")
-		if merged != "" {
+		if merged, ok := applyYAMLData(*currentText, data); ok {
 			return merged, nil
 		}
 	}
@@ -745,30 +687,151 @@ func prepareWorkflow(input configFileInput, currentText *string) (string, []stri
 	return string(text), nil
 }
 
-// mergeMapData 结构化数据写回 YAML：尽量在原文上合并（避免把用户手写的键洗掉）。
-func mergeMapData(currentText string, data any, file string) string {
-	var current map[string]any
-	if err := yaml.Unmarshal([]byte(currentText), &current); err != nil {
-		return ""
-	}
+// applyYAMLData 把结构化数据合进已有的 YAML 文档（对应 TS 的 applyYamlData）：
+// 只替换变化的节点，尽量保留文件里的注释与格式，避免表单页保存把注释洗掉。
+func applyYAMLData(currentText string, data any) (string, bool) {
 	next, ok := isRecordValue(data)
 	if !ok {
-		return ""
+		return "", false
 	}
-	for key, value := range next {
-		current[key] = value
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(currentText), &document); err != nil {
+		return "", false
 	}
-	// 删掉数据里没有的键，保持与界面一致
-	for key := range current {
-		if _, ok := next[key]; !ok {
-			delete(current, key)
-		}
+	if document.Kind != yaml.DocumentNode || len(document.Content) == 0 {
+		return "", false
 	}
-	text, err := yaml.Marshal(current)
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return "", false
+	}
+	if !mergeYAMLNode(root, next) {
+		return "", false
+	}
+	encoded, err := yaml.Marshal(&document)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return string(text)
+	return string(encoded), true
+}
+
+func sortedRecordKeys(record map[string]any) []string {
+	keys := make([]string, 0, len(record))
+	for key := range record {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func yamlNodeOf(value any) (*yaml.Node, bool) {
+	encoded, err := yaml.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(encoded, &document); err != nil {
+		return nil, false
+	}
+	if document.Kind == yaml.DocumentNode && len(document.Content) > 0 {
+		return document.Content[0], true
+	}
+	return &document, true
+}
+
+func mergeableYAMLNode(node *yaml.Node, data any) bool {
+	switch node.Kind {
+	case yaml.MappingNode:
+		_, ok := isRecordValue(data)
+		return ok
+	case yaml.SequenceNode:
+		_, ok := data.([]any)
+		return ok
+	}
+	return false
+}
+
+// mergeYAMLNode 递归合并：映射按 key 合并/删除，序列长度一致且元素可合并时逐项合并，否则整体替换。
+func mergeYAMLNode(node *yaml.Node, data any) bool {
+	switch node.Kind {
+	case yaml.MappingNode:
+		record, ok := isRecordValue(data)
+		if !ok {
+			return false
+		}
+		// 先删掉数据里没有的键（保持其余键的顺序）
+		kept := make([]*yaml.Node, 0, len(node.Content))
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			if _, present := record[node.Content[index].Value]; present {
+				kept = append(kept, node.Content[index], node.Content[index+1])
+			}
+		}
+		node.Content = kept
+		for _, key := range sortedRecordKeys(record) {
+			value := record[key]
+			existing := -1
+			for index := 0; index+1 < len(node.Content); index += 2 {
+				if node.Content[index].Value == key {
+					existing = index
+					break
+				}
+			}
+			if existing >= 0 {
+				child := node.Content[existing+1]
+				if mergeableYAMLNode(child, value) {
+					if !mergeYAMLNode(child, value) {
+						return false
+					}
+					continue
+				}
+			}
+			child, ok := yamlNodeOf(value)
+			if !ok {
+				return false
+			}
+			if existing >= 0 {
+				node.Content[existing+1] = child
+			} else {
+				node.Content = append(node.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key, Tag: "!!str"}, child)
+			}
+		}
+		return true
+	case yaml.SequenceNode:
+		items, ok := data.([]any)
+		if !ok {
+			return false
+		}
+		if len(items) == len(node.Content) {
+			mergeable := true
+			for index := range items {
+				if !mergeableYAMLNode(node.Content[index], items[index]) {
+					mergeable = false
+					break
+				}
+			}
+			if mergeable {
+				for index := range items {
+					if !mergeYAMLNode(node.Content[index], items[index]) {
+						return false
+					}
+				}
+				return true
+			}
+		}
+		replacement, ok := yamlNodeOf(data)
+		if !ok {
+			return false
+		}
+		*node = *replacement
+		return true
+	default:
+		replacement, ok := yamlNodeOf(data)
+		if !ok {
+			return false
+		}
+		*node = *replacement
+		return true
+	}
 }
 
 func prepareQC(input configFileInput, currentText *string) (string, []string) {
@@ -789,7 +852,7 @@ func prepareQC(input configFileInput, currentText *string) (string, []string) {
 		return *input.Content, nil
 	}
 	if currentText != nil {
-		if merged := mergeMapData(*currentText, data, "qc.yaml"); merged != "" {
+		if merged, ok := applyYAMLData(*currentText, data); ok {
 			return merged, nil
 		}
 	}

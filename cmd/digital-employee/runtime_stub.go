@@ -33,3 +33,9 @@ func cliEngineFactory(options cli.EngineOptions) (contract.Engine, error) {
 func cliToolFactory() (contract.ToolClient, error) {
 	return &app.MockToolClient{}, nil
 }
+
+// onSettingsSaved 设置保存后重建模型提供者（占位：没有模型，直接成功）。
+func onSettingsSaved(settings contract.ModelSettings) error {
+	_ = settings
+	return nil
+}

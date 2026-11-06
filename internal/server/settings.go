@@ -242,12 +242,12 @@ type diagnosticsTaskSummary struct {
 }
 
 type diagnosticsInfo struct {
-	OK          bool                  `json:"ok"`
-	GeneratedAt string                `json:"generatedAt"`
-	App         diagnosticsApp        `json:"app"`
-	Runtime     diagnosticsRuntime    `json:"runtime"`
-	Workspace   diagnosticsWorkspace  `json:"workspace"`
-	Settings    settings.AppView      `json:"settings"`
+	OK          bool                     `json:"ok"`
+	GeneratedAt string                   `json:"generatedAt"`
+	App         diagnosticsApp           `json:"app"`
+	Runtime     diagnosticsRuntime       `json:"runtime"`
+	Workspace   diagnosticsWorkspace     `json:"workspace"`
+	Settings    settings.AppView         `json:"settings"`
 	Tasks       []diagnosticsTaskSummary `json:"tasks"`
 }
 
@@ -1049,11 +1049,11 @@ func isFaultableTool(name string) bool {
 
 func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                true,
-		"workspaceDir":      s.opts.WorkspaceDir,
-		"employeesDir":      s.opts.EmployeesDir,
+		"ok":                  true,
+		"workspaceDir":        s.opts.WorkspaceDir,
+		"employeesDir":        s.opts.EmployeesDir,
 		"defaultEmployeesDir": s.opts.DefaultEmployeesDir,
-		"configVersionsDir": filepath.Join(s.opts.WorkspaceDir, "config-versions"),
+		"configVersionsDir":   filepath.Join(s.opts.WorkspaceDir, "config-versions"),
 	})
 }
 

@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"image"
 	"image/color"
-	"image/png"
 	stddraw "image/draw"
+	"image/png"
 	"math"
 
 	xdraw "golang.org/x/image/draw"

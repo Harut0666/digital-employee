@@ -82,12 +82,12 @@ func runCaseCommandArgs(args []string, deps Deps) (int, error) {
 		defer toolClient.Close()
 	}
 	engine, err := deps.NewEngine(EngineOptions{
-		WorkspaceDir: workspaceDir,
-		EmployeesDir: ResolveEmployeesDir(deps.Env, RepoRoot()),
-		ToolClient:   toolClient,
-		ScriptFile:   scriptFile,
+		WorkspaceDir:  workspaceDir,
+		EmployeesDir:  ResolveEmployeesDir(deps.Env, RepoRoot()),
+		ToolClient:    toolClient,
+		ScriptFile:    scriptFile,
 		ModelSettings: modelSettings(deps),
-		Env:          deps.Env,
+		Env:           deps.Env,
 	})
 	if err != nil {
 		return 1, err
@@ -282,12 +282,12 @@ func runOneCase(caseFile string, context *batchContext) CaseRunOutcome {
 		return outcome
 	}
 	engine, err := context.deps.NewEngine(EngineOptions{
-		WorkspaceDir: workspaceDir,
-		EmployeesDir: context.employeesDir,
-		ToolClient:   context.toolClient,
-		ScriptFile:   scriptFile,
+		WorkspaceDir:  workspaceDir,
+		EmployeesDir:  context.employeesDir,
+		ToolClient:    context.toolClient,
+		ScriptFile:    scriptFile,
 		ModelSettings: modelSettings(context.deps),
-		Env:          context.deps.Env,
+		Env:           context.deps.Env,
 	})
 	if err != nil {
 		outcome.Error = err.Error()

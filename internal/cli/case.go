@@ -23,10 +23,10 @@ var caseCommandTypes = []string{
 
 // CaseExpectation 步骤级/顶层期望。
 type CaseExpectation struct {
-	State        string                  `json:"state,omitempty"`
-	PauseCode    string                  `json:"pauseCode,omitempty"`
+	State        string                     `json:"state,omitempty"`
+	PauseCode    string                     `json:"pauseCode,omitempty"`
 	Deliverables []contract.DeliverableKind `json:"deliverables,omitempty"`
-	Checks       *CaseChecks             `json:"checks,omitempty"`
+	Checks       *CaseChecks                `json:"checks,omitempty"`
 }
 
 // StepExpectation 步骤级期望：在 CaseExpectation 之上加“命令是否应被接受”。
@@ -56,28 +56,28 @@ type CaseDef struct {
 
 // StepResult 一条命令的执行结果（result.json 的 steps[]）。
 type StepResult struct {
-	Index     int    `json:"index"`
-	Actor     string `json:"actor"`
-	Command   string `json:"command"`
-	OK        bool   `json:"ok"`
-	Error     string `json:"error,omitempty"`
-	Message   string `json:"message,omitempty"`
-	State     string `json:"state,omitempty"`
-	PauseCode string `json:"pauseCode,omitempty"`
+	Index     int      `json:"index"`
+	Actor     string   `json:"actor"`
+	Command   string   `json:"command"`
+	OK        bool     `json:"ok"`
+	Error     string   `json:"error,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	State     string   `json:"state,omitempty"`
+	PauseCode string   `json:"pauseCode,omitempty"`
 	Failures  []string `json:"failures"`
 }
 
 // CaseResult run-case 的 result.json。
 type CaseResult struct {
-	CaseID       string                   `json:"caseId"`
-	Title        string                   `json:"title"`
-	Passed       bool                     `json:"passed"`
-	TaskID       string                   `json:"taskId"`
-	FinalState   contract.TaskState       `json:"finalState"`
-	PauseCode    string                   `json:"pauseCode,omitempty"`
-	Steps        []StepResult             `json:"steps"`
+	CaseID       string                    `json:"caseId"`
+	Title        string                    `json:"title"`
+	Passed       bool                      `json:"passed"`
+	TaskID       string                    `json:"taskId"`
+	FinalState   contract.TaskState        `json:"finalState"`
+	PauseCode    string                    `json:"pauseCode,omitempty"`
+	Steps        []StepResult              `json:"steps"`
 	Deliverables []contract.DeliverableRef `json:"deliverables"`
-	Failures     []string                 `json:"failures"`
+	Failures     []string                  `json:"failures"`
 }
 
 type rawAttachment struct {
@@ -92,12 +92,12 @@ type rawStep struct {
 }
 
 type rawExpect struct {
-	State        *string          `json:"state"`
-	PauseCode    *string          `json:"pauseCode"`
-	Deliverables []string         `json:"deliverables"`
-	Checks       json.RawMessage  `json:"checks"`
-	OK           *bool            `json:"ok"`
-	Error        *string          `json:"error"`
+	State        *string         `json:"state"`
+	PauseCode    *string         `json:"pauseCode"`
+	Deliverables []string        `json:"deliverables"`
+	Checks       json.RawMessage `json:"checks"`
+	OK           *bool           `json:"ok"`
+	Error        *string         `json:"error"`
 }
 
 type rawCase struct {

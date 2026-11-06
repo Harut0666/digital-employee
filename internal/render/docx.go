@@ -147,7 +147,7 @@ func metricsTableXML(facts contract.WeeklyFacts, font string) string {
 	b.WriteString(`</w:tr>`)
 
 	// 各区域
-	for _, name := range sortedRegionNames(facts) {
+	for _, name := range regionOrder(facts) {
 		m := facts.Regions[name]
 		b.WriteString(`<w:tr>`)
 		b.WriteString(tableCellXML(name, font, tableCellOpts{pct: widths[0]}))

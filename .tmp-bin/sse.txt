@@ -1,8 +1,0 @@
-id: 2
-event: state_changed
-data: {"seq":2,"ts":"2026-11-06T03:06:17.205Z","taskId":"20261106030616-f05e70","type":"state_changed","actor":"initiator","from":"draft","to":"admission","trigger":"submit"}
-
-id: 3
-event: state_changed
-data: {"seq":3,"ts":"2026-11-06T03:06:17.205Z","taskId":"20261106030616-f05e70","type":"state_changed","actor":"system","from":"admission","to":"awaiting_initiator","trigger":"admission_failed","pause":{"code":"invalid_input","message":"占位引擎：internal/engine 尚未接入，真实执行流程待接入后可用","options":["terminate"]}}
-

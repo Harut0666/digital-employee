@@ -50,7 +50,10 @@ var fixtureSpecs = []fixtureSpec{
 	{
 		key:         "销售明细-第44周周中截止",
 		description: "删掉 2026-10-28 之后的销售记录，第 44 周数据在周中截止，用来测“周期不完整”暂停",
-		mutate:      func(workbook *excelize.File) error { _, err := cutSalesAfter(workbook, salesSheet, "2026-10-28"); return err },
+		mutate: func(workbook *excelize.File) error {
+			_, err := cutSalesAfter(workbook, salesSheet, "2026-10-28")
+			return err
+		},
 	},
 	{
 		key:         "销售明细-缺销售目标表",
@@ -431,13 +434,13 @@ type fixtureCoverage struct {
 }
 
 type fixtureEntry struct {
-	File         string          `json:"file"`
-	Description  string          `json:"description"`
-	Bytes        int             `json:"bytes"`
-	SHA256       string          `json:"sha256"`
-	Sheets       []string        `json:"sheets"`
-	SalesRows    int             `json:"salesRows"`
-	SalesColumns []string        `json:"salesColumns"`
+	File         string           `json:"file"`
+	Description  string           `json:"description"`
+	Bytes        int              `json:"bytes"`
+	SHA256       string           `json:"sha256"`
+	Sheets       []string         `json:"sheets"`
+	SalesRows    int              `json:"salesRows"`
+	SalesColumns []string         `json:"salesColumns"`
 	Coverage     *fixtureCoverage `json:"coverage"`
 }
 
