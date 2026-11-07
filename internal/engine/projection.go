@@ -75,6 +75,7 @@ type projection struct {
 
 	deliverables   []contract.DeliverableRef
 	deliverableIdx map[contract.DeliverableKind]int
+	versions       []versionRecord
 	FaultsInjected map[string]bool
 }
 
@@ -249,6 +250,7 @@ func (p *projection) Apply(event contract.TaskEvent) {
 			p.deliverableIdx[ref.Kind] = len(p.deliverables)
 			p.deliverables = append(p.deliverables, ref)
 		}
+		p.recordVersion(ref, event.TS)
 	case contract.EventFaultInjected:
 		p.FaultsInjected[event.Target+":"+event.Mode] = true
 	case contract.EventStateChanged:
@@ -361,7 +363,7 @@ func (p *projection) StepStatuses() []contract.StepStatus {
 		case p.failed[step.ID]:
 			status = contract.StepFailed
 		}
-		out = append(out, contract.StepStatus{ID: step.ID, Label: step.Label, Kind: step.Kind, Status: status})
+		out = append(out, contract.StepStatus{ID: step.ID, Label: step.Label, Kind: step.Kind, Status: status, Activity: step.Activity})
 	}
 	return out
 }
@@ -380,6 +382,7 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 		form = map[string]any{}
 	}
 	actions := availableActions(p.State, p.Pause)
+	p.loadRevisionNotes()
 	return contract.TaskSnapshot{
 		ID:          taskID,
 		Employee:    p.Employee,
@@ -399,6 +402,7 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 		LastSeq:      p.LastSeq,
 		Actions:      actions,
 		WaitingFor:   waitingForRoles(p.State, actions),
+		Versions:     p.Versions(),
 	}
 }
 

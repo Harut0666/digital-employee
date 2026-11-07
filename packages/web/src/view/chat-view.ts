@@ -33,7 +33,10 @@ export type ChatItem =
     })
   | (ItemBase & { kind: "pause"; pause?: PauseView; actions: TaskAction[]; active: boolean })
   | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
-  | (ItemBase & { kind: "review"; pause?: PauseView; actions: TaskAction[]; active: boolean; comment?: string; sections?: string[] })
+  /** 送审提示：审核在右栏进行，对话里只说一句 */
+  | (ItemBase & { kind: "review_notice"; pause?: PauseView; active: boolean })
+  /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
+  | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
   | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
   | (ItemBase & {
       kind: "filing";
@@ -140,8 +143,11 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
         return { ...base, kind: "pause", pause: card.pause, actions, active: actions.length > 0 };
       case "qc":
         return { ...base, kind: "qc", passed: card.passed ?? false, checks: card.checks ?? [] };
-      case "review":
-        return { ...base, kind: "review", pause: card.pause, actions, active: actions.length > 0, comment: card.comment, sections: card.sections };
+      case "review": {
+        if (!card.comment) return { ...base, kind: "review_notice", pause: card.pause, active: actions.length > 0 };
+        const giveBack = actions.filter((a) => a.command === "return");
+        return { ...base, kind: "return_confirm", actions: giveBack, active: giveBack.length > 0, comment: card.comment, sections: card.sections };
+      }
       case "knowledge_filing":
         return filingItem(base, card);
     }

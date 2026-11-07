@@ -61,8 +61,11 @@ function fitToWidth(host: HTMLElement): void {
   wrapper.style.zoom = String(Math.min(1, host.clientWidth / need));
 }
 
-/** Word 预览：用 docx-preview 渲染真实 .docx；没有 url 或加载失败时退回占位。 */
-export function DocxPreview({ url }: { url: string | undefined }) {
+/**
+ * Word 预览：用 docx-preview 渲染真实 .docx；没有 url 或加载失败时退回占位。
+ * reflow：按容器宽度重排正文、保持原字号（右栏审核时用，缩放整页会让字太小读不清）；否则整页缩放到容器宽度。
+ */
+export function DocxPreview({ url, reflow = false }: { url: string | undefined; reflow?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<"idle" | "loading" | "ready" | "failed">("idle");
 
@@ -81,9 +84,9 @@ export function DocxPreview({ url }: { url: string | undefined }) {
         const { renderAsync } = await import("docx-preview");
         if (!alive || !host.current) return;
         host.current.innerHTML = "";
-        await renderAsync(buf, host.current, undefined, { className: "docx", inWrapper: true, ignoreWidth: false });
+        await renderAsync(buf, host.current, undefined, { className: "docx", inWrapper: true, ignoreWidth: reflow, ignoreHeight: reflow });
         if (alive) {
-          fitToWidth(host.current);
+          if (!reflow) fitToWidth(host.current);
           setState("ready");
         }
       } catch {
@@ -98,17 +101,17 @@ export function DocxPreview({ url }: { url: string | undefined }) {
   // 面板宽度变化（收起、展开、窗口缩放）时重新适配
   useEffect(() => {
     const el = host.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el || reflow || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => fitToWidth(el));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [reflow]);
 
   const showPlaceholder = state === "idle" || state === "failed";
   return (
     <div>
       {state === "loading" && <Spin style={{ display: "block", margin: 20 }} />}
-      <div ref={host} className="docx-host" style={{ display: state === "ready" || state === "loading" ? "block" : "none" }} />
+      <div ref={host} className={`docx-host ${reflow ? "reflow" : ""}`} style={{ display: state === "ready" || state === "loading" ? "block" : "none" }} />
       {showPlaceholder && <PlaceholderReport />}
       {state === "failed" && <div className="chat-sub">真实文档暂时无法加载，显示占位预览。</div>}
     </div>

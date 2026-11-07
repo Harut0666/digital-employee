@@ -3,13 +3,14 @@ import { Alert, Button, Tag } from "antd";
 import { FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
-import type { PreflightResult, SessionDetail, UiRole } from "../api";
+import type { PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
 import type { ChatItem } from "../view/chat-view";
-import type { StepDef } from "../view/session-view";
+import { deriveStages } from "../view/stages";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
-import { Trajectory } from "./Trajectory";
+import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
+import { StageBar } from "./StageBar";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
 import { enterAction } from "../pages/settings/preferences";
 
@@ -110,9 +111,13 @@ export function SessionChat({
   actions,
   session,
   events,
-  stepDefs,
+  steps,
   elapsedMs,
   modelCalls,
+  attachments,
+  artifacts,
+  checklist,
+  headerExtra,
   onSend,
 }: {
   detail: SessionDetail;
@@ -120,32 +125,54 @@ export function SessionChat({
   subtitle?: string;
   actions: CardActions;
   session: SessionActions;
-  /** 会话绑定任务时的事件和步骤，用来画轨迹 */
+  /** 会话绑定任务时的事件和步骤，用来画状态机和轨迹 */
   events: TaskEvent[];
-  stepDefs: StepDef[];
+  steps: StepStatusView[];
   elapsedMs: number;
   modelCalls: { used: number; limit: number };
+  /** 轨迹详情里的任务附件和产物 */
+  attachments: string[];
+  artifacts: TraceFile[];
+  /** 开工清单（T30）：放在状态机下方 */
+  checklist?: React.ReactNode;
+  /** 标题栏右侧的附加入口，比如窄窗口下打开右栏抽屉 */
+  headerExtra?: React.ReactNode;
   onSend: (text: string) => Promise<boolean>;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
-  const trajectory = useMemo(() => deriveTrajectory(events, stepDefs), [events, stepDefs]);
+  const trajectory = useMemo(() => deriveTrajectory(events, steps), [events, steps]);
+  // 事件比会话摘要新：有状态变化事件时以它为准（草稿任务没有这种事件）
+  const state = trajectory.state ?? detail.taskState;
+  const stages = useMemo(() => deriveStages(events, steps, state, actions.pause?.title), [events, steps, state, actions.pause?.title]);
+  const [traceOpen, setTraceOpen] = useTrajectoryOpen(trajectory.active);
   const lastKey = items.at(-1)?.key;
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [lastKey, items.length]);
   const tag = detail.taskState ? <StateTag state={detail.taskState} /> : SESSION_TAG[detail.status] && <Tag style={{ margin: 0 }}>{SESSION_TAG[detail.status]}</Tag>;
+  const showStages = Boolean(detail.taskId) || detail.status === "drafting";
   return (
     <>
       <div className="chat-head">
-        <div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <h2>{detail.title}</h2>
+        <div className="chat-head-main">
+          <div className="chat-title">
+            <h2 title={detail.title}>{detail.title}</h2>
             {tag}
           </div>
           {subtitle && <div className="chat-sub">{subtitle}</div>}
         </div>
+        {detail.taskId && (
+          <Button type="link" className="trace-toggle" aria-expanded={traceOpen} onClick={() => setTraceOpen(!traceOpen)}>
+            {traceOpen ? "收起轨迹详情" : "轨迹详情"}
+          </Button>
+        )}
+        {headerExtra}
       </div>
-      {detail.taskId && <Trajectory key={detail.taskId} view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} />}
+      {showStages && <StageBar line={stages} live={trajectory.active} meta={detail.taskId ? { modelCalls, elapsedMs } : undefined} />}
+      {checklist}
+      {detail.taskId && traceOpen && (
+        <TrajectoryDetails view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} attachments={attachments} artifacts={artifacts} />
+      )}
       <div className="chat-body" ref={bodyRef}>
         {items.map((item) => (item.kind === "user" || item.kind === "agent" ? <Message key={item.key} item={item} /> : renderCard(item, actions, session)))}
       </div>
@@ -157,7 +184,6 @@ export function SessionChat({
     </>
   );
 }
-
 /** 没配 Key 时的首屏提示：说明原因，并给设置入口。 */
 export function PreflightNotice({ preflight, openSettings }: { preflight: PreflightResult | undefined; openSettings: () => void }) {
   if (!preflight || preflight.ok) return null;

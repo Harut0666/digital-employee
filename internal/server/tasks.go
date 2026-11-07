@@ -4,6 +4,9 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"digital-employee/internal/contract"
 )
@@ -111,7 +114,21 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("任务不存在：%s", id)))
 		return
 	}
-	writeJSON(w, http.StatusOK, snapshot)
+	writeJSON(w, http.StatusOK, s.withDownloadNames(snapshot))
+}
+
+// withDownloadNames 给快照配上下载名，界面显示的文件名和下载到的一致。
+func (s *Server) withDownloadNames(snapshot *contract.TaskSnapshot) *contract.TaskSnapshot {
+	if len(snapshot.Deliverables) == 0 {
+		return snapshot
+	}
+	decorated := *snapshot
+	decorated.DownloadNames = map[string]string{}
+	for index := range snapshot.Deliverables {
+		ref := &snapshot.Deliverables[index]
+		decorated.DownloadNames[string(ref.Kind)] = s.deliverableDownloadName(snapshot, ref)
+	}
+	return &decorated
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
@@ -222,15 +239,44 @@ func (s *Server) handleDeliverable(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("任务不存在：%s", id)))
 		return
 	}
+	files, suffix, ok := versionFiles(snapshot, r.URL.Query().Get("version"))
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有这一版交付物：%s", r.URL.Query().Get("version"))))
+		return
+	}
 	var ref *contract.DeliverableRef
-	for index := range snapshot.Deliverables {
-		if string(snapshot.Deliverables[index].Kind) == kind {
-			ref = &snapshot.Deliverables[index]
+	for index := range files {
+		if string(files[index].Kind) == kind {
+			ref = &files[index]
 			break
 		}
 	}
-	if ref != nil && downloadResponse(w, r, ref.Path, s.deliverableDownloadName(snapshot, ref)) {
+	if ref != nil && downloadResponse(w, r, ref.Path, withVersionSuffix(s.deliverableDownloadName(snapshot, ref), suffix)) {
 		return
 	}
 	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可下载的交付物：%s", kind)))
+}
+
+// versionFiles 按 ?version= 取某一版的文件；不带版本号时取当前交付物。
+// 旧版本的下载名要标出版本（suffix），免得和最新一版混在一起；最新一版不标。
+func versionFiles(snapshot *contract.TaskSnapshot, raw string) ([]contract.DeliverableRef, string, bool) {
+	if raw == "" {
+		return snapshot.Deliverables, "", true
+	}
+	number, err := strconv.Atoi(raw)
+	if err != nil || number < 1 || number > len(snapshot.Versions) {
+		return nil, "", false
+	}
+	if number == len(snapshot.Versions) {
+		return snapshot.Versions[number-1].Files, "", true
+	}
+	return snapshot.Versions[number-1].Files, fmt.Sprintf("_第%d版", number), true
+}
+
+func withVersionSuffix(name, suffix string) string {
+	if suffix == "" {
+		return name
+	}
+	ext := filepath.Ext(name)
+	return strings.TrimSuffix(name, ext) + suffix + ext
 }

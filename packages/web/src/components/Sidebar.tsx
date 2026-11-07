@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Segmented, Select } from "antd";
-import { BookOutlined, DownOutlined, PlusOutlined, RightOutlined, RobotOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { Segmented, Select, Tooltip } from "antd";
+import { BookOutlined, DownOutlined, FolderOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 import type { SessionSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
@@ -20,33 +20,50 @@ const clock = (iso: string) => {
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
 };
 
+/** 工作区名：取路径最后一段 */
+const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).at(-1) ?? dir;
+
 export function Sidebar({
   sessions,
   role,
   onRole,
   selection,
   onSelect,
+  workspaceDir,
 }: {
   sessions: SessionSummary[];
   role: UiRole;
   onRole: (r: UiRole) => void;
   selection: Selection;
   onSelect: (s: Selection) => void;
+  /** 当前工作区目录；切换入口由 T32 接上 */
+  workspaceDir?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [listView, setListView] = useState<"sessions" | "todos">("sessions");
   const groups = listView === "todos" ? groupTodos(sessions) : groupSessions(sessions, role);
   return (
     <div className="col surface sidebar">
-      <div className="brand">
-        <div className="logo"><RobotOutlined /></div>
-        迷你数字员工
+      <div className="side-top">
+        <Tooltip title={workspaceDir ? `当前工作区：${workspaceDir}` : "当前工作区"}>
+          <div className="workspace-pick">
+            <FolderOutlined />
+            <span className="workspace-name">{workspaceDir ? baseName(workspaceDir) : "工作区"}</span>
+          </div>
+        </Tooltip>
+        <Tooltip title="设置">
+          <Button
+            aria-label="设置"
+            icon={<SettingOutlined />}
+            type={selection.kind === "page" && selection.page === "settings" ? "primary" : "default"}
+            onClick={() => onSelect({ kind: "page", page: "settings" })}
+          />
+        </Tooltip>
       </div>
       {/* 不再按员工开对话：先说要做什么，由前台 Agent 提议员工、人确认 */}
       <Button type="primary" size="large" block icon={<PlusOutlined />} onClick={() => onSelect({ kind: "new" })} style={{ marginBottom: 8 }}>
         新对话
       </Button>
-      <div className="side-title">会话</div>
       <Segmented
         block
         size="small"
@@ -80,7 +97,8 @@ export function Sidebar({
         ))}
       </div>
       <div className="side-foot">
-        {PAGES.map((p) => (
+        {/* 设置在左上角；这里是知识库、员工配置等页面入口 */}
+        {PAGES.filter((p) => p.page !== "settings").map((p) => (
           <div key={p.page} className={`side-link ${selection.kind === "page" && selection.page === p.page ? "active" : ""}`} onClick={() => onSelect({ kind: "page", page: p.page })}>
             {p.icon} {p.label}
           </div>

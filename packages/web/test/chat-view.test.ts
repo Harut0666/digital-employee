@@ -96,7 +96,8 @@ describe("deriveChat", () => {
   });
 
   test("任务卡片：后端配了按钮的才是当前要处理的，其余已处理", () => {
-    const approve = { command: "approve" as const, label: "通过", roles: ["reviewer" as const], style: "primary" as const };
+    const approve = { command: "approve" as const, label: "通过并交付", roles: ["reviewer" as const], style: "primary" as const };
+    const giveBack = { command: "return" as const, label: "退回修改", roles: ["reviewer" as const], style: "default" as const };
     const items = deriveChat(
       session(
         [
@@ -110,29 +111,34 @@ describe("deriveChat", () => {
                 taskId: "t1",
                 atSeq: 10,
                 pause: { code: "awaiting_review", message: "请审核", options: [], title: "待审核" },
-                actions: [approve],
+                actions: [approve, giveBack],
               },
             },
             "t10",
           ),
-          msg({ kind: "card", card: { type: "review", taskId: "t1", atSeq: 10, comment: "摘要太长", sections: ["summary"], actions: [approve] } }),
+          msg({ kind: "card", card: { type: "review", taskId: "t1", atSeq: 10, comment: "摘要太长", sections: ["summary"], actions: [approve, giveBack] } }),
         ],
         { status: "task", taskId: "t1", waitingFor: ["reviewer"] },
       ),
     );
+    // 审核在右栏进行：对话里的审核卡只是一句提示；Agent 起草的退回意见是确认卡片
     expect(items.map((i) => [i.kind, "active" in i ? i.active : undefined])).toEqual([
       ["pause", false],
       ["qc", undefined],
-      ["review", true],
-      ["review", true],
+      ["review_notice", true],
+      ["return_confirm", true],
     ]);
     const qc = items[1];
     expect(qc?.kind === "qc" && [qc.passed, qc.checks.length]).toEqual([true, 1]);
     const review = items[2];
-    expect(review?.kind === "review" && [review.pause?.title, review.actions.map((a) => a.command)]).toEqual(["待审核", ["approve"]]);
-    // Agent 起草的退回意见带在卡片上，由审核人确认
+    expect(review?.kind === "review_notice" && review.pause?.title).toBe("待审核");
+    // 确认卡片只给退回这一个操作，由审核人确认后才退回
     const drafted = items[3];
-    expect(drafted?.kind === "review" && [drafted.comment, drafted.sections]).toEqual(["摘要太长", ["summary"]]);
+    expect(drafted?.kind === "return_confirm" && [drafted.comment, drafted.sections, drafted.actions.map((a) => a.command)]).toEqual([
+      "摘要太长",
+      ["summary"],
+      ["return"],
+    ]);
     // 失效卡片没有按钮
     const pause = items[0];
     expect(pause?.kind === "pause" && pause.actions).toEqual([]);

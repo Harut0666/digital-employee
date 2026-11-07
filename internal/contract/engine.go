@@ -55,6 +55,8 @@ type StepStatus struct {
 	Label  string `json:"label"`
 	Kind   string `json:"kind"`   // compute | judge | qc
 	Status string `json:"status"` // pending | running | done | failed | skipped
+	// Activity 给业务人员看的说法，如“正在撰写周报”，取自工作流配置
+	Activity string `json:"activity,omitempty"`
 }
 
 const (
@@ -126,6 +128,22 @@ type TaskSnapshot struct {
 	// Actions 当前可用的操作，WaitingFor 在等哪些角色：都是读取时算出的投影
 	Actions    []TaskAction `json:"actions"`
 	WaitingFor []Role       `json:"waitingFor"`
+	// Versions 历次送审的交付物，旧到新；最后一版就是 Deliverables
+	Versions []DeliverableVersion `json:"versions"`
+	// DownloadNames 当前交付物下载时的文件名（按类型），由服务端按员工配置的模板填写
+	DownloadNames map[string]string `json:"downloadNames,omitempty"`
+}
+
+// DeliverableVersion 一版交付物：每次质检通过送审产出一版，退回重做产出下一版。
+type DeliverableVersion struct {
+	Version     int              `json:"version"`
+	ReworkRound int              `json:"reworkRound"`
+	CreatedAt   string           `json:"createdAt"`
+	Files       []DeliverableRef `json:"files"`
+	// Feedback 引出这一版的退回意见；第 1 版没有
+	Feedback *Feedback `json:"feedback,omitempty"`
+	// RevisionNotes 这一版的修改说明，取自写作步骤的结构化输出
+	RevisionNotes []RevisionNote `json:"revisionNotes,omitempty"`
 }
 
 // TaskSummary 任务列表项。
