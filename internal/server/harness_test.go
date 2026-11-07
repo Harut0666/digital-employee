@@ -71,6 +71,7 @@ type harnessConfig struct {
 	workflowEdits [][2]string
 	connection    *contract.ModelConnection
 	env           map[string]string
+	wrapModel     func(agent.ModelProvider) agent.ModelProvider
 }
 
 // harnessOption 装置选项。
@@ -93,6 +94,11 @@ func withEnv(env map[string]string) harnessOption {
 	return func(config *harnessConfig) { config.env = env }
 }
 
+// withModelWrapper 包一层模型提供者，比如控制模型调用的时机。
+func withModelWrapper(wrap func(agent.ModelProvider) agent.ModelProvider) harnessOption {
+	return func(config *harnessConfig) { config.wrapModel = wrap }
+}
+
 // harness 一个运行中的主接缝。
 type harness struct {
 	t         *testing.T
@@ -104,9 +110,10 @@ type harness struct {
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。
 //
-// 不要用 t.Parallel：渲染缓存的字体对象不是并发安全的，两个任务同时渲染会 panic。
+// 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。
 func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption) *harness {
 	t.Helper()
+	t.Parallel()
 	config := harnessConfig{
 		// 工具重试不等待，否则每次工具故障都要白等几秒
 		workflowEdits: [][2]string{{"backoffMs: [1000, 2000, 4000]", "backoffMs: [0]"}},
@@ -135,6 +142,9 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 			t.Fatalf("写模型设置失败：%v", err)
 		}
 		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+	}
+	if config.wrapModel != nil {
+		model = config.wrapModel(model)
 	}
 
 	registry := tools.NewRegistry()

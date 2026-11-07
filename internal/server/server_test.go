@@ -531,10 +531,10 @@ func TestEmployeeConfigFlow(t *testing.T) {
 	if config["name"] != "经营周报员工" || config["config"] == nil {
 		t.Fatalf("配置视图不对：%s", body)
 	}
-	// 配置哈希必须与 TS 版 / golden 的 configHash 一致（唯一事实来源是 internal/config）
-	const goldenConfigHash = "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb"
+	// 配置哈希必须与 TS 版一致（唯一事实来源是 internal/config；golden-a01 要到 T35 才跟上 T25 的配置改动）
+	const goldenConfigHash = "970671f524cbbf2d3d5f5fb11f8b80fbc0ee6825e6b80777436b4679ca17ffba"
 	if config["hash"] != goldenConfigHash {
-		t.Fatalf("配置哈希与 golden 不一致：%v", config["hash"])
+		t.Fatalf("配置哈希与 TS 版不一致：%v", config["hash"])
 	}
 	files := config["files"].([]any)
 	if len(files) < 5 {

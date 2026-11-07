@@ -229,7 +229,7 @@ func (s *Server) handleDeliverable(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if ref != nil && downloadResponse(w, r, ref.Path) {
+	if ref != nil && downloadResponse(w, r, ref.Path, s.deliverableDownloadName(snapshot, ref)) {
 		return
 	}
 	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可下载的交付物：%s", kind)))

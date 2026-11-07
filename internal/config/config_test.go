@@ -7,8 +7,9 @@ import (
 	"digital-employee/internal/contract"
 )
 
-// 场景 A 的员工配置哈希必须与 TS 版逐字节一致（golden task_created 事件里的 configHash）。
-const goldenWeeklyReportHash = "c9c99c68211b94f9b4451f8b42b05c51a8c4cac3c8feafdc75518db5cb69b7bb"
+// 场景 A 的员工配置哈希必须与 TS 版逐字节一致。这个值由 packages/core 的 loadEmployeeConfigSync 算出；
+// T25 给 workflow.yaml 加了 deliverableName，golden-a01 里的 configHash 要到 T35 更新基准时才跟上。
+const goldenWeeklyReportHash = "970671f524cbbf2d3d5f5fb11f8b80fbc0ee6825e6b80777436b4679ca17ffba"
 
 func testEmployeeDir(t *testing.T) string {
 	t.Helper()
