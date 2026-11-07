@@ -4,10 +4,10 @@
 // ApiShape，路由和请求体按 packages/server/src/index.ts 的实际路由书写；返回值仍然由 Eden 解包。
 
 import { treaty } from "@elysiajs/eden";
-import type { CommandResult, TaskEvent, TaskEventType, TaskSnapshot, TaskSummary } from "@de/core/contract";
+import type { TaskEvent, TaskEventType } from "@de/core/contract";
 import type { App } from "@de/server";
 import { createConfigApi } from "./config";
-import type { CreateTaskInput, DeliverableKind, EmployeeInfo, PublicSampleInfo, UiRole, UploadItem, WebApi } from "./types";
+import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PublicSampleInfo, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 /** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
 const EVENT_TYPE_SET: Record<TaskEventType, true> = {

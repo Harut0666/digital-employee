@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, ConfigProvider, theme, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
-import { LeftOutlined, RightOutlined, SendOutlined } from "@ant-design/icons";
+import { LeftOutlined, RightOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand } from "@de/core/contract";
 import { createApi, IS_MOCK, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
@@ -12,11 +12,11 @@ import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, TaskChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { TaskPanel } from "./components/TaskPanel";
-import type { CardActions } from "./components/Cards";
+import { Handoff, TaskActionBar, type CardActions } from "./components/Cards";
 import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
 import { EmployeeConfigPage } from "./pages/EmployeeConfig";
 import { SettingsPage } from "./pages/Settings";
-import { ROLE_LABELS } from "./view/permissions";
+import { actionPlan, ROLE_LABELS } from "./view/permissions";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
@@ -93,20 +93,16 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     }
   };
 
-  const submitDraft = async () => {
-    if (!taskId) return;
-    setSubmitting(true);
-    try {
-      await run({ type: "submit" });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
+  // 事件比快照先到时，快照里的操作属于上一个状态，不能拿来显示按钮；状态变化后会重新拉取
+  const live = task.snapshot?.state === taskState ? task.snapshot : undefined;
   const actions: CardActions = {
     role,
-    state: taskState,
+    taskActions: live?.actions ?? [],
+    waitingFor: live?.waitingFor ?? [],
+    pause: live?.pause,
     run,
+    onRole: setRoleState,
+    openSettings: () => setSelection({ kind: "page", page: "settings" }),
     openSupplement: () => {
       setPanelOpen(true);
       panelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -150,15 +146,16 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         actions={actions}
         events={task.events}
         stepDefs={task.snapshot?.steps ?? []}
-        emptyHint={taskState === "draft" ? "已按公开样例建好草稿任务（第 44 周销售明细 + 周会纪要），点右侧「提交任务」开始执行。" : undefined}
+        emptyHint={taskState === "draft" ? "已按公开样例建好草稿任务（第 44 周销售明细 + 周会纪要），点右侧「提交」开始执行。" : undefined}
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
       />
     );
     const supplement = task.view.state === "awaiting_initiator" && employee && task.snapshot;
+    const plan = actionPlan(actions.taskActions, actions.waitingFor, role);
     panel = supplement ? (
       <>
-        {initiatorOnly && <div className="panel-card" style={{ color: "var(--warn)" }}>{launchDisabledReason}</div>}
+        {plan.handoff && <div className="panel-card"><Handoff handoff={plan.handoff} onRole={setRoleState} /></div>}
         <LaunchPanel
           key={`${task.snapshot!.id}-${panelKey}-${task.view.lastSeq}`}
           employee={employee}
@@ -166,7 +163,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
           initialForm={task.snapshot!.form}
           pause={task.view.pause}
           submitting={submitting}
-          disabled={initiatorOnly}
+          disabled={!plan.mine.some((a) => a.command === "supplement")}
           onSubmit={async (form, uploads) => {
             setSubmitting(true);
             await run({ type: "supplement", form }, uploads);
@@ -181,9 +178,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         <p className="chat-sub" style={{ marginBottom: 12 }}>
           已载入公开样例的销售明细与周会纪要（第 44 周）。提交后员工开始执行。
         </p>
-        <Button type="primary" block loading={submitting} disabled={initiatorOnly} icon={<SendOutlined />} onClick={submitDraft}>
-          提交任务
-        </Button>
+        <TaskActionBar actions={actions} />
       </div>
     ) : (
       <TaskPanel snapshot={task.snapshot} view={task.view} downloadUrl={actions.downloadUrl} />
