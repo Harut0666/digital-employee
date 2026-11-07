@@ -100,9 +100,10 @@ type View struct {
 	Attachments []Attachment   `json:"attachments"`
 	CreatedAt   string         `json:"createdAt"`
 	UpdatedAt   string         `json:"updatedAt"`
-	// StatusText、WaitingFor 来自任务摘要，没有任务时为空
-	StatusText string          `json:"statusText,omitempty"`
-	WaitingFor []contract.Role `json:"waitingFor"`
+	// TaskState、StatusText、WaitingFor 来自任务摘要，没有任务时为空
+	TaskState  contract.TaskState `json:"taskState,omitempty"`
+	StatusText string             `json:"statusText,omitempty"`
+	WaitingFor []contract.Role    `json:"waitingFor"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -455,6 +456,7 @@ func (m *Manager) applyTask(view *View, taskID string) {
 }
 
 func (m *Manager) applySummary(view *View, summary contract.TaskSummary) {
+	view.TaskState = summary.State
 	view.StatusText = summary.StatusText
 	view.WaitingFor = summary.WaitingFor
 	if contract.IsTerminal(summary.State) {

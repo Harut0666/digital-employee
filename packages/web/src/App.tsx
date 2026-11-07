@@ -3,52 +3,72 @@ import { App as AntApp, Button, ConfigProvider, theme, Tooltip } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined, RightOutlined } from "@ant-design/icons";
-import type { ApprovalPolicy, TaskCommand } from "@de/core/contract";
-import { createApi, IS_MOCK, type UiRole, type UploadItem } from "./api";
+import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
+import { createApi, IS_MOCK, type SessionResult, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
-import { ApiContext, useApi, useEmployees, useTask, useTaskList } from "./hooks/data";
+import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
-import { NewConversation, TaskChat } from "./components/Chat";
+import { NewConversation, SessionChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { TaskPanel } from "./components/TaskPanel";
-import { Handoff, TaskActionBar, type CardActions } from "./components/Cards";
+import { Handoff, TaskActionBar, type CardActions, type SessionActions } from "./components/Cards";
 import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
 import { EmployeeConfigPage } from "./pages/EmployeeConfig";
 import { SettingsPage } from "./pages/Settings";
-import { actionPlan, ROLE_LABELS } from "./view/permissions";
+import { actionPlan } from "./view/permissions";
+import { deriveChat } from "./view/chat-view";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
   { id: "body", heading: "正文" },
 ];
 
+/** 会在会话里投影出卡片的任务事件（见 internal/session/cards.go） */
+const CARD_EVENTS = new Set<TaskEventType>(["task_created", "state_changed", "qc_result", "review_decision"]);
+
 function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; settingsApi: SettingsApi }) {
   const api = useApi();
   const { message } = AntApp.useApp();
   const employees = useEmployees();
-  const { tasks, refresh } = useTaskList();
+  const { sessions, refresh } = useSessionList();
   const [role, setRoleState] = useState<UiRole>(roleRef.current);
   roleRef.current = role;
 
-  const [selection, setSelection] = useState<Selection>({ kind: "new", employee: "weekly-report" });
+  const [selection, setSelection] = useState<Selection>({ kind: "new" });
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelKey, setPanelKey] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { preflight, reload: reloadPreflight } = usePreflight();
 
-  const taskId = selection.kind === "task" ? selection.id : undefined;
+  const sessionId = selection.kind === "session" ? selection.id : undefined;
+  const session = useSession(sessionId);
+  const detail = session.detail;
+  const taskId = detail?.taskId;
   const task = useTask(taskId);
   // 服务端快照里的 state 最权威（草稿任务没有 state_changed 事件，视图里可能还是空）
   const taskState = task.view.state ?? task.snapshot?.state;
-  const employee = employees.find((e) => e.id === (selection.kind === "new" ? selection.employee : task.snapshot?.employee));
-  const sessionTitle =
-    selection.kind === "task" ? (tasks.find((t) => t.id === selection.id)?.title ?? task.snapshot?.id ?? "任务") : undefined;
+  const employee = employees.find((e) => e.id === (detail?.employee ?? task.snapshot?.employee));
 
   // 浏览器标签页跟随当前会话标题（新对话时回到产品名）
   useEffect(() => {
-    document.title = sessionTitle ? `${sessionTitle} · 迷你数字员工` : "迷你数字员工";
-  }, [sessionTitle]);
+    document.title = detail?.title ? `${detail.title} · 迷你数字员工` : "迷你数字员工";
+  }, [detail?.title]);
+
+  // 回到新对话时重查提交前检查（可能刚在设置里填了 Key）
+  useEffect(() => {
+    if (selection.kind === "new") reloadPreflight();
+  }, [selection.kind, reloadPreflight]);
+
+  // 任务卡片是读取会话时从任务事件投影出来的：出现会产生卡片的事件时重读会话
+  const cardEvents = task.events.filter((e) => CARD_EVENTS.has(e.type)).length;
+  const reloadSession = session.reload;
+  useEffect(() => {
+    if (cardEvents > 0) reloadSession();
+  }, [cardEvents, reloadSession]);
+
+  const fail = useCallback((e: unknown, fallback: string) => message.error(e instanceof Error ? e.message : fallback), [message]);
 
   const run = useCallback(
     async (cmd: TaskCommand, uploads?: UploadItem[]) => {
@@ -57,39 +77,76 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         const res = await api.command(taskId, cmd, uploads);
         if (!res.ok) message.error(res.message);
       } catch (e) {
-        message.error(e instanceof Error ? e.message : "操作失败");
+        fail(e, "操作失败");
       }
       refresh();
       task.reload();
+      session.reload();
     },
-    [api, taskId, message, refresh, task],
+    [api, taskId, message, refresh, task, session, fail],
   );
 
-  const launch = async (form: Record<string, unknown>, uploads: UploadItem[]) => {
-    if (selection.kind !== "new") return;
-    setSubmitting(true);
+  /** 会话层操作的统一收尾：失败提示，成功后重读会话和列表 */
+  const settle = async (pending: Promise<SessionResult>): Promise<SessionResult> => {
+    let res: SessionResult;
     try {
-      const snap = await api.createTask({ employee: selection.employee, form, uploads });
-      const res = await api.command(snap.id, { type: "submit" });
+      res = await pending;
+    } catch (e) {
+      res = { ok: false, error: "internal", message: e instanceof Error ? e.message : "操作失败" };
+    }
+    session.reload();
+    refresh();
+    return res;
+  };
+
+  const startConversation = async (text: string): Promise<boolean> => {
+    try {
+      const created = await api.createSession();
+      const res = await api.sendMessage(created.id, text);
       if (!res.ok) message.error(res.message);
       refresh();
-      setSelection({ kind: "task", id: snap.id });
+      setSelection({ kind: "session", id: created.id });
+      return true;
     } catch (e) {
-      message.error(e instanceof Error ? e.message : "提交失败");
-    } finally {
-      setSubmitting(false);
+      fail(e, "开始对话失败");
+      return false;
     }
   };
 
-  // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件）
+  const sessionActions: SessionActions = {
+    employees,
+    async confirmEmployee(employeeId) {
+      if (!sessionId) return;
+      const res = await settle(api.confirmEmployee(sessionId, employeeId));
+      if (!res.ok) message.error(res.message);
+    },
+    async upload(files) {
+      if (!sessionId) return;
+      const res = await settle(api.uploadAttachments(sessionId, files));
+      if (!res.ok) message.error(res.message);
+    },
+    submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
+  };
+
+  const send = async (text: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    const res = await settle(api.sendMessage(sessionId, text));
+    if (!res.ok) message.error(res.message);
+    return res.ok;
+  };
+
+  // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件），
+  // 它没有会话，以旧任务的只读会话出现
   const loadSample = async () => {
     try {
       const snap = await api.loadPublicSample();
+      const listed = await api.listSessions();
       refresh();
-      setSelection({ kind: "task", id: snap.id });
+      const bound = listed.find((s) => s.taskId === snap.id);
+      if (bound) setSelection({ kind: "session", id: bound.id });
       message.success("已载入公开样例，提交后开始生成周报");
     } catch (e) {
-      message.error(e instanceof Error ? e.message : "载入样例失败");
+      fail(e, "载入样例失败");
     }
   };
 
@@ -98,7 +155,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const actions: CardActions = {
     role,
     taskActions: live?.actions ?? [],
-    waitingFor: live?.waitingFor ?? [],
+    waitingFor: detail?.waitingFor ?? live?.waitingFor ?? [],
     pause: live?.pause,
     run,
     onRole: setRoleState,
@@ -111,46 +168,45 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     downloadUrl: (kind) => (taskId ? api.deliverableUrl(taskId, kind) : undefined),
   };
 
-  const initiatorOnly = role !== "initiator";
-  const launchDisabledReason = initiatorOnly ? `当前角色（${ROLE_LABELS[role]}）不能发起任务，请切换为发起人` : undefined;
+  const items = useMemo(
+    () => (detail ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined) : []),
+    [detail, task.snapshot],
+  );
 
   let center: React.ReactNode;
-  let panel: React.ReactNode;
+  let panel: React.ReactNode = null;
   if (selection.kind === "page") {
     // 页面组件各自一个文件，T10/T11 并行填充时互不冲突。
     center = selection.page === "settings" ? <SettingsPage api={settingsApi} /> : <EmployeeConfigPage employees={employees} />;
-    panel = null;
   } else if (selection.kind === "new") {
     center = (
       <NewConversation
-        employee={employee}
-        onPrompt={(key) => {
-          if (key === "sample") void loadSample();
-          else message.info("请在右侧填写表单并上传材料后提交");
-        }}
+        preflight={preflight}
+        role={role}
+        openSettings={actions.openSettings}
+        onStart={startConversation}
+        onSample={() => void loadSample()}
       />
     );
-    panel = employee && (
-      <>
-        {initiatorOnly && <div className="panel-card" style={{ color: "var(--warn)" }}>{launchDisabledReason}</div>}
-        <LaunchPanel key={employee.id} employee={employee} mode="launch" submitting={submitting} disabled={initiatorOnly} onSubmit={launch} />
-      </>
-    );
+  } else if (!detail) {
+    center = <div className="welcome" style={{ paddingTop: 48, color: "var(--muted)" }}>{session.error ?? "正在读取会话…"}</div>;
   } else {
     center = (
-      <TaskChat
-        sessionId={selection.id}
-        title={sessionTitle ?? "任务"}
-        subtitle={employee ? `由 ${employee.name} 处理` : undefined}
-        view={task.view}
+      <SessionChat
+        detail={detail}
+        items={items}
+        subtitle={employee ? `由${employee.name}处理` : "前台接待"}
         actions={actions}
+        session={sessionActions}
         events={task.events}
         stepDefs={task.snapshot?.steps ?? []}
-        emptyHint={taskState === "draft" ? "已按公开样例建好草稿任务（第 44 周销售明细 + 周会纪要），点右侧「提交」开始执行。" : undefined}
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
+        onSend={send}
       />
     );
+  }
+  if (selection.kind === "session" && taskId) {
     const supplement = task.view.state === "awaiting_initiator" && employee && task.snapshot;
     const plan = actionPlan(actions.taskActions, actions.waitingFor, role);
     panel = supplement ? (
@@ -188,19 +244,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const showPanel = panelOpen && panel !== null;
   return (
     <div className={`shell ${showPanel ? "" : "no-panel"}`}>
-      <Sidebar employees={employees} tasks={tasks} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} />
+      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} />
       <div className="col surface chat">{center}</div>
       {showPanel ? (
         <div className="col panel" ref={panelRef}>
           <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0, flex: 1, fontSize: 18 }}>
-              {selection.kind === "task" && taskState === "draft"
-                ? "草稿任务"
-                : selection.kind === "task" && taskState && taskState !== "awaiting_initiator"
-                  ? "任务面板"
-                  : selection.kind === "task"
-                    ? "补充材料"
-                    : "任务面板"}
+              {taskState === "draft" ? "草稿任务" : taskState === "awaiting_initiator" ? "补充材料" : "任务面板"}
             </h3>
             <Tooltip title="收起">
               <Button type="text" icon={<RightOutlined />} onClick={() => setPanelOpen(false)} />

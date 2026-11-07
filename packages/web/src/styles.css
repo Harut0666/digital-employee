@@ -402,6 +402,54 @@ body {
   margin-top: 10px;
   color: var(--text-2);
 }
+/* 程序写的说明：一行居中的小字，不占气泡 */
+.notice {
+  align-self: center;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+  text-align: center;
+  padding: 2px 12px;
+}
+.form-card .ant-form-item {
+  margin-bottom: 12px;
+}
+.form-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.form-upload {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+.form-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.week-field {
+  margin-bottom: 12px;
+}
+.week-field-label {
+  margin-bottom: 6px;
+}
+.week-field-range {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+}
+.preflight-notice {
+  width: 100%;
+  max-width: 640px;
+  margin-bottom: 16px;
+  text-align: left;
+}
 .review-pause {
   padding: 8px 12px;
   border: 1px solid var(--warn-border);

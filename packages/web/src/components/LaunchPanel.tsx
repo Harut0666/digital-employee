@@ -9,6 +9,7 @@ import type { PauseReason } from "@de/core/contract";
 import type { EmployeeInfo, UploadItem } from "../api";
 import { computePrecheck, missingKeysOfPause } from "../view/precheck";
 import { stripFileFields, uploadSlots, type UploadSlotDef } from "../view/upload-slots";
+import { FORM_FIELDS } from "./WeekField";
 
 export function UploadBox({ def, files, onChange }: { def: UploadSlotDef; files: File[]; onChange: (f: File[]) => void }) {
   return (
@@ -98,6 +99,7 @@ export function LaunchPanel({
           schema={schema}
           formData={formData}
           validator={validator}
+          fields={FORM_FIELDS}
           onChange={(e) => setFormData((e.formData ?? {}) as Record<string, unknown>)}
           uiSchema={{ ...uiSchema, "ui:submitButtonOptions": { norender: true } }}
           formContext={{ labelAlign: "left", labelCol: { span: 24 }, wrapperCol: { span: 24 } }}

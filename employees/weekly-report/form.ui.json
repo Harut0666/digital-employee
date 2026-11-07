@@ -1,6 +1,7 @@
 {
   "ui:order": ["period", "salesFile", "minutesFiles", "remark", "allowMissingMinutes", "allowPartialPeriod"],
   "period": {
+    "ui:field": "isoWeek",
     "ui:order": ["year", "week"],
     "year": { "ui:widget": "updown" },
     "week": { "ui:widget": "updown", "ui:placeholder": "例如 44" }

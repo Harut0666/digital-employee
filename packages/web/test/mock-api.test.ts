@@ -60,3 +60,56 @@ describe("模拟数据模式", () => {
     expect(res.ok && res.snapshot.state).toBe("terminated");
   });
 });
+
+describe("模拟数据模式的会话", () => {
+  const cards = (messages: { card?: { type: string } }[]) => messages.flatMap((m) => (m.card ? [m.card.type] : []));
+
+  test("说一句话 → 确认员工 → 表单草稿 → 上传 → 提交，会话绑定任务", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    expect(created.status).toBe("reception");
+
+    const said = await api.sendMessage(created.id, "帮我出第 44 周的周报");
+    expect(said.ok && cards(said.messages)).toEqual(["employee_confirm"]);
+    const proposal = said.ok ? said.messages.find((m) => m.card)?.card : undefined;
+    expect(proposal?.proposed).toBe("weekly-report");
+
+    const confirmed = await api.confirmEmployee(created.id, "weekly-report");
+    expect(confirmed.ok && [confirmed.session.status, cards(confirmed.messages)]).toEqual(["drafting", ["form"]]);
+    // 草稿取自人说过的周次
+    expect(confirmed.ok && confirmed.session.draft).toEqual({ period: { year: 2026, week: 44 } });
+
+    const uploaded = await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx"), new File(["y"], "周会纪要_2026W44.docx")]);
+    expect(uploaded.ok && uploaded.session.attachments.map((a) => a.name)).toEqual(["销售明细.xlsx", "周会纪要_2026W44.docx"]);
+
+    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 }, remark: "" });
+    expect(submitted.ok && submitted.session.status).toBe("task");
+    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    expect((await api.getTask(taskId!))?.state).toBe("admission");
+
+    const detail = await api.getSession(created.id);
+    expect(cards(detail.messages)).toContain("form");
+    expect(detail.messages.at(-1)?.card).toMatchObject({ type: "form", submitted: true });
+  });
+
+  test("只有发起人能确认员工和提交；没确认员工不能提交", async () => {
+    const { api, setRole } = asRole("initiator");
+    const created = await api.createSession();
+    expect(await api.submitSession(created.id)).toMatchObject({ ok: false, error: "employee_required" });
+    setRole("reviewer");
+    expect(await api.confirmEmployee(created.id, "weekly-report")).toMatchObject({ ok: false, error: "forbidden_role" });
+  });
+
+  test("会话列表合并新会话和种子任务的只读会话，任务只出现一次", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    const list = await api.listSessions();
+    expect(list[0]?.id).toBe(created.id);
+    const legacy = list.find((s) => s.taskId === "mock-44");
+    expect(legacy).toMatchObject({ id: "task-mock-44", readOnly: true, status: "task", waitingFor: ["initiator", "operator"] });
+    const detail = await api.getSession("task-mock-44");
+    expect(cards(detail.messages)).toContain("pause");
+    expect(detail.messages.find((m) => m.card?.type === "pause")?.card?.actions?.map((a) => a.command)).toEqual(["retry", "terminate"]);
+    expect((await api.preflight()).ok).toBe(true);
+  });
+});

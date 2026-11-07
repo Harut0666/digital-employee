@@ -1,24 +1,12 @@
 import { useState } from "react";
 import { Segmented, Select } from "antd";
-import {
-  DownOutlined,
-  PlusOutlined,
-  RightOutlined,
-  RobotOutlined,
-  SettingOutlined,
-  ToolOutlined,
-  UserOutlined,
-  BookOutlined,
-} from "@ant-design/icons";
+import { DownOutlined, PlusOutlined, RightOutlined, RobotOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Button } from "antd";
-import type { EmployeeInfo, TaskSummary, UiRole } from "../api";
+import type { SessionSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
 import { groupSessions, groupTodos } from "../view/session-groups";
 
-export type Selection =
-  | { kind: "new"; employee: string }
-  | { kind: "task"; id: string }
-  | { kind: "page"; page: "config" | "settings" };
+export type Selection = { kind: "new" } | { kind: "session"; id: string } | { kind: "page"; page: "config" | "settings" };
 
 // 事件回放界面已取消（回放保留在命令行 `de replay`）；任务的执行过程改由对话框顶部的“轨迹”展示。
 const PAGES = [
@@ -32,15 +20,13 @@ const clock = (iso: string) => {
 };
 
 export function Sidebar({
-  employees,
-  tasks,
+  sessions,
   role,
   onRole,
   selection,
   onSelect,
 }: {
-  employees: EmployeeInfo[];
-  tasks: TaskSummary[];
+  sessions: SessionSummary[];
   role: UiRole;
   onRole: (r: UiRole) => void;
   selection: Selection;
@@ -48,32 +34,17 @@ export function Sidebar({
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [listView, setListView] = useState<"sessions" | "todos">("sessions");
-  const groups = listView === "todos" ? groupTodos(tasks) : groupSessions(tasks, role);
+  const groups = listView === "todos" ? groupTodos(sessions) : groupSessions(sessions, role);
   return (
     <div className="col surface sidebar">
       <div className="brand">
         <div className="logo"><RobotOutlined /></div>
         迷你数字员工
       </div>
-      <div className="side-title">员工</div>
-      {employees.map((e) => {
-        const active = selection.kind === "new" && selection.employee === e.id;
-        return (
-          <div key={e.id} className={`emp-card ${active ? "active" : ""}`} onClick={() => onSelect({ kind: "new", employee: e.id })}>
-            <div className="emp-head">
-              <div className={`emp-avatar ${e.id === "weekly-report" ? "" : "b"}`}>{e.id === "weekly-report" ? <RobotOutlined /> : <BookOutlined />}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="emp-name">{e.name}</div>
-                <div className="emp-desc">{e.description}</div>
-              </div>
-              <RightOutlined style={{ color: "var(--muted)" }} />
-            </div>
-            <Button block icon={<PlusOutlined />} style={{ marginTop: 8, color: "var(--primary)" }} onClick={(ev) => { ev.stopPropagation(); onSelect({ kind: "new", employee: e.id }); }}>
-              新对话
-            </Button>
-          </div>
-        );
-      })}
+      {/* 不再按员工开对话：先说要做什么，由前台 Agent 提议员工、人确认 */}
+      <Button type="primary" size="large" block icon={<PlusOutlined />} onClick={() => onSelect({ kind: "new" })} style={{ marginBottom: 8 }}>
+        新对话
+      </Button>
       <div className="side-title">会话</div>
       <Segmented
         block
@@ -95,7 +66,7 @@ export function Sidebar({
             </div>
             {!collapsed[g.key] &&
               g.items.map((t) => (
-                <div key={t.id} className={`session-item ${selection.kind === "task" && selection.id === t.id ? "active" : ""}`} onClick={() => onSelect({ kind: "task", id: t.id })}>
+                <div key={t.id} className={`session-item ${selection.kind === "session" && selection.id === t.id ? "active" : ""}`} onClick={() => onSelect({ kind: "session", id: t.id })}>
                   <span className={`dot ${t.dot}`} />
                   <span className="main">
                     <span className="title">{t.title}</span>

@@ -27,6 +27,7 @@ export const EMPLOYEES: EmployeeInfo[] = [
       },
     },
     formUi: {
+      period: { "ui:field": "isoWeek" },
       salesFile: { "ui:widget": "file", "ui:options": { accept: ".xlsx,.csv" }, "ui:help": "支持 xlsx、csv；推荐 xlsx。" },
       minutesFiles: { "ui:widget": "files", "ui:options": { accept: ".docx" }, "ui:help": "可多选；上传本周和前几周的纪要都可以。" },
     },

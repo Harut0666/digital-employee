@@ -17,7 +17,10 @@ const isObject = (v: unknown): v is Json => typeof v === "object" && v !== null 
 
 function fileFields(schema: Json, ui: Json | undefined): { name: string; widget: "file" | "files" }[] {
   const props = isObject(schema.properties) ? schema.properties : {};
-  return Object.keys(props).flatMap((name) => {
+  // 按 ui:order 排；Go 服务端返回的 Schema 字段是字母序
+  const order = Array.isArray(ui?.["ui:order"]) ? (ui["ui:order"] as unknown[]).map(String).filter((k) => k in props) : [];
+  const names = [...order, ...Object.keys(props).filter((k) => !order.includes(k))];
+  return names.flatMap((name) => {
     const widget = isObject(ui?.[name]) ? (ui![name] as Json)["ui:widget"] : undefined;
     return widget === "file" || widget === "files" ? [{ name, widget }] : [];
   });

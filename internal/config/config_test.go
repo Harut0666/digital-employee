@@ -8,8 +8,9 @@ import (
 )
 
 // 场景 A 的员工配置哈希必须与 TS 版逐字节一致。这个值由 packages/core 的 loadEmployeeConfigSync 算出；
-// T25 给 workflow.yaml 加了 deliverableName，golden-a01 里的 configHash 要到 T35 更新基准时才跟上。
-const goldenWeeklyReportHash = "970671f524cbbf2d3d5f5fb11f8b80fbc0ee6825e6b80777436b4679ca17ffba"
+// T25 给 workflow.yaml 加了 deliverableName，T29 给 form.ui.json 的统计周期配了周选择器（ui:field），
+// golden-a01 里的 configHash 要到 T35 更新基准时才跟上。
+const goldenWeeklyReportHash = "b1bf91ab60dde653090cb8d45982817dc1ce737eacc544e231d055e518885cb3"
 
 func testEmployeeDir(t *testing.T) string {
 	t.Helper()

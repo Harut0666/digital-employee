@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Checkbox, Input, message, Tag } from "antd";
+import { Button, Checkbox, Input, message } from "antd";
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -9,21 +9,23 @@ import {
   ReloadOutlined,
   SettingOutlined,
   SwapOutlined,
+  TeamOutlined,
 } from "@ant-design/icons";
-import { STATE_LABELS, type TaskCommand } from "@de/core/contract";
+import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
-import type { ChatCard } from "../view/session-view";
-import type { CommandType, PauseView, TaskAction, UiRole } from "../api";
+import type { ChatItem } from "../view/chat-view";
+import type { CommandType, EmployeeInfo, PauseView, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
+import { FormCard } from "./FormCard";
 
 export interface CardActions {
   role: UiRole;
-  /** 快照给出的可用操作和在等的角色；快照还没跟上事件时为空 */
+  /** 可用操作和在等的角色：任务卡片取卡片上的，草稿面板取快照的 */
   taskActions: TaskAction[];
   waitingFor: UiRole[];
-  /** 快照里的暂停原因，比事件里的多 title、resolution */
+  /** 暂停原因（带 title、resolution） */
   pause: PauseView | undefined;
-  /** 发命令；resolve 后才恢复按钮 */
+  /** 发任务命令；resolve 后才恢复按钮 */
   run: (cmd: TaskCommand) => Promise<void>;
   onRole: (role: UiRole) => void;
   openSettings: () => void;
@@ -32,6 +34,14 @@ export interface CardActions {
   /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
   sections: { id: string; heading: string }[];
   downloadUrl: (kind: "docx" | "md" | "qc_record") => string | undefined;
+}
+
+/** 会话层的操作：确认员工、上传材料、提交表单。都只有发起人能做，后端仍会校验。 */
+export interface SessionActions {
+  employees: EmployeeInfo[];
+  confirmEmployee: (employee: string) => Promise<void>;
+  upload: (files: File[]) => Promise<void>;
+  submit: (form: Record<string, unknown>) => Promise<SessionResult>;
 }
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -73,7 +83,7 @@ export function Handoff({ handoff, onRole }: { handoff: RoleHandoff; onRole: (ro
   );
 }
 
-/** 当前角色能做的操作，加上其余操作在等谁。按钮全部来自快照，handlers 只替换点击后做什么。 */
+/** 当前角色能做的操作，加上其余操作在等谁。按钮全部来自后端，handlers 只替换点击后做什么。 */
 export function TaskActionBar({
   actions,
   handlers,
@@ -98,25 +108,82 @@ export function TaskActionBar({
   );
 }
 
-export function PauseCard({ card, actions }: { card: Extract<ChatCard, { kind: "pause" }>; actions: CardActions }) {
-  if (!card.active) {
+function EmployeeConfirmCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "employee_confirm" }>; actions: CardActions; session: SessionActions }) {
+  const [busy, setBusy] = useState<string>();
+  const nameOf = (id: string) => item.candidates.find((c) => c.id === id)?.name ?? id;
+  const confirm = async (id: string) => {
+    setBusy(id);
+    try {
+      await session.confirmEmployee(id);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  if (!item.active) {
     return (
       <div className="card muted">
-        <ExclamationCircleFilled /> {STATE_LABELS[card.state]}：{card.pause.message}（已处理）
+        <TeamOutlined /> {item.proposed ? `提议由${nameOf(item.proposed)}接手` : "请选择员工"}（已处理）
       </div>
     );
   }
-  const pause: PauseView = actions.pause ?? card.pause;
-  const operator = card.state === "awaiting_operator";
+  const initiator = actions.role === "initiator";
+  const others = item.candidates.filter((c) => c.id !== item.proposed);
+  const intro =
+    item.source === "default" ? "按设置里的默认员工，由下面的员工接手：" : item.source === "model" ? "建议由下面的员工接手：" : "我判断不出该由谁接手，请选择一位员工：";
+  return (
+    <div className="card">
+      <div className="card-title">
+        <TeamOutlined style={{ color: "var(--primary)" }} /> 确认由谁接手
+      </div>
+      <div className="card-body">{intro}</div>
+      {item.proposed && (
+        <div className="card-body">
+          <b>{nameOf(item.proposed)}</b>
+          {item.reason && <span className="chat-sub">　{item.reason}</span>}
+        </div>
+      )}
+      {initiator ? (
+        <div className="card-actions">
+          {item.proposed && (
+            <Button type="primary" loading={busy === item.proposed} disabled={busy !== undefined} onClick={() => confirm(item.proposed!)}>
+              确认由{nameOf(item.proposed)}接手
+            </Button>
+          )}
+          {others.map((c) => (
+            <Button key={c.id} loading={busy === c.id} disabled={busy !== undefined} title={c.description} onClick={() => confirm(c.id)}>
+              {item.proposed ? `改由${c.name}` : c.name}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <Handoff handoff={{ text: "等待发起人确认员工", switchTo: ["initiator"] }} onRole={actions.onRole} />
+      )}
+    </div>
+  );
+}
+
+export function PauseCard({ item, actions }: { item: Extract<ChatItem, { kind: "pause" }>; actions: CardActions }) {
+  const pause = item.pause;
+  const title = pause?.title ?? "任务已暂停";
+  if (!item.active) {
+    return (
+      <div className="card muted">
+        <ExclamationCircleFilled /> {title}：{pause?.message}（已处理）
+      </div>
+    );
+  }
+  const scoped: CardActions = { ...actions, taskActions: item.actions, pause };
+  // 发起人处理不了的暂停（只有操作员能动）用红色
+  const operator = !item.actions.some((a) => a.roles.includes("initiator")) && actions.waitingFor.includes("operator");
   return (
     <div className={`card ${operator ? "danger" : "warn"}`}>
       <div className="card-title" style={{ color: operator ? "var(--danger)" : "var(--warn)" }}>
-        <ExclamationCircleFilled /> {pause.title ?? STATE_LABELS[card.state]}
+        <ExclamationCircleFilled /> {title}
       </div>
-      <div className="card-body">{pause.message}</div>
-      {pause.resolution && <div className="card-body">{pause.resolution}</div>}
-      <TaskActionBar actions={actions} handlers={{ supplement: actions.openSupplement }} />
-      {needsModelSettings(pause) && (
+      <div className="card-body">{pause?.message}</div>
+      {pause?.resolution && <div className="card-body">{pause.resolution}</div>}
+      <TaskActionBar actions={scoped} handlers={{ supplement: actions.openSupplement }} />
+      {pause && needsModelSettings(pause) && (
         <div className="card-actions">
           <Button icon={<SettingOutlined />} onClick={actions.openSettings}>
             打开模型设置
@@ -127,17 +194,15 @@ export function PauseCard({ card, actions }: { card: Extract<ChatCard, { kind: "
   );
 }
 
-export function QcCard({ card }: { card: Extract<ChatCard, { kind: "qc" }> }) {
-  const bad = card.checks.filter((c) => !c.passed);
+export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
+  const bad = item.checks.filter((c) => !c.passed);
   return (
-    <div className={`card ${card.passed ? "ok" : "danger"}`}>
-      <div className="card-title" style={{ color: card.passed ? "var(--primary)" : "var(--danger)" }}>
-        {card.passed ? <CheckCircleFilled /> : <CloseCircleFilled />}
-        {card.passed ? "质检通过" : "质检未通过"}
+    <div className={`card ${item.passed ? "ok" : "danger"}`}>
+      <div className="card-title" style={{ color: item.passed ? "var(--primary)" : "var(--danger)" }}>
+        {item.passed ? <CheckCircleFilled /> : <CloseCircleFilled />}
+        {item.passed ? "质检通过" : "质检未通过"}
       </div>
-      <div className="card-body">
-        {card.passed ? `经 ${card.checks.length} 项检查，未发现问题，符合发布要求。` : `第 ${card.attempt} 次质检，${bad.length} 项未通过。`}
-      </div>
+      <div className="card-body">{item.passed ? `经 ${item.checks.length} 项检查，未发现问题，符合发布要求。` : `${bad.length} 项未通过。`}</div>
       {bad.map((c) => (
         <div key={c.id} className="card-body">
           <b>{c.label}：</b>
@@ -145,7 +210,7 @@ export function QcCard({ card }: { card: Extract<ChatCard, { kind: "qc" }> }) {
         </div>
       ))}
       <div className="chips">
-        {card.checks.map((c) => (
+        {item.checks.map((c) => (
           <span key={c.id} className={`chip ${c.passed ? "" : "bad"}`}>
             {c.passed ? <CheckCircleFilled /> : <CloseCircleFilled />} {c.label}
           </span>
@@ -155,41 +220,26 @@ export function QcCard({ card }: { card: Extract<ChatCard, { kind: "qc" }> }) {
   );
 }
 
-export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: "review" }>; actions: CardActions }) {
-  const [picked, setPicked] = useState<string[]>([]);
-  const [comment, setComment] = useState("");
+export function ReviewCard({ item, actions }: { item: Extract<ChatItem, { kind: "review" }>; actions: CardActions }) {
+  // Agent 在对话里起草的退回意见带在卡片上，由审核人检查后确认
+  const [picked, setPicked] = useState<string[]>(item.sections ?? []);
+  const [comment, setComment] = useState(item.comment ?? "");
   const docx = actions.downloadUrl("docx");
   const linkProps = useLinkProps();
 
-  if (!card.active) {
-    const d = card.decision;
-    return (
-      <div className="card muted">
-        {d?.decision === "approve" && "审核人已通过"}
-        {d?.decision === "return" && (
-          <>
-            审核人已退回：{d.comment}
-            {d.sections?.map((s) => (
-              <Tag key={s} style={{ marginLeft: 6 }}>
-                {actions.sections.find((x) => x.id === s)?.heading ?? s}
-              </Tag>
-            ))}
-          </>
-        )}
-        {!d && "审核已结束"}
-      </div>
-    );
-  }
+  if (!item.active) return <div className="card muted">{item.comment ? `退回意见草稿：${item.comment}（已处理）` : "审核已结束"}</div>;
+
+  const scoped: CardActions = { ...actions, taskActions: item.actions, pause: item.pause };
   // 普通待审核的说明就是这张卡本身；超范围意见要说清为什么回到这里
-  const pause = actions.pause?.code === "awaiting_review" ? undefined : actions.pause;
-  const canReturn = actions.taskActions.some((a) => a.command === "return" && a.roles.includes(actions.role));
+  const pause = item.pause?.code === "awaiting_review" ? undefined : item.pause;
+  const canReturn = item.actions.some((a) => a.command === "return" && a.roles.includes(actions.role));
   return (
     <div className="card">
       <div className="card-title">
         <FileWordOutlined style={{ color: "#2f6fed", fontSize: 28 }} />
         <span>
-          请审核：经营周报.docx
-          <div className="chat-sub" style={{ fontWeight: 400 }}>{clock(card.ts)}</div>
+          {item.comment ? "确认退回意见" : "请审核交付物"}
+          <div className="chat-sub" style={{ fontWeight: 400 }}>{clock(item.ts)}</div>
         </span>
         {docx && (
           <Button style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={docx} {...linkProps(docx)}>
@@ -221,7 +271,7 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
         </div>
       )}
       <TaskActionBar
-        actions={actions}
+        actions={scoped}
         align="end"
         handlers={{
           return: async () => {
@@ -237,8 +287,8 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
   );
 }
 
-export function DeliveredCard({ card, actions }: { card: Extract<ChatCard, { kind: "delivered" }>; actions: CardActions }) {
-  const names: Record<string, string> = { docx: "周报 Word", md: "Markdown 报告", qc_record: "检验记录" };
+export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kind: "delivered" }>; actions: CardActions }) {
+  const names: Record<string, string> = { docx: "Word 文档", md: "Markdown 报告", qc_record: "检验记录" };
   const linkProps = useLinkProps();
   return (
     <div className="card ok">
@@ -246,7 +296,7 @@ export function DeliveredCard({ card, actions }: { card: Extract<ChatCard, { kin
         <CheckCircleFilled /> 已交付
       </div>
       <div className="card-actions">
-        {card.deliverables.map((d) => (
+        {item.deliverables.map((d) => (
           <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind)} disabled={!actions.downloadUrl(d.kind)} {...linkProps(actions.downloadUrl(d.kind))}>
             {names[d.kind] ?? d.kind}
           </Button>
@@ -256,24 +306,25 @@ export function DeliveredCard({ card, actions }: { card: Extract<ChatCard, { kin
   );
 }
 
-export function NoticeCard({ card }: { card: Extract<ChatCard, { kind: "notice" }> }) {
-  return <div className={`card ${card.level === "warning" ? "warn" : "muted"}`}>{card.text}</div>;
-}
-
-export function renderCard(card: ChatCard, actions: CardActions) {
-  switch (card.kind) {
-    case "pause":
-      return <PauseCard key={`${card.kind}-${card.seq}`} card={card} actions={actions} />;
-    case "qc":
-      return <QcCard key={`${card.kind}-${card.seq}`} card={card} />;
-    case "review":
-      return <ReviewCard key={`${card.kind}-${card.seq}`} card={card} actions={actions} />;
-    case "delivered":
-      return <DeliveredCard key={`${card.kind}-${card.seq}`} card={card} actions={actions} />;
+export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, actions: CardActions, session: SessionActions) {
+  switch (item.kind) {
     case "notice":
-      return <NoticeCard key={`${card.kind}-${card.seq}`} card={card} />;
-    default:
-      return null;
+      return (
+        <div key={item.key} className="notice">
+          {item.text}
+        </div>
+      );
+    case "employee_confirm":
+      return <EmployeeConfirmCard key={item.key} item={item} actions={actions} session={session} />;
+    case "form":
+      return <FormCard key={`${item.key}-${JSON.stringify(item.draft)}`} item={item} actions={actions} session={session} />;
+    case "pause":
+      return <PauseCard key={item.key} item={item} actions={actions} />;
+    case "qc":
+      return <QcCard key={item.key} item={item} />;
+    case "review":
+      return <ReviewCard key={item.key} item={item} actions={actions} />;
+    case "delivered":
+      return <DeliveredCard key={item.key} item={item} actions={actions} />;
   }
 }
-

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
-import type { EmployeeInfo, TaskSnapshot, TaskSummary, WebApi } from "../api";
+import type { EmployeeInfo, PreflightResult, SessionDetail, SessionSummary, TaskSnapshot, WebApi } from "../api";
 import { deriveSessionView, type SessionView } from "../view/session-view";
 
 export const ApiContext = createContext<WebApi | null>(null);
@@ -23,14 +23,14 @@ export function useEmployees(): EmployeeInfo[] {
   return list;
 }
 
-/** 会话列表：定时刷新，另外暴露 refresh 供操作后立即刷新。 */
-export function useTaskList(intervalMs = 2000): { tasks: TaskSummary[]; refresh: () => void } {
+/** 会话列表（新会话和旧任务的只读会话）：定时刷新，另外暴露 refresh 供操作后立即刷新。 */
+export function useSessionList(intervalMs = 2000): { sessions: SessionSummary[]; refresh: () => void } {
   const api = useApi();
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [tick, refresh] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     let alive = true;
-    const load = () => api.listTasks().then((l) => alive && setTasks(l), () => {});
+    const load = () => api.listSessions().then((l) => alive && setSessions(l), () => {});
     void load();
     const timer = setInterval(load, intervalMs);
     return () => {
@@ -38,7 +38,58 @@ export function useTaskList(intervalMs = 2000): { tasks: TaskSummary[]; refresh:
       clearInterval(timer);
     };
   }, [api, intervalMs, tick]);
-  return { tasks, refresh };
+  return { sessions, refresh };
+}
+
+export interface SessionState {
+  detail: SessionDetail | undefined;
+  /** 读取失败的说明 */
+  error: string | undefined;
+  reload: () => void;
+}
+
+/** 一个会话的全部消息。任务推进时由调用方触发 reload（任务卡片是读取时从事件投影的）。 */
+export function useSession(id: string | undefined): SessionState {
+  const api = useApi();
+  const [detail, setDetail] = useState<SessionDetail>();
+  const [error, setError] = useState<string>();
+  const [tick, reload] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    if (!id) {
+      setDetail(undefined);
+      return;
+    }
+    let alive = true;
+    api.getSession(id).then(
+      (d) => {
+        if (!alive) return;
+        setDetail(d);
+        setError(undefined);
+      },
+      (e: unknown) => alive && setError(e instanceof Error ? e.message : "读取会话失败"),
+    );
+    return () => {
+      alive = false;
+    };
+  }, [api, id, tick]);
+  // 切换会话时先清空，避免短暂显示上一个会话
+  useEffect(() => setDetail(undefined), [id]);
+  return { detail: detail?.id === id ? detail : undefined, error, reload };
+}
+
+/** 提交前检查：新对话首屏用它提示配置 Key。reload 在设置保存后重查。 */
+export function usePreflight(): { preflight: PreflightResult | undefined; reload: () => void } {
+  const api = useApi();
+  const [preflight, setPreflight] = useState<PreflightResult>();
+  const [tick, reload] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    let alive = true;
+    api.preflight().then((p) => alive && setPreflight(p), () => {});
+    return () => {
+      alive = false;
+    };
+  }, [api, tick]);
+  return { preflight, reload };
 }
 
 export interface TaskState {

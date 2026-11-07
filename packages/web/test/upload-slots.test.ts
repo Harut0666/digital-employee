@@ -16,6 +16,12 @@ describe("上传项取自员工配置的 form.schema.json / form.ui.json 里的�
     expect(slots[0]!.hint).toContain("xlsx");
   });
 
+  test("上传项按界面配置的 ui:order 排列：服务端按字母序返回 Schema 字段时顺序也不乱", () => {
+    const props = schema.properties as Record<string, unknown>;
+    const alphabetical = { ...schema, properties: Object.fromEntries(Object.keys(props).sort().map((k) => [k, props[k]])) };
+    expect(uploadSlots(alphabetical, ui).map((s) => s.slot)).toEqual(["salesFile", "minutesFiles"]);
+  });
+
   test("没有文件字段的员工：给一个通用的资料上传项", () => {
     const slots = uploadSlots({ type: "object", properties: { topic: { type: "string" } } }, undefined);
     expect(slots.map((s) => s.slot)).toEqual(["other"]);

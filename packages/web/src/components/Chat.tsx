@@ -1,19 +1,14 @@
 import { Prompts, Sender, Welcome } from "@ant-design/x";
-import { Tag, message } from "antd";
-import {
-  BookOutlined,
-  FileTextOutlined,
-  FolderOpenOutlined,
-  MessageOutlined,
-  RobotOutlined,
-  UserOutlined,
-} from "@ant-design/icons";
+import { Alert, Button, Tag } from "antd";
+import { FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
-import type { EmployeeInfo } from "../api";
-import type { ChatCard, SessionView, StepDef } from "../view/session-view";
+import type { PreflightResult, SessionDetail, UiRole } from "../api";
+import type { ChatItem } from "../view/chat-view";
+import type { StepDef } from "../view/session-view";
 import { deriveTrajectory } from "../view/trajectory";
-import { renderCard, type CardActions } from "./Cards";
+import { ROLE_LABELS } from "../view/permissions";
+import { renderCard, type CardActions, type SessionActions } from "./Cards";
 import { Trajectory } from "./Trajectory";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
 import { enterAction } from "../pages/settings/preferences";
@@ -38,32 +33,45 @@ export function StateTag({ state }: { state: TaskState }) {
   );
 }
 
+const SESSION_TAG: Record<string, string> = { reception: "接待中", drafting: "填写表单" };
+
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-function Message({ card }: { card: Extract<ChatCard, { kind: "user" | "agent" }> }) {
-  const me = card.kind === "user";
+function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }> }) {
+  const me = item.kind === "user";
+  // 不是发起人说的话，标出是谁说的（审核人、操作员也会在对话里说话）
+  const who = me && item.role && item.role !== "initiator" ? `${ROLE_LABELS[item.role]} · ` : "";
   return (
     <div className={`msg-row ${me ? "me" : ""}`}>
       <div className="msg-avatar">{me ? <UserOutlined /> : <RobotOutlined />}</div>
       <div className="msg-col">
-        <div className="bubble">{card.text}</div>
-        <div className="msg-time">{clock(card.ts)}</div>
+        <div className="bubble">{item.text}</div>
+        <div className="msg-time">
+          {who}
+          {clock(item.ts)}
+        </div>
       </div>
     </div>
   );
 }
 
-function ChatInput({ placeholder }: { placeholder: string }) {
+/** 输入框：发送等完整回复；失败时保留原文。 */
+function ChatInput({ placeholder, disabled, onSend }: { placeholder: string; disabled?: boolean; onSend: (text: string) => Promise<boolean> }) {
   const { ui } = useUiPreferences();
   const [value, setValue] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed || sending || disabled) return;
     // 通知轨迹：用户开始下一次输入（「下次输入时折叠」用它收起上一轮）
     notifyUserInput();
-    setValue("");
-    message.info("前台 Agent 暂未接入：请使用右栏表单和卡片按钮推进任务");
+    setSending(true);
+    try {
+      if (await onSend(trimmed)) setValue("");
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -72,16 +80,18 @@ function ChatInput({ placeholder }: { placeholder: string }) {
         value={value}
         onChange={setValue}
         placeholder={placeholder}
+        loading={sending}
+        disabled={disabled}
         // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
         submitType="enter"
-        onSubmit={(text) => send(text)}
+        onSubmit={(text) => void send(text)}
         onKeyDown={(event) => {
           if (event.key !== "Enter") return;
           const ctrl = event.ctrlKey || event.metaKey;
           // Ctrl/Cmd+Enter 始终发送（两种模式一致）
           if (ctrl) {
             event.preventDefault();
-            send(value);
+            void send(value);
             return false;
           }
           // 换行模式：拦住 Sender 的 Enter 提交，让 textarea 自己换行
@@ -93,102 +103,125 @@ function ChatInput({ placeholder }: { placeholder: string }) {
   );
 }
 
-export function TaskChat({
-  sessionId,
-  title,
-  view,
+export function SessionChat({
+  detail,
+  items,
   subtitle,
   actions,
+  session,
   events,
   stepDefs,
   elapsedMs,
   modelCalls,
-  emptyHint,
+  onSend,
 }: {
-  sessionId: string;
-  title: string;
-  view: SessionView;
+  detail: SessionDetail;
+  items: ChatItem[];
   subtitle?: string;
   actions: CardActions;
+  session: SessionActions;
+  /** 会话绑定任务时的事件和步骤，用来画轨迹 */
   events: TaskEvent[];
   stepDefs: StepDef[];
   elapsedMs: number;
   modelCalls: { used: number; limit: number };
-  /** 没有任何对话卡片时显示的一句提示（例如草稿任务） */
-  emptyHint?: string;
+  onSend: (text: string) => Promise<boolean>;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const trajectory = useMemo(() => deriveTrajectory(events, stepDefs), [events, stepDefs]);
+  const lastKey = items.at(-1)?.key;
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [view.lastSeq]);
+  }, [lastKey, items.length]);
+  const tag = detail.taskState ? <StateTag state={detail.taskState} /> : SESSION_TAG[detail.status] && <Tag style={{ margin: 0 }}>{SESSION_TAG[detail.status]}</Tag>;
   return (
     <>
       <div className="chat-head">
         <div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <h2>{title}</h2>
-            {view.state && <StateTag state={view.state} />}
+            <h2>{detail.title}</h2>
+            {tag}
           </div>
           {subtitle && <div className="chat-sub">{subtitle}</div>}
         </div>
       </div>
-      <Trajectory key={sessionId} view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} />
+      {detail.taskId && <Trajectory key={detail.taskId} view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} />}
       <div className="chat-body" ref={bodyRef}>
-        {view.cards.length === 0 && emptyHint && (
-          <div className="welcome" style={{ paddingTop: 48 }}>
-            <p style={{ fontSize: 16, color: "var(--muted)" }}>{emptyHint}</p>
-          </div>
-        )}
-        {view.cards.map((card) =>
-          card.kind === "user" || card.kind === "agent" ? <Message key={`${card.kind}-${card.seq}`} card={card} /> : renderCard(card, actions),
-        )}
+        {items.map((item) => (item.kind === "user" || item.kind === "agent" ? <Message key={item.key} item={item} /> : renderCard(item, actions, session)))}
       </div>
-      <ChatInput placeholder="问问这个任务…" />
+      <ChatInput
+        placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
+        disabled={detail.readOnly}
+        onSend={onSend}
+      />
     </>
   );
 }
 
-export function NewConversation({ employee, onPrompt }: { employee: EmployeeInfo | undefined; onPrompt: (key: string) => void }) {
-  const isWeekly = employee?.id === "weekly-report";
-  const prompts = isWeekly
-    ? [
-        { key: "weekly", icon: <FileTextOutlined />, label: "出第 44 周周报", description: "基于本周销售数据和周会纪要，生成标准经营周报", tint: "#e0f3ed", color: "#1f8a70" },
-        { key: "sample", icon: <FolderOpenOutlined />, label: "载入公开样例", description: "用第 44 周的样例数据建一份草稿任务，提交即可看到完整流程", tint: "#e3ebff", color: "#2f6fed" },
-        { key: "about", icon: <MessageOutlined />, label: "周报包含哪些内容", description: "了解经营周报的标准章节、核心指标和数据要求", tint: "#efe6fb", color: "#7a4fd1" },
-      ]
-    : [
-        { key: "review", icon: <BookOutlined />, label: "研判一组技术文献", description: "上传文献清单，提炼技术路线与关键信息", tint: "#e3ebff", color: "#2f6fed" },
-        { key: "sample", icon: <FolderOpenOutlined />, label: "载入公开样例", description: "查看示例研判报告的结构和内容", tint: "#e0f3ed", color: "#1f8a70" },
-        { key: "about", icon: <MessageOutlined />, label: "研判报告包含哪些内容", description: "了解技术路线、来源清单等章节要求", tint: "#efe6fb", color: "#7a4fd1" },
-      ];
+/** 没配 Key 时的首屏提示：说明原因，并给设置入口。 */
+export function PreflightNotice({ preflight, openSettings }: { preflight: PreflightResult | undefined; openSettings: () => void }) {
+  if (!preflight || preflight.ok) return null;
+  return (
+    <Alert
+      className="preflight-notice"
+      type="warning"
+      showIcon
+      message="还不能开始工作"
+      description={preflight.message}
+      action={
+        <Button type="primary" icon={<SettingOutlined />} onClick={openSettings}>
+          {preflight.settings?.label ?? "去设置"}
+        </Button>
+      }
+    />
+  );
+}
+
+export function NewConversation({
+  preflight,
+  openSettings,
+  onStart,
+  onSample,
+  role,
+}: {
+  preflight: PreflightResult | undefined;
+  openSettings: () => void;
+  onStart: (text: string) => Promise<boolean>;
+  onSample: () => void;
+  role: UiRole;
+}) {
   return (
     <>
       <div className="chat-body">
         <div className="welcome">
+          <PreflightNotice preflight={preflight} openSettings={openSettings} />
           <Welcome
             variant="borderless"
-            icon={<div className="welcome-icon">{isWeekly || !employee ? <RobotOutlined /> : <BookOutlined />}</div>}
-            title={`你好，我是${employee?.name ?? "数字员工"}`}
-            description={isWeekly ? "上传销售明细和周会纪要，我来生成经营周报" : "上传技术文献，我来研判并提炼关键信息"}
+            icon={
+              <div className="welcome-icon">
+                <RobotOutlined />
+              </div>
+            }
+            title="你好，说说要做什么"
+            description="用一句话说明工作，我来安排合适的员工接手，再帮你备齐材料。"
           />
           <Prompts
             wrap
             style={{ marginTop: 24 }}
-            items={prompts.map((p) => ({
-              key: p.key,
-              icon: <span style={{ color: p.color }}>{p.icon}</span>,
-              label: p.label,
-              description: p.description,
-            }))}
-            onItemClick={({ data }) => onPrompt(data.key)}
+            items={[
+              {
+                key: "sample",
+                icon: <FolderOpenOutlined style={{ color: "#2f6fed" }} />,
+                label: "载入公开样例",
+                description: "用第 44 周的样例数据建一份草稿任务，提交即可看到完整流程",
+              },
+            ]}
+            onItemClick={() => onSample()}
           />
+          {role !== "initiator" && <p className="chat-sub" style={{ marginTop: 16 }}>当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工和提交任务。</p>}
         </div>
-      </div>      <ChatInput placeholder={isWeekly ? "描述你要做的周报…" : "描述你要研判的内容…"} />
+      </div>
+      <ChatInput placeholder="例如：帮我出第 44 周的经营周报" onSend={onStart} />
     </>
   );
 }
-
-
-
-

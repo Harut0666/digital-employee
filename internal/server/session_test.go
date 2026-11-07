@@ -858,7 +858,7 @@ func TestOldTaskIsReadableAsAReadOnlySession(t *testing.T) {
 	h.command(task.ID, initiator, cmd(contract.CmdSubmit))
 
 	listed := h.listSessions()
-	if len(listed) != 1 || !listed[0].ReadOnly || listed[0].TaskID != task.ID || listed[0].Title == "" {
+	if len(listed) != 1 || !listed[0].ReadOnly || listed[0].TaskID != task.ID || listed[0].Title == "" || listed[0].TaskState != contract.StateAwaitingInitiator {
 		t.Fatalf("会话列表 = %+v", listed)
 	}
 	if fmt.Sprint(listed[0].WaitingFor) != fmt.Sprint([]contract.Role{contract.RoleInitiator}) {
@@ -1160,7 +1160,7 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 	expectState(t, h.command(taskID, reviewer, cmd(contract.CmdApprove)), contract.StateDelivered)
 
 	got := h.readSession(created.ID)
-	if got.Status != session.StatusClosed {
+	if got.Status != session.StatusClosed || got.TaskState != contract.StateDelivered {
 		t.Fatalf("交付后的会话 = %+v", got)
 	}
 	if text := textOf(t, got.Messages, session.KindNotice); text != "任务已交付。" {

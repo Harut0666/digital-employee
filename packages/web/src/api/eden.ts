@@ -7,6 +7,7 @@ import { treaty } from "@elysiajs/eden";
 import type { TaskEvent, TaskEventType } from "@de/core/contract";
 import type { App } from "@de/server";
 import { createConfigApi } from "./config";
+import { createSessionApi } from "./sessions";
 import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PublicSampleInfo, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 /** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
@@ -118,6 +119,9 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
     listConfigVersions: configApi.listConfigVersions,
     diffConfigVersion: configApi.diffConfigVersion,
     restoreConfigVersion: configApi.restoreConfigVersion,
+
+    // ---- 会话 ----
+    ...createSessionApi(origin, getRole),
   };
 }
 

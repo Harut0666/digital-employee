@@ -8,6 +8,7 @@ import type {
   EmployeeConfigResponse,
   PauseCode,
   PauseReason,
+  QcCheckResult,
   RestoreConfigResponse,
   Role,
   SaveConfigRequest,
@@ -15,8 +16,10 @@ import type {
   TaskCommand,
   TaskEvent,
   TaskSnapshot as ContractTaskSnapshot,
+  TaskState,
   TaskSummary as ContractTaskSummary,
 } from "@de/core/contract";
+import type { SessionApi } from "./sessions";
 
 /** 界面上可切换的三种角色；system 只出现在事件里。 */
 export type UiRole = Exclude<Role, "system">;
@@ -88,7 +91,103 @@ export interface PublicSampleInfo {
   files: { name: string; size: number }[];
 }
 
-export interface WebApi {
+// ---- 会话（Go 后端 internal/session，TS 后端没有对应接口） ----
+
+/** 接待中 → 员工已接手 → 任务进行中 → 已结束 */
+export type SessionStatus = "reception" | "drafting" | "task" | "closed";
+
+export interface SessionAttachment {
+  name: string;
+  size: number;
+}
+
+export interface SessionEmployee {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review";
+
+/** 流程卡片：内容和按钮都由后端填写，字段按 type 取用。 */
+export interface SessionCard {
+  type: SessionCardType;
+  // employee_confirm
+  proposed?: string;
+  source?: "default" | "model" | "manual";
+  reason?: string;
+  candidates?: SessionEmployee[];
+  // form
+  employee?: string;
+  draft?: Record<string, unknown>;
+  attachments?: SessionAttachment[];
+  submitted?: boolean;
+  // pause / qc / review
+  taskId?: string;
+  atSeq?: number;
+  pause?: PauseView;
+  /** 现在能点的按钮；卡片已失效时没有 */
+  actions?: TaskAction[];
+  passed?: boolean;
+  checks?: QcCheckResult[];
+  comment?: string;
+  sections?: string[];
+}
+
+export type SessionMessageKind = "user" | "assistant" | "notice" | "card" | "tool_called" | "tool_denied" | "model_failed";
+
+export interface SessionMessage {
+  id: string;
+  seq: number;
+  ts: string;
+  kind: SessionMessageKind;
+  role?: UiRole;
+  text?: string;
+  card?: SessionCard;
+  tool?: string;
+  reason?: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  status: SessionStatus;
+  /** 由旧任务推导出的只读会话 */
+  readOnly: boolean;
+  title: string;
+  employee?: string;
+  taskId?: string;
+  draft?: Record<string, unknown>;
+  attachments: SessionAttachment[];
+  createdAt: string;
+  updatedAt: string;
+  /** 来自任务摘要，没有任务时为空 */
+  taskState?: TaskState;
+  statusText?: string;
+  waitingFor: UiRole[];
+}
+
+export interface SessionDetail extends SessionSummary {
+  messages: SessionMessage[];
+}
+
+/** 设置页入口：提交前检查不通过时带人去哪 */
+export interface SettingsEntry {
+  section: string;
+  label: string;
+}
+
+export interface PreflightResult {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  settings?: SettingsEntry;
+}
+
+export type SessionResult =
+  | { ok: true; messages: SessionMessage[]; session: SessionSummary }
+  | { ok: false; error: string; message: string; settings?: SettingsEntry };
+
+export interface WebApi extends SessionApi {
   listEmployees(): Promise<EmployeeInfo[]>;
   listTasks(): Promise<TaskSummary[]>;
   getTask(id: string): Promise<TaskSnapshot | undefined>;

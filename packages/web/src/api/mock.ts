@@ -7,6 +7,8 @@ import { deriveSessionView } from "../view/session-view";
 import { createMockConfigStore } from "./mock-config";
 import { EMPLOYEES, QC_CHECKS_PASSED, REWORK_STEPS, SEEDS, STEP_DEFS, type EventInput } from "./mock-data";
 import { actionsOf, pauseTextOf, waitingForOf } from "./mock-rules";
+import { createMockSessions } from "./mock-sessions";
+import type { SessionApi } from "./sessions";
 import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PauseView, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 interface MockTask {
@@ -171,7 +173,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
 
   const later = <T>(v: T) => new Promise<T>((r) => setTimeout(() => r(v), 80));
 
-  return {
+  const api: Omit<WebApi, keyof SessionApi> = {
     listEmployees: () => later(EMPLOYEES as EmployeeInfo[]),
     listTasks: () => later([...tasks.values()].map(summary)),
     getTask: (id) => later(tasks.get(id) && snapshot(tasks.get(id)!)),
@@ -308,6 +310,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     diffConfigVersion: async (id, versionId) => later(configs.diff(id, versionId)),
     restoreConfigVersion: async (id, versionId) => later(configs.restore(id, versionId)),
   };
+  return { ...api, ...createMockSessions(EMPLOYEES, getRole, api) };
 }
 
 
