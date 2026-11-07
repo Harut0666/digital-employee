@@ -353,6 +353,45 @@ func TestRunnerExecutesWhitelistedTool(t *testing.T) {
 	}
 }
 
+func TestRunnerSendsSystemPromptFirst(t *testing.T) {
+	input := runInput(agent.ModelScript{"match_causes": {submitTurn(validSubmission())}})
+	if _, err := newRunner().Run(input); err != nil {
+		t.Fatal(err)
+	}
+	requests := input.Model.(*agent.ScriptedProvider).Requests()
+	if len(requests) != 1 {
+		t.Fatalf("请求数 = %d", len(requests))
+	}
+	first := requests[0].Request.Messages[0]
+	if first.Role != "system" || first.Content[0].Text != "系统提示词" {
+		t.Fatalf("第一条消息应是系统提示词：%+v", first)
+	}
+}
+
+func TestRunnerKeepsEveryToolResultOfATurn(t *testing.T) {
+	step := judgeStep()
+	step.Tools = []string{contract.ToolValidateSubmission}
+	call := agent.ScriptedToolCall{Name: contract.ToolValidateSubmission, Arguments: map[string]any{"period": map[string]any{}}}
+	input := runInput(agent.ModelScript{"match_causes": {toolTurn(call, call), submitTurn(validSubmission())}})
+	input.Step = step
+	if _, err := newRunner().Run(input); err != nil {
+		t.Fatal(err)
+	}
+	requests := input.Model.(*agent.ScriptedProvider).Requests()
+	toolMessages := 0
+	for _, message := range requests[len(requests)-1].Request.Messages {
+		if message.Role == "tool" {
+			if len(message.Content) != 1 {
+				t.Fatalf("一条 tool 消息只放一个结果，否则真实接口只收到第一个：%+v", message)
+			}
+			toolMessages++
+		}
+	}
+	if toolMessages != 2 {
+		t.Fatalf("tool 消息数 = %d，want 2", toolMessages)
+	}
+}
+
 func TestRunnerReplaysRecordedResponses(t *testing.T) {
 	// 断点恢复：已记录的模型响应直接重放，不调用模型
 	response := map[string]any{

@@ -219,10 +219,14 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 	failureMessage := ""
 	modelError := ""
 
-	messages := []Message{{
+	messages := []Message{}
+	if in.SystemPrompt != "" {
+		messages = append(messages, Message{Role: "system", Content: []ContentBlock{TextBlock(in.SystemPrompt)}})
+	}
+	messages = append(messages, Message{
 		Role:    "user",
 		Content: []ContentBlock{TextBlock(describeContext(in.Context, in.Corrections))},
-	}}
+	})
 
 	turns := 0
 	for {
@@ -388,7 +392,10 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 		if current != nil {
 			break
 		}
-		messages = append(messages, Message{Role: "tool", Content: results})
+		// OpenAI 兼容接口要求每个工具调用对应一条 tool 消息
+		for _, result := range results {
+			messages = append(messages, Message{Role: "tool", Content: []ContentBlock{result}})
+		}
 	}
 
 	if current != nil {

@@ -4,6 +4,7 @@ package server_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,7 @@ type fakeModelService struct {
 	turns      []agent.ScriptedTurn
 	answered   int
 	requests   int
+	bodies     [][]byte
 	failFrom   int
 	failStatus int
 	failBody   string
@@ -41,10 +43,12 @@ func newFakeModelService(t *testing.T, script agent.ModelScript, failFrom, failS
 	return service
 }
 
-func (s *fakeModelService) serve(w http.ResponseWriter, _ *http.Request) {
+func (s *fakeModelService) serve(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests++
+	s.bodies = append(s.bodies, body)
 	if s.failStatus != 0 && s.answered >= s.failFrom {
 		http.Error(w, s.failBody, s.failStatus)
 		return
