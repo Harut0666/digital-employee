@@ -174,17 +174,48 @@ type QCConfig struct {
 	Custom        []CustomRule            `json:"custom" yaml:"custom"`
 }
 
+// 开工清单的判定来源。
+const (
+	ChecklistSourceUpload = "upload" // 会话里上传了扩展名符合 accept 的文件
+	ChecklistSourceField  = "field"  // 表单字段已填写
+)
+
+// ChecklistItem 开工清单的一项（checklist.yaml）。只判定“文件是否已上传、必填项是否已填写”，
+// 内容对不对（周次、工作表）由准入校验检查。
+type ChecklistItem struct {
+	ID    string `json:"id" yaml:"id"`
+	Label string `json:"label" yaml:"label"`
+	// Required 必需项不齐不能开工；否则是可跳过项，由人确认跳过
+	Required bool   `json:"required" yaml:"required"`
+	Source   string `json:"source" yaml:"source"`
+	// Accept source=upload 时认哪些扩展名，如 [".xlsx", ".csv"]
+	Accept []string `json:"accept,omitempty" yaml:"accept,omitempty"`
+	// Field source=field 时看哪个表单字段
+	Field string `json:"field,omitempty" yaml:"field,omitempty"`
+	// SkipField 可跳过项被跳过时，开工时把这个表单字段写成 true（如 allowMissingMinutes）
+	SkipField string `json:"skipField,omitempty" yaml:"skipField,omitempty"`
+	// SkipLabel 跳过按钮上的说法，如“无纪要继续”
+	SkipLabel string `json:"skipLabel,omitempty" yaml:"skipLabel,omitempty"`
+}
+
+// ChecklistConfig checklist.yaml 的结构。
+type ChecklistConfig struct {
+	Items []ChecklistItem `json:"items" yaml:"items"`
+}
+
 // EmployeeConfig 加载后的完整员工配置。
 type EmployeeConfig struct {
-	ID            string                    `json:"id"`
-	Dir           string                    `json:"dir"`
-	Hash          string                    `json:"hash"`
-	Skill         string                    `json:"skill"`
-	Frontdesk     string                    `json:"frontdesk"`
-	Workflow      EmployeeWorkflow          `json:"workflow"`
-	QC            QCConfig                  `json:"qc"`
-	FormSchema    map[string]any            `json:"formSchema"`
-	FormUI        map[string]any            `json:"formUi,omitempty"`
+	ID         string           `json:"id"`
+	Dir        string           `json:"dir"`
+	Hash       string           `json:"hash"`
+	Skill      string           `json:"skill"`
+	Frontdesk  string           `json:"frontdesk"`
+	Workflow   EmployeeWorkflow `json:"workflow"`
+	QC         QCConfig         `json:"qc"`
+	FormSchema map[string]any   `json:"formSchema"`
+	FormUI     map[string]any   `json:"formUi,omitempty"`
+	// Checklist 开工清单；没有 checklist.yaml 时为空，开工不用备齐任何东西
+	Checklist     []ChecklistItem           `json:"checklist"`
 	Prompts       map[string]string         `json:"prompts"`
 	OutputSchemas map[string]map[string]any `json:"outputSchemas"`
 }

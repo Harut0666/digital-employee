@@ -92,6 +92,30 @@ describe("模拟数据模式的会话", () => {
     expect(detail.messages.at(-1)?.card).toMatchObject({ type: "form", submitted: true });
   });
 
+  test("开工清单：必需项不齐不能开工，可跳过项由人确认并写进表单", async () => {
+    const { api, setRole } = asRole("initiator");
+    const created = await api.createSession();
+    await api.confirmEmployee(created.id, "weekly-report");
+    const status = async () => (await api.getSession(created.id)).checklist?.items.map((i) => `${i.id}=${i.status}`).join(" ");
+    expect(await status()).toBe("period=missing sales=missing minutes=missing");
+
+    const refused = await api.submitSession(created.id, { period: { year: 2026, week: 44 } });
+    expect(refused).toMatchObject({ ok: false, error: "checklist_incomplete" });
+    expect(!refused.ok && refused.message).toContain("销售明细");
+
+    await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx")]);
+    setRole("reviewer");
+    expect(await api.skipChecklistItem(created.id, "minutes")).toMatchObject({ ok: false, error: "forbidden_role" });
+    setRole("initiator");
+    expect(await api.skipChecklistItem(created.id, "sales")).toMatchObject({ ok: false, error: "invalid_input" });
+    expect((await api.skipChecklistItem(created.id, "minutes")).ok).toBe(true);
+    expect(await status()).toBe("period=missing sales=done minutes=skipped");
+
+    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 } });
+    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    expect((await api.getTask(taskId!))?.form).toMatchObject({ allowMissingMinutes: true });
+  });
+
   test("只有发起人能确认员工和提交；没确认员工不能提交", async () => {
     const { api, setRole } = asRole("initiator");
     const created = await api.createSession();

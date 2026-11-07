@@ -1,4 +1,4 @@
-// 员工配置页（T11）：岗位说明、工作步骤、表单字段、质检规则、前台 Agent 五个标签页，
+// 员工配置页（T11）：岗位说明、工作步骤、表单字段、开工清单（T30）、质检规则、前台 Agent 六个标签页，
 // 右上角「查看源文件」与「版本历史」，保存后对新任务生效（docs/design.md §4.1、docs/ui/final/05-config.png）。
 //
 // 数据来源全部是员工目录里的配置文件：表单页改的是解析结果，保存时由服务端校验后写回；
@@ -11,6 +11,7 @@ import type { EmployeeInfo } from "../api";
 import { ConfigRequestError } from "../api/config";
 import { useApi } from "../hooks/data";
 import {
+  ChecklistTab,
   DutiesTab,
   FieldsTab,
   FrontdeskTab,
@@ -26,6 +27,7 @@ const TAB_ITEMS = [
   { key: "duties", label: "岗位说明" },
   { key: "steps", label: "工作步骤" },
   { key: "fields", label: "表单字段" },
+  { key: "checklist", label: "开工清单" },
   { key: "qc", label: "质检规则" },
   { key: "frontdesk", label: "前台 Agent" },
 ] as const;
@@ -174,6 +176,8 @@ export function EmployeeConfigPage({ employees }: { employees: EmployeeInfo[] })
                 return { key: item.key, label: item.label, children: <StepsTab {...tabProps} /> };
               case "fields":
                 return { key: item.key, label: item.label, children: <FieldsTab {...tabProps} /> };
+              case "checklist":
+                return { key: item.key, label: item.label, children: <ChecklistTab {...tabProps} /> };
               case "qc":
                 return { key: item.key, label: item.label, children: <QcTab {...tabProps} /> };
               default:

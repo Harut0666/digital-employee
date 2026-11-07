@@ -184,6 +184,24 @@ export interface SessionMessage {
   reason?: string;
 }
 
+/** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
+export interface SessionChecklistItem {
+  id: string;
+  label: string;
+  required: boolean;
+  status: "done" | "missing" | "skipped";
+  /** 可跳过项的跳过说法，如“无纪要继续” */
+  skipLabel?: string;
+}
+
+export interface SessionChecklist {
+  items: SessionChecklistItem[];
+  /** 必需项都齐了，可以开工 */
+  ready: boolean;
+  /** 还缺的必需项名称 */
+  missing: string[];
+}
+
 export interface SessionSummary {
   id: string;
   status: SessionStatus;
@@ -203,6 +221,8 @@ export interface SessionSummary {
 }
 
 export interface SessionDetail extends SessionSummary {
+  /** 开工清单（T30）；读单个会话时才有，员工没有清单时为空 */
+  checklist?: SessionChecklist;
   messages: SessionMessage[];
 }
 

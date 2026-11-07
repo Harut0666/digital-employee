@@ -35,6 +35,8 @@ const (
 	kindTaskBound       = "task_bound"
 	// kindFilingDrafted 模型为入库卡片起草的描述；起草失败时 Text 为空、Reason 写原因
 	kindFilingDrafted = "filing_drafted"
+	// kindChecklistSkipped 发起人确认跳过一项开工清单（Item），同时写一条说明留痕
+	kindChecklistSkipped = "checklist_skipped"
 )
 
 // Attachment 暂存在会话里的一份材料，提交时才复制进任务。
@@ -66,12 +68,14 @@ type Message struct {
 	TaskID     string         `json:"taskId,omitempty"`
 	Draft      map[string]any `json:"draft,omitempty"`
 	Attachment *Attachment    `json:"attachment,omitempty"`
+	// Item 开工清单项的 id
+	Item string `json:"item,omitempty"`
 }
 
 // visible 读取历史时是否返回（状态变更已体现在会话字段上）。
 func (m Message) visible() bool {
 	switch m.Kind {
-	case kindCreated, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted:
+	case kindCreated, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped:
 		return false
 	}
 	return true
@@ -90,6 +94,8 @@ type record struct {
 	// filingDraft 入库卡片上模型起草的描述；filingFailed 起草失败，由人手写
 	filingDraft  string
 	filingFailed bool
+	// skipped 发起人确认跳过的清单项
+	skipped map[string]bool
 }
 
 func (r *record) apply(message Message) {
@@ -105,6 +111,11 @@ func (r *record) apply(message Message) {
 		r.draft = message.Draft
 	case kindTaskBound:
 		r.taskID = message.TaskID
+	case kindChecklistSkipped:
+		if r.skipped == nil {
+			r.skipped = map[string]bool{}
+		}
+		r.skipped[message.Item] = true
 	case kindFilingDrafted:
 		r.filingDraft = message.Text
 		r.filingFailed = message.Text == ""

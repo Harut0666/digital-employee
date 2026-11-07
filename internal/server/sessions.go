@@ -17,6 +17,8 @@ var sessionErrorStatus = map[string]int{
 	session.ErrSessionReadOnly: http.StatusConflict,
 	session.ErrSessionBusy:     http.StatusConflict,
 	session.ErrEmployeeMissing: http.StatusConflict,
+	// 必需项不齐：会话的现状不允许开工
+	session.ErrChecklistIncomplete: http.StatusConflict,
 }
 
 func writeSessionError(w http.ResponseWriter, err error) {
@@ -194,6 +196,21 @@ func (s *Server) handleSubmitSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reply, err := s.sessions.Submit(r.PathValue("id"), role, form)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleSkipChecklistItem 发起人在清单上确认跳过一项。
+func (s *Server) handleSkipChecklistItem(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	reply, err := s.sessions.SkipItem(r.PathValue("id"), role, r.PathValue("item"))
 	if err != nil {
 		writeSessionError(w, err)
 		return

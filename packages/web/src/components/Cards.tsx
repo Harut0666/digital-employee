@@ -18,6 +18,8 @@ import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from ".
 import type { ChatItem } from "../view/chat-view";
 import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
+import { CheckRows } from "./Checklist";
+import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
 import { FilingCard } from "./FilingCard";
 
@@ -213,19 +215,8 @@ export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
         {item.passed ? "质检通过" : "质检未通过"}
       </div>
       <div className="card-body">{item.passed ? `经 ${item.checks.length} 项检查，未发现问题，符合发布要求。` : `${bad.length} 项未通过。`}</div>
-      {bad.map((c) => (
-        <div key={c.id} className="card-body">
-          <b>{c.label}：</b>
-          {c.issues.join("；")}
-        </div>
-      ))}
-      <div className="chips">
-        {item.checks.map((c) => (
-          <span key={c.id} className={`chip ${c.passed ? "" : "bad"}`}>
-            {c.passed ? <CheckCircleFilled /> : <CloseCircleFilled />} {c.label}
-          </span>
-        ))}
-      </div>
+      {/* 和开工清单同样的行样式 */}
+      <CheckRows rows={qcRows(item.checks)} />
     </div>
   );
 }

@@ -3,6 +3,8 @@
 // 任务卡片和 Go 一样读取时从任务事件投影，按钮取自快照。
 
 import type { TaskEvent } from "@de/core/contract";
+import { CHECKLISTS } from "./mock-data";
+import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
 import type {
   EmployeeInfo,
@@ -28,6 +30,8 @@ interface MockSession {
   draft?: Record<string, unknown>;
   /** 入库卡片上起草的描述（模拟模式不调模型，按任务标题拼一句） */
   filingDraft?: string;
+  /** 发起人确认跳过的清单项 */
+  skipped: Set<string>;
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -57,6 +61,10 @@ export function createMockSessions(
   const attachments = (s: MockSession): SessionAttachment[] => s.files.map((f) => ({ name: f.name, size: f.size }));
   const formCard = (s: MockSession): SessionCard => ({ type: "form", employee: s.employee, draft: s.draft, attachments: attachments(s) });
   const roster = () => employees.map((e) => ({ id: e.id, name: e.name, description: e.description }));
+  const checklistOf = (s: MockSession, form = s.draft) => {
+    const items = s.employee ? CHECKLISTS[s.employee] : undefined;
+    return items ? evaluateChecklist(items, form ?? {}, s.files, s.skipped) : undefined;
+  };
 
   async function summaryOf(taskId: string | undefined): Promise<TaskSummary | undefined> {
     return taskId ? (await tasks.listTasks()).find((t) => t.id === taskId) : undefined;
@@ -206,12 +214,12 @@ export function createMockSessions(
       const s = sessions.get(id);
       if (!s) throw new Error(`会话不存在：${id}`);
       const messages = s.messages.filter((m) => m.kind !== "tool_called");
-      return { ...(await view(s)), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
+      return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
     },
 
     async createSession() {
       const now = new Date(Date.now() + ++counter).toISOString();
-      const s: MockSession = { id: `s-mock-${counter}`, files: [], messages: [], createdAt: now, updatedAt: now };
+      const s: MockSession = { id: `s-mock-${counter}`, skipped: new Set(), files: [], messages: [], createdAt: now, updatedAt: now };
       sessions.set(s.id, s);
       return view(s);
     },
@@ -265,10 +273,15 @@ export function createMockSessions(
       if (isFailure(s)) return s;
       if (s.taskId) return fail("session_has_task", "这个会话已有任务，要做新任务请开新会话");
       if (!s.employee) return fail("employee_required", "请先确认由哪个员工接手");
+      const checklist = checklistOf(s, form ?? s.draft);
+      if (checklist && !checklist.ready) return fail("checklist_incomplete", `开工清单还缺：${checklist.missing.join("、")}。备齐后才能开工。`);
       if (form) s.draft = form;
+      // 跳过的项开工时写进表单字段
+      const skipped = (CHECKLISTS[s.employee] ?? []).filter((i) => i.skipField && checklist?.items.some((e) => e.id === i.id && e.status === "skipped"));
+      const startForm = { ...s.draft, ...Object.fromEntries(skipped.map((i) => [i.skipField!, true])) };
       // 模拟任务按上传项判定材料：会话里的文件没有上传项，按扩展名归位
       const uploads: UploadItem[] = s.files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
-      const snapshot = await tasks.createTask({ employee: s.employee, form: s.draft ?? {}, uploads });
+      const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads });
       s.taskId = snapshot.id;
       const res = await tasks.command(snapshot.id, { type: "submit" });
       if (!res.ok) return fail(res.error, res.message);
@@ -284,6 +297,20 @@ export function createMockSessions(
       const title = (await summaryOf(task.id))?.title ?? task.id;
       s.filingDraft = `${title}（模拟模式按标题起草的描述，请按实际内容修改）`;
       return reply(s, []);
+    },
+
+    async skipChecklistItem(id, itemId) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认跳过清单项");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (s.taskId) return fail("session_has_task", "任务已经开始，清单不能再改");
+      const item = (s.employee ? CHECKLISTS[s.employee] : undefined)?.find((i) => i.id === itemId);
+      if (!item) return fail("invalid_input", `开工清单里没有这一项：${itemId}`);
+      if (item.required) return fail("invalid_input", `“${item.label}”是必需项，不能跳过`);
+      s.skipped.add(item.id);
+      const out: SessionMessage[] = [];
+      write(s, { kind: "notice", text: `发起人确认跳过开工清单的“${item.label}”${item.skipLabel ? `（${item.skipLabel}）` : ""}。` }, out);
+      return reply(s, out);
     },
 
     preflight: async () => ({ ok: true }),

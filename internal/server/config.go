@@ -7,6 +7,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -258,6 +259,9 @@ func (s *Server) handleSaveConfigFile(w http.ResponseWriter, r *http.Request) {
 	var currentPtr *string
 	if currentOK {
 		currentPtr = &currentText
+	}
+	if _, formText, ok := readConfigFileText(dir, "form.schema.json"); ok {
+		_ = json.Unmarshal([]byte(formText), &input.FormSchema)
 	}
 	prepared, errors := prepareConfigText(relPath, input, currentPtr)
 	if len(errors) > 0 {

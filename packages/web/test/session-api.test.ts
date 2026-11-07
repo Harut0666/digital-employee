@@ -48,6 +48,13 @@ describe("会话接口", () => {
     expect(await api.confirmEmployee("s-1", "weekly-report")).toEqual({ ok: false, error: "forbidden_role", message: "只有发起人可以确认员工" });
   });
 
+  test("确认跳过清单项发给本项的跳过接口，带上当前角色", async () => {
+    const { calls, impl } = fakeFetch({ "POST /api/sessions/s-1/checklist/minutes/skip": [200, { ok: true, messages: [], session }] });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.skipChecklistItem("s-1", "minutes")).ok).toBe(true);
+    expect(calls[0]?.headers["x-role"]).toBe("initiator");
+  });
+
   test("提交前检查和会话读取", async () => {
     const { impl } = fakeFetch({
       "GET /api/preflight": [200, { ok: true }],

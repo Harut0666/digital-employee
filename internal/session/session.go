@@ -108,6 +108,8 @@ type View struct {
 	TaskState  contract.TaskState `json:"taskState,omitempty"`
 	StatusText string             `json:"statusText,omitempty"`
 	WaitingFor []contract.Role    `json:"waitingFor"`
+	// Checklist 开工清单，读单个会话时才有；没有员工或员工没有清单时为空
+	Checklist *Checklist `json:"checklist,omitempty"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -152,7 +154,11 @@ func (m *Manager) Get(id string) (*Detail, error) {
 			return nil, err
 		}
 	}
-	return &Detail{View: *m.view(current), Messages: messages}, nil
+	view, err := m.fullView(current)
+	if err != nil {
+		return nil, err
+	}
+	return &Detail{View: *view, Messages: messages}, nil
 }
 
 // Reply 一次人的操作得到的结果：这次新写入的消息和最新的会话。
@@ -197,7 +203,22 @@ func (m *Manager) reply(t *turn) (*Reply, error) {
 			return nil, err
 		}
 	}
-	return &Reply{OK: true, Messages: messages, Session: m.view(t.current)}, nil
+	view, err := m.fullView(t.current)
+	if err != nil {
+		return nil, err
+	}
+	return &Reply{OK: true, Messages: messages, Session: view}, nil
+}
+
+// fullView 读单个会话时的样子：列表里的字段，加上开工清单。
+func (m *Manager) fullView(current *record) (*View, error) {
+	view := m.view(current)
+	checklist, _, err := m.checklistOf(current, nil)
+	if err != nil {
+		return nil, err
+	}
+	view.Checklist = checklist
+	return view, nil
 }
 
 // Send 收一条人的消息，等前台 Agent 回复完。
@@ -324,6 +345,13 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 	if t.current.employee == "" {
 		return nil, failure(ErrEmployeeMissing, "请先确认由哪个员工接手")
 	}
+	checklist, items, err := m.checklistOf(t.current, form)
+	if err != nil {
+		return nil, err
+	}
+	if checklist != nil && !checklist.Ready {
+		return nil, failure(ErrChecklistIncomplete, "开工清单还缺：%s。备齐后才能开工。", strings.Join(checklist.Missing, "、"))
+	}
 	if m.deps.Preflight != nil {
 		if err := m.deps.Preflight(); err != nil {
 			return nil, err
@@ -339,7 +367,7 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 		inputs = append(inputs, contract.AttachmentInput{Name: attachment.Name, SourcePath: m.store.attachmentPath(id, attachment.Name)})
 	}
 	snapshot, err := m.deps.Engine.Create(contract.CreateTaskInput{
-		Employee: t.current.employee, Form: t.current.draft, Attachments: inputs, Actor: role,
+		Employee: t.current.employee, Form: applySkips(t.current.draft, checklist, items), Attachments: inputs, Actor: role,
 	})
 	if err != nil {
 		return nil, err

@@ -1,0 +1,28 @@
+# 开工清单：开工前必须备齐的事项，只有程序能勾选。
+#
+# 判定来源（source）：
+#   upload：会话里上传了扩展名符合 accept 的文件
+#   field：表单字段已填写
+# 清单只判定“文件是否已上传、必填项是否已填写”。周次不符、工作表缺失这类内容问题
+# 留给准入校验，由它暂停并提示补充。
+#
+# 必需项（required: true）不齐不能开工；可跳过项由发起人确认跳过，
+# 开工时把 skipField 写成 true，并在会话里留痕。
+items:
+  - id: period
+    label: 统计周期
+    required: true
+    source: field
+    field: period
+  - id: sales
+    label: 销售明细
+    required: true
+    source: upload
+    accept: [".xlsx", ".csv"]
+  - id: minutes
+    label: 本周纪要
+    required: false
+    source: upload
+    accept: [".docx"]
+    skipField: allowMissingMinutes
+    skipLabel: 无纪要继续

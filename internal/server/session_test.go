@@ -450,6 +450,7 @@ func TestSubmitUsesTheDraftWhenTheCardSendsNoForm(t *testing.T) {
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
+	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 
 	reply := h.submit(created.ID, nil)
 
@@ -466,6 +467,7 @@ func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 43 周")
+	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 
 	reply := h.submit(created.ID, week44Form)
 
@@ -478,6 +480,7 @@ func TestOneSessionHasAtMostOneTask(t *testing.T) {
 	h := newHarness(t, nil)
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 	first := h.submit(created.ID, week44Form)
 	h.settled(first.Session.TaskID)
 
@@ -545,6 +548,7 @@ func TestUploadingAfterSubmitGoesThroughThePauseCard(t *testing.T) {
 	h := newHarness(t, nil)
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 	reply := h.submit(created.ID, week44Form)
 	h.settled(reply.Session.TaskID)
 
@@ -555,11 +559,12 @@ func TestUploadingAfterSubmitGoesThroughThePauseCard(t *testing.T) {
 	}
 }
 
-// pausedSession 走到“缺销售明细”暂停：没有材料的提交。
+// pausedSession 走到“缺本周纪要”暂停：开工清单只要求销售明细，纪要缺失由准入校验暂停。
 func pausedSession(h *harness) (session.Detail, contract.TaskSnapshot) {
 	h.t.Helper()
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	uploadOK(h, created.ID, sampleFile(h.t, "销售明细.xlsx"))
 	reply := h.submit(created.ID, week44Form)
 	snapshot := h.settled(reply.Session.TaskID)
 	expectState(h.t, snapshot, contract.StateAwaitingInitiator)
@@ -590,13 +595,13 @@ func entriesOf(messages []session.Message, kind string) []session.Message {
 func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("query_task", map[string]any{}),
-		modelSays("任务缺销售明细，补上后就能继续。"),
+		modelSays("任务缺本周纪要，补上后就能继续。"),
 	))
 	opened, snapshot := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "为什么暂停")
 
-	if got := textOf(t, reply.Messages, session.KindAssistant); got != "任务缺销售明细，补上后就能继续。" {
+	if got := textOf(t, reply.Messages, session.KindAssistant); got != "任务缺本周纪要，补上后就能继续。" {
 		t.Fatalf("回复 = %q", got)
 	}
 	// 模型的第二轮收到的工具结果就是快照里的暂停说明

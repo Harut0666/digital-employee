@@ -10,6 +10,7 @@ import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionL
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, SessionChat } from "./components/Chat";
+import { ChecklistPanel } from "./components/Checklist";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
 import type { TraceFile } from "./components/Trajectory";
@@ -150,6 +151,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     openKnowledge: () => setSelection({ kind: "page", page: "knowledge" }),
   };
 
+  /** 开工清单上确认跳过一项（只有发起人） */
+  const skipChecklistItem = async (item: string) => {
+    if (!sessionId) return;
+    const res = await settle(api.skipChecklistItem(sessionId, item));
+    if (!res.ok) message.error(res.message);
+  };
+
   const send = async (text: string): Promise<boolean> => {
     if (!sessionId) return false;
     const res = await settle(api.sendMessage(sessionId, text));
@@ -241,6 +249,11 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
             </Button>
           ) : undefined
         }
+        checklist={
+          detail.checklist && (
+            <ChecklistPanel checklist={detail.checklist} started={Boolean(detail.taskId)} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
+          )
+        }
         onSend={send}
       />
     );
@@ -256,7 +269,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
           employee={employee}
           mode="supplement"
           initialForm={task.snapshot!.form}
-          pause={task.view.pause}
           submitting={submitting}
           disabled={!plan.mine.some((a) => a.command === "supplement")}
           onSubmit={async (form, uploads) => {

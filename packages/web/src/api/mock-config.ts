@@ -19,7 +19,7 @@ import {
   type SaveConfigResponse,
   type SkillSections,
 } from "@de/core/contract";
-import { EMPLOYEES, STEP_DEFS } from "./mock-data";
+import { CHECKLISTS, EMPLOYEES, STEP_DEFS } from "./mock-data";
 import type { EmployeeInfo } from "./types";
 
 type Json = Record<string, any>;
@@ -31,6 +31,8 @@ interface Content {
   formSchema: Json;
   formUi: Json;
   frontdesk: FrontdeskDoc;
+  /** checklist.yaml（开工清单）；员工没有清单时为空 */
+  checklist?: Json;
   prompts: Record<string, string>;
   schemas: Record<string, Json>;
 }
@@ -85,6 +87,7 @@ function fileTexts(content: Content): Record<string, string> {
     "form.schema.json": dump(content.formSchema),
     "form.ui.json": dump(content.formUi),
     "frontdesk.md": frontdeskText(content.frontdesk),
+    ...(content.checklist ? { "checklist.yaml": dump(content.checklist) } : {}),
     ...content.prompts,
   };
   for (const [path, schema] of Object.entries(content.schemas)) texts[path] = dump(schema);
@@ -172,6 +175,7 @@ function buildContent(employee: EmployeeInfo): Content {
     formSchema: clone(employee.formSchema),
     formUi: clone(employee.formUi ?? {}),
     frontdesk: { body: `# 前台 Agent · ${employee.name}\n\n说话平实、简短。\n`, tools: [...FRONTDESK_DEFAULT_TOOLS] },
+    checklist: CHECKLISTS[employee.id] ? { items: clone(CHECKLISTS[employee.id]) } : undefined,
     prompts,
     schemas,
   };
@@ -216,6 +220,7 @@ function applySave(content: Content, path: string, input: SaveConfigRequest): vo
     else if (path === "qc.yaml") content.qc = data as Json;
     else if (path === "form.schema.json") content.formSchema = data as Json;
     else if (path === "form.ui.json") content.formUi = data as Json;
+    else if (path === "checklist.yaml") content.checklist = data as Json;
     else if (path.startsWith("schemas/")) content.schemas[path] = data as Json;
     else throw new MockConfigError(`模拟数据模式不支持保存 ${path}`);
     return;

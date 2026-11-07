@@ -346,6 +346,7 @@ func (t *turn) assistantSystem(config *contract.EmployeeConfig) string {
 			names = append(names, attachment.Name)
 		}
 		lines = append(lines, "- 已上传的材料："+strings.Join(names, "、"))
+		lines = append(lines, checklistLines(config, t.current)...)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

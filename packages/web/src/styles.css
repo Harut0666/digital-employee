@@ -899,22 +899,97 @@ body {
   color: var(--muted);
   font-weight: 400;
 }
+/* ---------- 开工清单与质检的清单行（T30） ---------- */
 .check-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 0;
+  min-width: 0;
 }
-.check-row .state {
-  margin-left: auto;
+.check-row .check-label {
+  flex: 1;
+  min-width: 0;
+}
+.check-row .check-detail {
+  display: block;
   color: var(--muted);
   font-size: calc(var(--font-size) - 1px);
 }
-.check-row.missing {
+.check-row .state {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+  flex: none;
+}
+.check-icon {
+  flex: none;
+  display: inline-flex;
+}
+.tone-ok .check-icon {
+  color: var(--primary);
+}
+.tone-todo .check-icon {
+  color: var(--dot-default);
+}
+.tone-skip .check-icon,
+.tone-skip .state {
+  color: var(--warn);
+}
+.tone-bad,
+.tone-bad .state {
   color: var(--danger);
 }
-.check-row.missing .state {
-  color: var(--danger);
+.checklist {
+  margin: 0 16px 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-2);
+}
+.checklist.ready {
+  background: var(--primary-soft);
+  border-color: transparent;
+}
+.checklist.collapsed {
+  padding: 0;
+}
+.checklist-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-weight: 500;
+  color: var(--text);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+}
+button.checklist-line {
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.checklist-line .check-icon {
+  color: var(--dot-default);
+}
+.checklist.ready .checklist-line .check-icon {
+  color: var(--primary);
+}
+.checklist-toggle {
+  margin-left: auto;
+  color: var(--muted);
+}
+.checklist .check-rows {
+  margin-top: 6px;
+}
+.checklist.collapsed .check-rows {
+  margin: 0;
+  padding: 0 14px 10px;
+}
+.checklist-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
 }
 .empty-box {
   text-align: center;

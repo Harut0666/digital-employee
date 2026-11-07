@@ -20,7 +20,7 @@ import (
 )
 
 // configRootFiles 员工目录根下的配置文件；可选文件不存在时不出现。
-var configRootFiles = []string{"SKILL.md", "workflow.yaml", "qc.yaml", "form.schema.json", "form.ui.json", "frontdesk.md"}
+var configRootFiles = []string{"SKILL.md", "workflow.yaml", "qc.yaml", "form.schema.json", "form.ui.json", "frontdesk.md", config.ChecklistFile}
 
 var configSubdirFiles = []struct {
 	Dir string
@@ -389,6 +389,8 @@ type configFileInput struct {
 	Content *string
 	Data    any
 	HasData bool
+	// FormSchema 员工当前的表单 Schema：开工清单引用的字段要在里面
+	FormSchema map[string]any
 }
 
 func failErrors(errors ...string) (string, []string) { return "", errors }
@@ -414,6 +416,8 @@ func prepareConfigText(relPath string, input configFileInput, currentText *strin
 		return prepareQC(input, currentText)
 	case path == "form.schema.json" || path == "form.ui.json":
 		return prepareFormSchema(input, path)
+	case path == config.ChecklistFile:
+		return prepareChecklist(input, currentText)
 	case path == "SKILL.md":
 		if hasContent {
 			return *input.Content, nil
@@ -862,6 +866,29 @@ func prepareFormSchema(input configFileInput, file string) (string, []string) {
 		return failErrors(file + " 序列化失败：" + err.Error())
 	}
 	return string(encoded) + "\n", nil
+}
+
+// prepareChecklist 开工清单：校验每一项的判定来源和引用的表单字段。表单视图保存时尽量保留注释。
+func prepareChecklist(input configFileInput, currentText *string) (string, []string) {
+	text := ""
+	if input.Content != nil {
+		text = *input.Content
+	} else {
+		encoded, err := yaml.Marshal(input.Data)
+		if err != nil {
+			return failErrors("checklist.yaml 序列化失败：" + err.Error())
+		}
+		text = string(encoded)
+	}
+	if _, problems := config.ParseChecklist(text, input.FormSchema); len(problems) > 0 {
+		return failErrors(problems...)
+	}
+	if input.Content == nil && currentText != nil {
+		if merged, ok := applyYAMLData(*currentText, input.Data); ok {
+			return merged, nil
+		}
+	}
+	return text, nil
 }
 
 func prepareOutputSchema(input configFileInput, file string) (string, []string) {
