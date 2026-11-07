@@ -74,6 +74,18 @@ const (
 	FailModelError    JudgmentFailure = "model_error"
 	FailNoOutput      JudgmentFailure = "no_output"
 	FailInvalidOutput JudgmentFailure = "invalid_output"
+	// FailModelUnavailable 模型接口拒绝请求或连不上，类别见 JudgmentResult.ModelError
+	FailModelUnavailable JudgmentFailure = "model_unavailable"
+)
+
+// ModelErrorKind 模型调用错误的类别。
+type ModelErrorKind string
+
+const (
+	ModelErrorAuth    ModelErrorKind = "auth"
+	ModelErrorNetwork ModelErrorKind = "network"
+	ModelErrorQuota   ModelErrorKind = "quota"
+	ModelErrorServer  ModelErrorKind = "server"
 )
 
 // JudgmentResult 判断步骤的结果。
@@ -81,6 +93,7 @@ type JudgmentResult struct {
 	OK         bool
 	Output     any
 	Failure    JudgmentFailure
+	ModelError ModelErrorKind
 	Message    string
 	ModelCalls int
 }

@@ -160,6 +160,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, message))
 		return
 	}
+	if command.Type == contract.CmdSubmit && s.submitWouldProceed(id, role) {
+		if check := s.preflight(); !check.OK {
+			writeJSON(w, statusOf(check.Error), check)
+			return
+		}
+	}
 	uploads, err := saveUploads(files)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))

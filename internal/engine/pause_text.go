@@ -22,9 +22,18 @@ var pauseTitles = map[contract.PauseCode][2]string{
 	contract.PauseInsufficientMaterial: {"资料不足", "请补充材料后继续。"},
 	contract.PauseMaterialIssue:        {"材料有问题", "请重新上传有问题的材料，补充后任务继续。"},
 	contract.PauseToolFailed:           {"工具调用失败", anyoneRetries},
+	contract.PauseModelUnavailable:     {"模型不可用", "请到设置里检查模型连接，然后重试。"},
 	contract.PauseLimitExceeded:        {"已达执行上限", operatorDecides},
 	contract.PauseQcExhausted:          {"质检未通过", operatorDecides},
 	contract.PauseAwaitingReview:       {"待审核", "请审核交付物，决定通过或退回。"},
+}
+
+// modelErrorText 模型不可用时，按错误类别给出的标题和下一步。
+var modelErrorText = map[contract.ModelErrorKind][2]string{
+	contract.ModelErrorAuth:    {"模型认证失败", "请到设置里检查模型连接的 Key，保存后重试。"},
+	contract.ModelErrorNetwork: {"模型连接不上", "请检查网络和模型连接的地址，恢复后重试。"},
+	contract.ModelErrorQuota:   {"模型限流或欠费", "请稍等片刻再重试；一直失败时到模型服务商处查看余额和额度。"},
+	contract.ModelErrorServer:  {"模型服务出错", "请稍后重试；一直失败时到设置里换一个模型连接。"},
 }
 
 // judgmentFailureTitles 判断步骤失败时，比暂停代码更具体的标题。
@@ -59,6 +68,11 @@ func describePause(state contract.TaskState, pause *contract.PauseReason) (title
 		return contract.StateLabels[state], "请按说明处理。"
 	}
 	title, resolution = text[0], text[1]
+	if kind, ok := pause.Detail["modelError"].(string); ok {
+		if specific, found := modelErrorText[contract.ModelErrorKind(kind)]; found {
+			return specific[0], specific[1]
+		}
+	}
 	if failure, ok := pause.Detail["failure"].(string); ok {
 		if specific, found := judgmentFailureTitles[contract.JudgmentFailure(failure)]; found {
 			title = specific

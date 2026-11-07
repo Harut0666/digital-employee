@@ -45,6 +45,8 @@ const (
 	ErrForbiddenRole     = "forbidden_role"
 	ErrInvalidInput      = "invalid_input"
 	ErrNotFound          = "not_found"
+	// ErrModelNotConfigured 提交前检查不通过：默认模型连接没有可用的 Key。只由服务端返回，引擎不知道它。
+	ErrModelNotConfigured = "model_not_configured"
 )
 
 // StepStatus 快照里的步骤状态。

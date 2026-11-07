@@ -257,6 +257,8 @@ func Start(options Options) (*Running, error) {
 		Env:                 env,
 		Logger:              logger,
 		AppVersion:          options.AppVersion,
+		// 占位引擎同样不调模型
+		Scripted: scriptFile != "" || options.EngineFactory == nil,
 	})
 
 	startPort := options.Port
