@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Select } from "antd";
+import { Segmented, Select } from "antd";
 import {
   DownOutlined,
   PlusOutlined,
@@ -11,10 +11,9 @@ import {
   BookOutlined,
 } from "@ant-design/icons";
 import { Button } from "antd";
-import type { Role, TaskSummary } from "@de/core/contract";
-import type { EmployeeInfo, UiRole } from "../api";
+import type { EmployeeInfo, TaskSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
-import { groupSessions } from "../view/session-groups";
+import { groupSessions, groupTodos } from "../view/session-groups";
 
 export type Selection =
   | { kind: "new"; employee: string }
@@ -48,7 +47,8 @@ export function Sidebar({
   onSelect: (s: Selection) => void;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const groups = groupSessions(tasks, role as Role);
+  const [listView, setListView] = useState<"sessions" | "todos">("sessions");
+  const groups = listView === "todos" ? groupTodos(tasks) : groupSessions(tasks, role);
   return (
     <div className="col surface sidebar">
       <div className="brand">
@@ -75,6 +75,16 @@ export function Sidebar({
         );
       })}
       <div className="side-title">会话</div>
+      <Segmented
+        block
+        size="small"
+        value={listView}
+        onChange={setListView}
+        options={[
+          { label: "我的", value: "sessions" },
+          { label: "全部待办", value: "todos" },
+        ]}
+      />
       <div className="sessions">
         {groups.map((g) => (
           <div key={g.key}>
@@ -87,7 +97,10 @@ export function Sidebar({
               g.items.map((t) => (
                 <div key={t.id} className={`session-item ${selection.kind === "task" && selection.id === t.id ? "active" : ""}`} onClick={() => onSelect({ kind: "task", id: t.id })}>
                   <span className={`dot ${t.dot}`} />
-                  <span className="title">{t.title}</span>
+                  <span className="main">
+                    <span className="title">{t.title}</span>
+                    <span className="sub">{t.sub}</span>
+                  </span>
                   <span className="time">{clock(t.updatedAt)}</span>
                 </div>
               ))}

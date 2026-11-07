@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Checkbox, Input, message, Space, Tag, Tooltip } from "antd";
+import { Button, Checkbox, Input, message, Tag } from "antd";
 import {
   CheckCircleFilled,
   CloseCircleFilled,
@@ -7,18 +7,26 @@ import {
   ExclamationCircleFilled,
   FileWordOutlined,
   ReloadOutlined,
+  SettingOutlined,
+  SwapOutlined,
 } from "@ant-design/icons";
-import type { TaskCommand, TaskState } from "@de/core/contract";
-import { availableCommands, ROLE_LABELS, type CommandType } from "../view/permissions";
+import { STATE_LABELS, type TaskCommand } from "@de/core/contract";
+import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatCard } from "../view/session-view";
-import type { UiRole } from "../api";
+import type { CommandType, PauseView, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 
 export interface CardActions {
   role: UiRole;
-  state: TaskState | undefined;
+  /** 快照给出的可用操作和在等的角色；快照还没跟上事件时为空 */
+  taskActions: TaskAction[];
+  waitingFor: UiRole[];
+  /** 快照里的暂停原因，比事件里的多 title、resolution */
+  pause: PauseView | undefined;
   /** 发命令；resolve 后才恢复按钮 */
   run: (cmd: TaskCommand) => Promise<void>;
+  onRole: (role: UiRole) => void;
+  openSettings: () => void;
   /** 聚焦右栏的补充表单 */
   openSupplement: () => void;
   /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
@@ -28,93 +36,91 @@ export interface CardActions {
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-const CMD_LABEL: Record<CommandType, string> = {
-  submit: "提交",
-  supplement: "补充材料",
-  continue_without_minutes: "无纪要继续",
-  continue_with_partial: "按现有资料继续",
-  retry: "重试",
-  terminate: "终止",
-  approve: "通过",
-  return: "退回修改",
-};
-
-/** 命令按钮：角色不对或状态不对时禁用，并说明原因。 */
-export function CommandButton({
-  cmd,
-  actions,
-  options,
-  primary,
-  danger,
-  onClick,
-}: {
-  cmd: CommandType;
-  actions: CardActions;
-  options?: TaskCommand["type"][];
-  primary?: boolean;
-  danger?: boolean;
-  onClick?: () => Promise<void> | void;
-}) {
+function ActionButton({ action, run, onClick }: { action: TaskAction; run: CardActions["run"]; onClick?: () => Promise<void> | void }) {
   const [busy, setBusy] = useState(false);
-  const allowed = actions.state ? availableCommands(actions.state, actions.role, options ? { options } : undefined).includes(cmd) : false;
-  const btn = (
+  return (
     <Button
-      type={primary ? "primary" : "default"}
-      danger={danger}
-      disabled={!allowed}
+      type={action.style === "primary" ? "primary" : "default"}
+      danger={action.style === "danger"}
       loading={busy}
-      icon={cmd === "retry" ? <ReloadOutlined /> : undefined}
+      icon={action.command === "retry" ? <ReloadOutlined /> : undefined}
       onClick={async () => {
         setBusy(true);
         try {
           if (onClick) await onClick();
-          else await actions.run({ type: cmd } as TaskCommand);
+          else await run({ type: action.command } as TaskCommand);
         } finally {
           setBusy(false);
         }
       }}
     >
-      {CMD_LABEL[cmd]}
+      {action.label}
     </Button>
   );
-  return allowed ? btn : <Tooltip title={`当前角色（${ROLE_LABELS[actions.role]}）不能执行此操作`}>{btn}</Tooltip>;
+}
+
+/** 等谁处理，以及切到对应角色的入口。 */
+export function Handoff({ handoff, onRole }: { handoff: RoleHandoff; onRole: (role: UiRole) => void }) {
+  return (
+    <div className="handoff">
+      <span>{handoff.text}</span>
+      {handoff.switchTo.map((r) => (
+        <Button key={r} size="small" icon={<SwapOutlined />} onClick={() => onRole(r)}>
+          切换为{ROLE_LABELS[r]}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/** 当前角色能做的操作，加上其余操作在等谁。按钮全部来自快照，handlers 只替换点击后做什么。 */
+export function TaskActionBar({
+  actions,
+  handlers,
+  align,
+}: {
+  actions: CardActions;
+  handlers?: Partial<Record<CommandType, () => Promise<void> | void>>;
+  align?: "end";
+}) {
+  const plan = actionPlan(actions.taskActions, actions.waitingFor, actions.role);
+  return (
+    <>
+      {plan.mine.length > 0 && (
+        <div className="card-actions" style={align === "end" ? { justifyContent: "flex-end" } : undefined}>
+          {plan.mine.map((a) => (
+            <ActionButton key={a.command} action={a} run={actions.run} onClick={handlers?.[a.command]} />
+          ))}
+        </div>
+      )}
+      {plan.handoff && <Handoff handoff={plan.handoff} onRole={actions.onRole} />}
+    </>
+  );
 }
 
 export function PauseCard({ card, actions }: { card: Extract<ChatCard, { kind: "pause" }>; actions: CardActions }) {
-  const { pause } = card;
-  const operator = card.state === "awaiting_operator";
-  const title = operator ? (pause.code === "tool_failed" ? "工具调用失败" : "任务已暂停，需要人工处理") : "需要发起人补充";
   if (!card.active) {
     return (
       <div className="card muted">
-        <ExclamationCircleFilled /> {title}：{pause.message}（已处理）
+        <ExclamationCircleFilled /> {STATE_LABELS[card.state]}：{card.pause.message}（已处理）
       </div>
     );
   }
+  const pause: PauseView = actions.pause ?? card.pause;
+  const operator = card.state === "awaiting_operator";
   return (
     <div className={`card ${operator ? "danger" : "warn"}`}>
-      <div className="pause-row">
-        <div>
-          <div className="card-title" style={{ color: operator ? "var(--danger)" : "var(--warn)" }}>
-            <ExclamationCircleFilled /> {title}
-          </div>
-          <div className="card-body">{pause.message}</div>
-        </div>
-        {operator && (
-          <Space>
-            <CommandButton cmd="retry" actions={actions} options={pause.options} primary />
-            <CommandButton cmd="terminate" actions={actions} options={pause.options} />
-          </Space>
-        )}
+      <div className="card-title" style={{ color: operator ? "var(--danger)" : "var(--warn)" }}>
+        <ExclamationCircleFilled /> {pause.title ?? STATE_LABELS[card.state]}
       </div>
-      {!operator && (
+      <div className="card-body">{pause.message}</div>
+      {pause.resolution && <div className="card-body">{pause.resolution}</div>}
+      <TaskActionBar actions={actions} handlers={{ supplement: actions.openSupplement }} />
+      {needsModelSettings(pause) && (
         <div className="card-actions">
-          {pause.options.includes("supplement") && (
-            <CommandButton cmd="supplement" actions={actions} options={pause.options} primary onClick={actions.openSupplement} />
-          )}
-          {pause.options.includes("continue_without_minutes") && <CommandButton cmd="continue_without_minutes" actions={actions} options={pause.options} />}
-          {pause.options.includes("continue_with_partial") && <CommandButton cmd="continue_with_partial" actions={actions} options={pause.options} />}
-          {pause.options.includes("terminate") && <CommandButton cmd="terminate" actions={actions} options={pause.options} />}
+          <Button icon={<SettingOutlined />} onClick={actions.openSettings}>
+            打开模型设置
+          </Button>
         </div>
       )}
     </div>
@@ -174,6 +180,9 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
       </div>
     );
   }
+  // 普通待审核的说明就是这张卡本身；超范围意见要说清为什么回到这里
+  const pause = actions.pause?.code === "awaiting_review" ? undefined : actions.pause;
+  const canReturn = actions.taskActions.some((a) => a.command === "return" && a.roles.includes(actions.role));
   return (
     <div className="card">
       <div className="card-title">
@@ -188,34 +197,42 @@ export function ReviewCard({ card, actions }: { card: Extract<ChatCard, { kind: 
           </Button>
         )}
       </div>
-      <div className="card-body">
-        <div>退回涉及章节（可选）</div>
-        <Checkbox.Group className="section-grid" options={actions.sections.map((s) => ({ label: s.heading, value: s.id }))} value={picked} onChange={(v) => setPicked(v as string[])} />
-        <div>退回意见</div>
-        <Input.TextArea
-          rows={3}
-          maxLength={500}
-          showCount
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="写明需要修改的地方…"
-          style={{ marginTop: 6 }}
-        />
-      </div>
-      <div className="card-actions" style={{ justifyContent: "flex-end" }}>
-        <CommandButton
-          cmd="return"
-          actions={actions}
-          onClick={async () => {
+      {pause && (
+        <div className="card-body review-pause">
+          <b>{pause.title}</b>
+          <div>{pause.message}</div>
+          {pause.resolution && <div>{pause.resolution}</div>}
+        </div>
+      )}
+      {canReturn && (
+        <div className="card-body">
+          <div>退回涉及章节（可选）</div>
+          <Checkbox.Group className="section-grid" options={actions.sections.map((s) => ({ label: s.heading, value: s.id }))} value={picked} onChange={(v) => setPicked(v as string[])} />
+          <div>退回意见</div>
+          <Input.TextArea
+            rows={3}
+            maxLength={500}
+            showCount
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="写明需要修改的地方…"
+            style={{ marginTop: 6 }}
+          />
+        </div>
+      )}
+      <TaskActionBar
+        actions={actions}
+        align="end"
+        handlers={{
+          return: async () => {
             if (!comment.trim()) {
               message.warning("请填写退回意见");
               return;
             }
             await actions.run({ type: "return", comment: comment.trim(), sections: picked.length ? picked : undefined });
-          }}
-        />
-        <CommandButton cmd="approve" actions={actions} primary />
-      </div>
+          },
+        }}
+      />
     </div>
   );
 }
