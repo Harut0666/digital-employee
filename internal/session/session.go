@@ -71,7 +71,9 @@ type Deps struct {
 	Preflight func() error
 	// Knowledge 知识库的只读工具；员工的 frontdesk.md 勾选了才开放给前台 Agent。nil 表示没有知识库
 	Knowledge contract.ToolClient
-	Now       func() time.Time
+	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
+	Filing FilingSource
+	Now    func() time.Time
 }
 
 // Manager 会话模块的入口。
@@ -146,7 +148,7 @@ func (m *Manager) Get(id string) (*Detail, error) {
 	}
 	messages := visibleMessages(current.messages)
 	if current.taskID != "" {
-		if messages, err = m.withTask(messages, current.taskID); err != nil {
+		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
 			return nil, err
 		}
 	}
@@ -393,7 +395,7 @@ func (m *Manager) getLegacy(id string) (*Detail, error) {
 		if summary.ID != taskID {
 			continue
 		}
-		messages, err := m.withTask(nil, taskID)
+		messages, err := m.withTask(nil, taskID, nil)
 		if err != nil {
 			return nil, err
 		}

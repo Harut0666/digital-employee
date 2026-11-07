@@ -75,6 +75,13 @@ type harnessConfig struct {
 	wrapTools     func(contract.ToolClient) contract.ToolClient
 	qc            qcRunner
 	crashAtStep   string
+	// extraEmployees 经营周报员工之外，再复制进工作区的员工
+	extraEmployees []string
+}
+
+// withEmployee 再复制一个仓库里的员工进工作区（比如知识库问答员工）。
+func withEmployee(id string) harnessOption {
+	return func(config *harnessConfig) { config.extraEmployees = append(config.extraEmployees, id) }
 }
 
 // qcRunner 质检引擎的形状，测试用它包住真实质检。
@@ -163,6 +170,9 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	employees := filepath.Join(workspace, "employees")
 	copyEmployee(t, repoPath("employees", harnessEmployee), filepath.Join(employees, harnessEmployee))
 	editWorkflow(t, filepath.Join(employees, harnessEmployee, "workflow.yaml"), config.workflowEdits)
+	for _, id := range config.extraEmployees {
+		copyEmployee(t, repoPath("employees", id), filepath.Join(employees, id))
+	}
 
 	env := config.env
 	if env == nil {

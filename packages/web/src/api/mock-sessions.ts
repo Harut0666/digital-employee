@@ -26,6 +26,8 @@ interface MockSession {
   employee?: string;
   taskId?: string;
   draft?: Record<string, unknown>;
+  /** 入库卡片上起草的描述（模拟模式不调模型，按任务标题拼一句） */
+  filingDraft?: string;
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -35,7 +37,12 @@ interface MockSession {
 const LEGACY = "task-";
 const PAUSED = new Set(["awaiting_initiator", "awaiting_operator", "awaiting_review"]);
 
-export function createMockSessions(employees: EmployeeInfo[], getRole: () => UiRole, tasks: TaskBackend): SessionApi {
+export function createMockSessions(
+  employees: EmployeeInfo[],
+  getRole: () => UiRole,
+  tasks: TaskBackend,
+  knowledge?: { filedFrom(taskId: string): string | undefined },
+): SessionApi {
   const sessions = new Map<string, MockSession>();
   let counter = 0;
 
@@ -99,11 +106,28 @@ export function createMockSessions(employees: EmployeeInfo[], getRole: () => UiR
     }
   }
 
-  async function withTask(messages: SessionMessage[], taskId: string): Promise<SessionMessage[]> {
+  async function withTask(messages: SessionMessage[], taskId: string, s?: MockSession): Promise<SessionMessage[]> {
     const events = await tasks.getEvents(taskId);
-    const merged = [...messages.map((m) => ({ ...m })), ...events.flatMap((e) => project(e) ?? [])];
-    merged.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
     const snapshot = await tasks.getTask(taskId);
+    const title = (await summaryOf(taskId))?.title;
+    // 交付之后紧跟一张入库确认卡片（和 internal/session/cards.go 的 filingMessage 一致）
+    const filing = (ev: TaskEvent): SessionMessage[] =>
+      knowledge && ev.type === "state_changed" && ev.to === "delivered"
+        ? [
+            {
+              id: `t${ev.seq}-filing`,
+              seq: ev.seq,
+              ts: ev.ts,
+              kind: "card",
+              card: { type: "knowledge_filing", taskId, atSeq: ev.seq, title, description: s?.filingDraft, filed: knowledge.filedFrom(taskId) },
+            },
+          ]
+        : [];
+    const merged = [...messages.map((m) => ({ ...m })), ...events.flatMap((e) => {
+      const projected = project(e);
+      return projected ? [projected, ...filing(e)] : filing(e);
+    })];
+    merged.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
     attachActions(merged, snapshot, events);
     return merged;
   }
@@ -182,7 +206,7 @@ export function createMockSessions(employees: EmployeeInfo[], getRole: () => UiR
       const s = sessions.get(id);
       if (!s) throw new Error(`会话不存在：${id}`);
       const messages = s.messages.filter((m) => m.kind !== "tool_called");
-      return { ...(await view(s)), messages: s.taskId ? await withTask(messages, s.taskId) : messages };
+      return { ...(await view(s)), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
     },
 
     async createSession() {
@@ -248,6 +272,17 @@ export function createMockSessions(employees: EmployeeInfo[], getRole: () => UiR
       s.taskId = snapshot.id;
       const res = await tasks.command(snapshot.id, { type: "submit" });
       if (!res.ok) return fail(res.error, res.message);
+      return reply(s, []);
+    },
+
+    async draftFiling(id) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以把交付物放进知识库");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const task = s.taskId ? await tasks.getTask(s.taskId) : undefined;
+      if (!task || task.state !== "delivered") return fail("illegal_transition", "任务交付之后才能放进知识库");
+      const title = (await summaryOf(task.id))?.title ?? task.id;
+      s.filingDraft = `${title}（模拟模式按标题起草的描述，请按实际内容修改）`;
       return reply(s, []);
     },
 

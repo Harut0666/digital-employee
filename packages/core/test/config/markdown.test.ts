@@ -60,9 +60,16 @@ describe("frontdesk.md：人设 + 只读工具", () => {
     expect(formatFrontdesk(doc)).toBe(weeklyFrontdesk);
   });
 
-  test("没有该段落时按契约默认只读工具；保存时补上段落", () => {
+  test("知识库工具可以勾选，解析和拼回都不会丢", () => {
+    const text = "# 人格\n\n## 开放给你的只读工具\n\n- kb_search：搜索知识库索引\n- kb_read：读取知识库正文\n";
+    const doc = parseFrontdesk(text);
+    expect(doc.tools).toEqual(["kb_search", "kb_read"]);
+    expect(formatFrontdesk(doc)).toBe(text);
+  });
+
+  test("没有该段落时只开放任务查询，知识库要明确勾选", () => {
     const doc = parseFrontdesk("# 人格\n\n说话简短。\n");
-    expect(doc.tools).toEqual(FRONTDESK_READONLY_TOOLS.map((t) => t.name));
+    expect(doc.tools).toEqual(["query_task"]);
     const formatted = formatFrontdesk({ ...doc, tools: ["query_task"] });
     expect(formatted).toContain("## 开放给你的只读工具");
     expect(parseFrontdesk(formatted).body).toBe("# 人格\n\n说话简短。\n");

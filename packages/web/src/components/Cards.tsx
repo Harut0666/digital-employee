@@ -16,9 +16,10 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeInfo, PauseView, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { FormCard } from "./FormCard";
+import { FilingCard } from "./FilingCard";
 
 export interface CardActions {
   role: UiRole;
@@ -46,6 +47,11 @@ export interface SessionActions {
   confirmEmployee: (employee: string) => Promise<void>;
   upload: (files: File[]) => Promise<void>;
   submit: (form: Record<string, unknown>) => Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述 */
+  draftFiling: () => Promise<void>;
+  /** 入库卡片：人确认后放进知识库 */
+  fileKnowledge: (filing: KnowledgeFiling) => Promise<void>;
+  openKnowledge: () => void;
 }
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -359,5 +365,7 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <ReturnConfirmCard key={item.key} item={item} actions={actions} />;
     case "delivered":
       return <DeliveredCard key={item.key} item={item} actions={actions} />;
+    case "filing":
+      return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
   }
 }

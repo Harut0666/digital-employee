@@ -10,6 +10,7 @@ import (
 
 	"digital-employee/internal/contract"
 	"digital-employee/internal/knowledge"
+	"digital-employee/internal/session"
 )
 
 // knowledgeErrorStatus 知识库错误码 → HTTP 状态码（通用错误码走 statusOf）。
@@ -100,6 +101,40 @@ func (s *Server) defaultKnowledgeTitle(snapshot *contract.TaskSnapshot, kind con
 		return strings.TrimSuffix(name, filepath.Ext(name))
 	}
 	return ""
+}
+
+// filingSource 入库卡片读知识库的那一面：会话模块只依赖 session.FilingSource。
+type filingSource struct{ server *Server }
+
+func (f filingSource) delivered(taskID string) (*contract.TaskSnapshot, bool) {
+	if f.server.engine() == nil {
+		return nil, false
+	}
+	snapshot, found := f.server.engine().Get(taskID)
+	if !found || snapshot.State != contract.StateDelivered || !knowledge.Fileable(snapshot) {
+		return nil, false
+	}
+	return snapshot, true
+}
+
+func (f filingSource) Offer(taskID string) (session.FilingOffer, bool) {
+	snapshot, ok := f.delivered(taskID)
+	if !ok {
+		return session.FilingOffer{}, false
+	}
+	filed, err := f.server.knowledge.FiledFrom(taskID)
+	if err != nil {
+		filed = ""
+	}
+	return session.FilingOffer{Title: f.server.defaultKnowledgeTitle(snapshot, ""), Filed: filed}, true
+}
+
+func (f filingSource) Text(taskID string) (string, error) {
+	snapshot, ok := f.delivered(taskID)
+	if !ok {
+		return "", fmt.Errorf("任务没有可入库的交付物：%s", taskID)
+	}
+	return knowledge.DeliverableText(snapshot)
 }
 
 // handleReadKnowledge 查看一个条目：索引字段加正文。

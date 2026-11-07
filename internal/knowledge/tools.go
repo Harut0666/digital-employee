@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"unicode"
 
 	"digital-employee/internal/contract"
 )
@@ -22,7 +23,7 @@ type Hit struct {
 	CreatedAt      string   `json:"createdAt"`
 }
 
-// Search 用关键词匹配标题、描述和标签，命中关键词多的在前，同样多时新的在前。查询为空时列出全部条目。
+// Search 用关键词匹配标题、描述和标签，命中分数高的在前，同样高时新的在前。查询为空时列出全部条目。
 func (s *Store) Search(query string) ([]Hit, error) {
 	entries, err := s.List()
 	if err != nil {
@@ -39,9 +40,7 @@ func (s *Store) Search(query string) ([]Hit, error) {
 		haystack := strings.ToLower(entry.Title + "\n" + entry.Description + "\n" + strings.Join(entry.Tags, "\n"))
 		score := 0
 		for _, keyword := range keywords {
-			if strings.Contains(haystack, keyword) {
-				score++
-			}
+			score += keywordScore(haystack, keyword)
 		}
 		if len(keywords) > 0 && score == 0 {
 			continue
@@ -64,6 +63,31 @@ func (s *Store) Search(query string) ([]Hit, error) {
 	return hits, nil
 }
 
+// wholeKeyword 整个关键词命中的分数，远高于零散的两字片段。
+const wholeKeyword = 10
+
+// keywordScore 一个关键词的命中分数。中文不按空格分词，模型常把整句当关键词：
+// 整句没命中时，按相邻两个字（含汉字的片段）逐一匹配，每命中一段记 1 分。
+func keywordScore(haystack, keyword string) int {
+	if strings.Contains(haystack, keyword) {
+		return wholeKeyword
+	}
+	runes := []rune(keyword)
+	seen := map[string]bool{}
+	score := 0
+	for index := 0; index+1 < len(runes); index++ {
+		if !unicode.Is(unicode.Han, runes[index]) && !unicode.Is(unicode.Han, runes[index+1]) {
+			continue
+		}
+		pair := string(runes[index : index+2])
+		if !seen[pair] && strings.Contains(haystack, pair) {
+			score++
+		}
+		seen[pair] = true
+	}
+	return score
+}
+
 // Descriptors 两个知识库工具的描述，判断步骤和前台 Agent 共用。
 func Descriptors() []contract.ToolDescriptor {
 	return []contract.ToolDescriptor{
@@ -73,7 +97,7 @@ func Descriptors() []contract.ToolDescriptor {
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query": map[string]any{"type": "string", "description": "关键词，多个用空格分开；留空列出全部条目"},
+					"query": map[string]any{"type": "string", "description": "两三个短关键词，用空格分开，例如“周报 44”，不要整句；留空列出全部条目"},
 				},
 			},
 		},

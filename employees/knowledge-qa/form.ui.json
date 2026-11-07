@@ -1,0 +1,8 @@
+{
+  "ui:order": ["question"],
+  "question": {
+    "ui:widget": "textarea",
+    "ui:options": { "rows": 3 },
+    "ui:placeholder": "例如：第 44 周周报里杭州湖滨店怎么了"
+  }
+}

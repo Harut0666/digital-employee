@@ -7,6 +7,7 @@ import { treaty } from "@elysiajs/eden";
 import type { TaskEvent, TaskEventType } from "@de/core/contract";
 import type { App } from "@de/server";
 import { createConfigApi } from "./config";
+import { createKnowledgeApi } from "./knowledge";
 import { createSessionApi } from "./sessions";
 import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PublicSampleInfo, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
@@ -123,6 +124,9 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
 
     // ---- 会话 ----
     ...createSessionApi(origin, getRole),
+
+    // ---- 知识库 ----
+    ...createKnowledgeApi(origin, getRole),
   };
 }
 

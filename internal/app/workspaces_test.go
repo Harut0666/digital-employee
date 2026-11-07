@@ -356,7 +356,8 @@ func TestSwitchingMovesSettingsEmployeesAndTasksToTheChosenWorkspace(t *testing.
 	if names := a.connectionNames(); slices.Contains(names, "华东专线") {
 		t.Fatalf("新工作区的设置不应有旧工作区的连接：%v", names)
 	}
-	if names := a.employeeNames(); !slices.Equal(names, []string{"经营周报员工"}) {
+	// 新工作区释放的是默认员工配置，不带旧工作区里改过的名字
+	if names := a.employeeNames(); !slices.Contains(names, "经营周报员工") || slices.Contains(names, "华东周报员工") {
 		t.Fatalf("新工作区的员工应是默认配置：%v", names)
 	}
 
@@ -367,7 +368,7 @@ func TestSwitchingMovesSettingsEmployeesAndTasksToTheChosenWorkspace(t *testing.
 	if names := a.connectionNames(); !slices.Contains(names, "华东专线") {
 		t.Fatalf("切回来旧连接应还在：%v", names)
 	}
-	if names := a.employeeNames(); !slices.Equal(names, []string{"华东周报员工"}) {
+	if names := a.employeeNames(); !slices.Contains(names, "华东周报员工") || slices.Contains(names, "经营周报员工") {
 		t.Fatalf("切回来改过的员工应还在：%v", names)
 	}
 }

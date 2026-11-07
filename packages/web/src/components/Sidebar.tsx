@@ -1,16 +1,17 @@
 import { useState } from "react";
 import { Segmented, Select, Tooltip } from "antd";
-import { DownOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { BookOutlined, DownOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Button } from "antd";
 import { WorkspacePicker } from "./WorkspacePicker";
 import type { SessionSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
 import { groupSessions, groupTodos } from "../view/session-groups";
 
-export type Selection = { kind: "new" } | { kind: "session"; id: string } | { kind: "page"; page: "config" | "settings" };
+export type Selection = { kind: "new" } | { kind: "session"; id: string } | { kind: "page"; page: "config" | "settings" | "knowledge" };
 
 // 事件回放界面已取消（回放保留在命令行 `de replay`）；任务的执行过程改由对话框顶部的“轨迹”展示。
 const PAGES = [
+  { page: "knowledge", label: "知识库", icon: <BookOutlined /> },
   { page: "config", label: "员工配置", icon: <ToolOutlined /> },
   { page: "settings", label: "设置", icon: <SettingOutlined /> },
 ] as const;

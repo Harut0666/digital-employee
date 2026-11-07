@@ -37,7 +37,19 @@ export type ChatItem =
   | (ItemBase & { kind: "review_notice"; pause?: PauseView; active: boolean })
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
-  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] });
+  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
+  | (ItemBase & {
+      kind: "filing";
+      taskId: string;
+      title: string;
+      description: string;
+      draftFailed: boolean;
+      filed?: string;
+      /** 还没入库：可以改描述并确认 */
+      active: boolean;
+      /** 能请模型起草描述（只读会话不能写会话日志） */
+      canDraft: boolean;
+    });
 
 /** 会话绑定的任务现状（取自任务快照），用来在交付后给出交付物 */
 export interface ChatTask {
@@ -57,6 +69,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
   const lastConfirm = lastIndex((c) => c.type === "employee_confirm");
   const lastDraftForm = lastIndex((c) => c.type === "form" && !c.submitted);
   const writable = !session.readOnly;
+  // 入库确认卡片排在交付物之后：先能下载，再决定要不要入库
+  const filings: ChatItem[] = [];
 
   session.messages.forEach((m, index) => {
     const base = { key: m.id, ts: m.ts };
@@ -71,7 +85,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
         items.push({ ...base, kind: "notice", text: m.text ?? "" });
         break;
       case "card":
-        if (m.card) items.push(cardItem(base, m.card, index));
+        if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
+        else if (m.card) items.push(cardItem(base, m.card, index));
         break;
       default:
         // 工具留痕和模型失败只进会话日志，不进对话
@@ -82,7 +97,22 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
     const ts = session.messages.at(-1)?.ts ?? session.updatedAt;
     items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
   }
+  items.push(...filings);
   return items;
+
+  function filingItem(base: ItemBase, card: SessionCard): ChatItem {
+    return {
+      ...base,
+      kind: "filing",
+      taskId: card.taskId ?? session.taskId ?? "",
+      title: card.title ?? "",
+      description: card.description ?? "",
+      draftFailed: card.draftFailed ?? false,
+      filed: card.filed,
+      active: !card.filed,
+      canDraft: writable,
+    };
+  }
 
   function cardItem(base: ItemBase, card: SessionCard, index: number): ChatItem {
     const actions = card.actions ?? [];
@@ -118,6 +148,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
         const giveBack = actions.filter((a) => a.command === "return");
         return { ...base, kind: "return_confirm", actions: giveBack, active: giveBack.length > 0, comment: card.comment, sections: card.sections };
       }
+      case "knowledge_filing":
+        return filingItem(base, card);
     }
   }
 }

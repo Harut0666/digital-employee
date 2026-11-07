@@ -57,6 +57,25 @@ func deliverable(task *contract.TaskSnapshot, kind contract.DeliverableKind) (*c
 	return nil, failure(contract.ErrNotFound, "任务没有可入库的交付物：%s", kind)
 }
 
+// Fileable 任务里有没有能放进知识库的交付物（检验记录不算）。不看任务状态。
+func Fileable(task *contract.TaskSnapshot) bool {
+	_, err := deliverable(task, "")
+	return err == nil
+}
+
+// DeliverableText 要入库的交付物的正文，给模型起草描述用。
+func DeliverableText(task *contract.TaskSnapshot) (string, error) {
+	ref, err := deliverable(task, "")
+	if err != nil {
+		return "", err
+	}
+	content, err := os.ReadFile(ref.Path)
+	if err != nil {
+		return "", failure(contract.ErrNotFound, "交付物文件不见了：%s", filepath.Base(ref.Path))
+	}
+	return extractText(filepath.Base(ref.Path), content)
+}
+
 func cleanTags(tags []string) []string {
 	out := []string{}
 	seen := map[string]bool{}
