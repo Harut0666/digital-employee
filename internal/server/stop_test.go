@@ -73,8 +73,8 @@ func (m *heldModel) Resolve(stepID string, ref *contract.ModelRef) (*agent.Resol
 	return resolved, nil
 }
 
-// submit 发起人提交，不等任务停稳。
-func (h *harness) submit(taskID string) {
+// submitTask 发起人提交任务，不等任务停稳。
+func (h *harness) submitTask(taskID string) {
 	h.t.Helper()
 	if reply := h.tryCommand(taskID, initiator, cmd(contract.CmdSubmit)); !reply.OK {
 		h.t.Fatalf("提交被拒绝：%+v", reply)
@@ -129,7 +129,7 @@ func TestInitiatorStopsTaskDuringModelCall(t *testing.T) {
 	model, holding := holdModel("match_causes", false)
 	h := newHarness(t, caseScript(t, "A-01"), holding)
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, model.entered, "模型调用开始")
 
 	running := h.snapshot(task.ID)
@@ -145,7 +145,7 @@ func TestLateModelResultIsDiscardedAfterStop(t *testing.T) {
 	model, holding := holdModel("match_causes", true)
 	h := newHarness(t, caseScript(t, "A-01"), holding)
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, model.entered, "模型调用开始")
 
 	h.stop(task.ID)
@@ -165,7 +165,7 @@ func TestOnlyInitiatorStopsRunningTask(t *testing.T) {
 	model, holding := holdModel("match_causes", false)
 	h := newHarness(t, caseScript(t, "A-01"), holding)
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, model.entered, "模型调用开始")
 
 	refused := h.tryCommand(task.ID, operator, cmd(contract.CmdTerminate))
@@ -217,7 +217,7 @@ func TestInitiatorStopsTaskDuringToolCall(t *testing.T) {
 			tool, holding := holdTool(stage.tool)
 			h := newHarness(t, caseScript(t, "A-01"), holding)
 			task := h.createTask(a01Files(t))
-			h.submit(task.ID)
+			h.submitTask(task.ID)
 			waitFor(t, tool.entered, "工具调用开始")
 
 			running := h.snapshot(task.ID)
@@ -252,7 +252,7 @@ func TestInitiatorStopsTaskDuringQc(t *testing.T) {
 	held := &heldQC{entered: make(chan struct{}), release: make(chan struct{})}
 	h := newHarness(t, caseScript(t, "A-01"), withQC(held))
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, held.entered, "质检开始")
 
 	running := h.snapshot(task.ID)
@@ -273,7 +273,7 @@ func TestStopInterruptsToolRetryWait(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"), withWorkflowEdit("backoffMs: [0]", "backoffMs: [600000]"))
 	h.setToolFaults(map[string]string{contract.ToolLoadSales: "error"})
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	h.waitForEvent(task.ID, func(event contract.TaskEvent) bool {
 		return event.Type == contract.EventToolResult && event.OK != nil && !*event.OK
 	})
@@ -321,7 +321,7 @@ func TestStoppedTaskStaysStoppedAfterRestart(t *testing.T) {
 	model, holding := holdModel("match_causes", false)
 	h := newHarness(t, caseScript(t, "A-01"), holding)
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, model.entered, "模型调用开始")
 	h.stop(task.ID)
 	h.expectStopped(task.ID)
@@ -346,7 +346,7 @@ func TestCrashedTaskResumesAfterRestartAndCanBeStopped(t *testing.T) {
 	script := caseScript(t, "A-01")
 	h := newHarness(t, script, withCrashAt("match_causes"))
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	var crash *engine.SimulatedCrash
 	if _, err := h.engine.WaitForSettled(task.ID); !errors.As(err, &crash) {
 		t.Fatalf("应该崩溃在 match_causes：%v", err)
@@ -402,7 +402,7 @@ func TestStopAbortsRealModelRequest(t *testing.T) {
 	})
 	h := newHarness(t, agent.ModelScript{}, withModel(func(agent.ModelProvider) agent.ModelProvider { return real }))
 	task := h.createTask(a01Files(t))
-	h.submit(task.ID)
+	h.submitTask(task.ID)
 	waitFor(t, entered, "模型请求到达")
 
 	h.stop(task.ID)
