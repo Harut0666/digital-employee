@@ -69,6 +69,8 @@ type Deps struct {
 	Execution func() *contract.ExecutionSettings
 	// Preflight 提交前检查：返回错误时任务不会创建
 	Preflight func() error
+	// Knowledge 知识库的只读工具；员工的 frontdesk.md 勾选了才开放给前台 Agent。nil 表示没有知识库
+	Knowledge contract.ToolClient
 	Now       func() time.Time
 }
 

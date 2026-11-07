@@ -14,12 +14,17 @@ const (
 	ToolQueryTask            = "query_task"
 	ToolWebSearch            = "web_search"
 	ToolAdminSetFaults       = "admin_set_faults"
+	// ToolKBSearch 知识库索引搜索：只返回标题、描述和标签（ADR-0005）
+	ToolKBSearch = "kb_search"
+	// ToolKBRead 按条目 ID 读知识库正文
+	ToolKBRead = "kb_read"
 )
 
 // ToolNames 全部工具名。
 var ToolNames = []string{
 	ToolValidateSubmission, ToolLoadSales, ToolComputeMetrics, ToolDetectContradictions,
 	ToolParseMinutes, ToolRenderReportDocx, ToolQueryTask, ToolWebSearch, ToolAdminSetFaults,
+	ToolKBSearch, ToolKBRead,
 }
 
 // AttachmentRef 工作区内的附件引用。

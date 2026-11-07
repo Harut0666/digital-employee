@@ -210,8 +210,5 @@ var FormParams = map[string]string{
 	"allowPartialPeriod":  "按已有数据继续",
 }
 
-// FrontdeskReadonlyTools 开放给前台 Agent 的只读工具。
-var FrontdeskReadonlyTools = []string{"query_task"}
-
 // FrontdeskFixedTools 前台 Agent 固定具备的草稿类工具。
 var FrontdeskFixedTools = []string{"fill_form_draft", "propose_card"}

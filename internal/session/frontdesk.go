@@ -358,12 +358,26 @@ func compactJSON(value any) string {
 	return string(raw)
 }
 
-// assistantTools 这个阶段开放的工具。
-func (t *turn) assistantTools(config *contract.EmployeeConfig) []tool {
-	if t.current.taskID != "" {
-		return []tool{t.queryTaskTool(), t.proposeCardTool()}
+// assistantTools 这个阶段开放的工具：固定的草稿类工具，加上 frontdesk.md 勾选的只读工具。
+func (t *turn) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
+	ticked := map[string]bool{}
+	for _, name := range contract.FrontdeskTools(config.Frontdesk) {
+		ticked[name] = true
 	}
-	return []tool{t.fillFormDraftTool(config), t.proposeCardTool()}
+	tools := []tool{}
+	if t.current.taskID != "" {
+		if ticked[contract.ToolQueryTask] {
+			tools = append(tools, t.queryTaskTool())
+		}
+		tools = append(tools, t.proposeCardTool())
+	} else {
+		tools = append(tools, t.fillFormDraftTool(config), t.proposeCardTool())
+	}
+	knowledge, err := t.knowledgeTools(ticked)
+	if err != nil {
+		return nil, err
+	}
+	return append(tools, knowledge...), nil
 }
 
 // unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。
@@ -389,7 +403,11 @@ func (t *turn) assist(ctx context.Context, conversation []agent.Message) error {
 	if err != nil {
 		return err
 	}
-	text, err := t.converse(ctx, t.assistantSystem(config), conversation, t.assistantTools(config))
+	tools, err := t.assistantTools(config)
+	if err != nil {
+		return err
+	}
+	text, err := t.converse(ctx, t.assistantSystem(config), conversation, tools)
 	switch {
 	case errors.Is(err, errModelUnavailable):
 		if err := t.write(Message{Kind: KindNotice, Text: t.unavailableText()}); err != nil {

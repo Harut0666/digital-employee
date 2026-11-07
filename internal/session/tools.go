@@ -2,6 +2,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
@@ -158,6 +159,40 @@ func (t *turn) proposeCardTool() tool {
 			return map[string]any{"sent": kind}, nil
 		},
 	}
+}
+
+// knowledgeTools 勾选了的知识库工具。读取结果由 call 写进会话日志。
+func (t *turn) knowledgeTools(ticked map[string]bool) ([]tool, error) {
+	client := t.manager.deps.Knowledge
+	if client == nil {
+		return nil, nil
+	}
+	descriptors, err := client.ListTools()
+	if err != nil {
+		return nil, err
+	}
+	tools := []tool{}
+	for _, descriptor := range descriptors {
+		if !ticked[descriptor.Name] {
+			continue
+		}
+		name := descriptor.Name
+		parameters, _ := descriptor.InputSchema.(map[string]any)
+		tools = append(tools, tool{
+			spec: agent.ToolSpec{Name: name, Description: descriptor.Description, Parameters: parameters},
+			run: func(arguments map[string]any) (any, error) {
+				result, err := client.Call(name, arguments)
+				if err != nil {
+					return nil, err
+				}
+				if !result.OK {
+					return nil, errors.New(result.Error)
+				}
+				return result.Data, nil
+			},
+		})
+	}
+	return tools, nil
 }
 
 func (t *turn) fillFormDraftTool(config *contract.EmployeeConfig) tool {
