@@ -4,10 +4,8 @@ import validator from "@rjsf/validator-ajv8";
 import { getDefaultFormState } from "@rjsf/utils";
 import type { RJSFSchema } from "@rjsf/utils";
 import { Button, Upload } from "antd";
-import { CheckCircleFilled, CloseCircleFilled, InboxOutlined, SendOutlined, MinusCircleOutlined } from "@ant-design/icons";
-import type { PauseReason } from "@de/core/contract";
+import { InboxOutlined, SendOutlined } from "@ant-design/icons";
 import type { EmployeeInfo, UploadItem } from "../api";
-import { computePrecheck, missingKeysOfPause } from "../view/precheck";
 import { stripFileFields, uploadSlots, type UploadSlotDef } from "../view/upload-slots";
 import { FORM_FIELDS } from "./WeekField";
 
@@ -35,29 +33,11 @@ export function UploadBox({ def, files, onChange }: { def: UploadSlotDef; files:
   );
 }
 
-export function PrecheckList({ items, missing }: { items: ReturnType<typeof computePrecheck>; missing: string[] }) {
-  return (
-    <div className="panel-card">
-      <h4>准入预检</h4>
-      {items.map((i) => {
-        const red = !i.ok && missing.includes(i.key);
-        return (
-          <div key={i.key} className={`check-row ${red ? "missing" : ""}`}>
-            {i.ok ? <CheckCircleFilled style={{ color: "var(--primary)" }} /> : red ? <CloseCircleFilled /> : <MinusCircleOutlined style={{ color: "#b8c0c9" }} />}
-            {i.label}
-            <span className="state">{i.ok ? "已就绪" : red ? "缺失" : "待上传"}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
+// 材料对不对由服务端的准入校验判定，暂停说明会写明缺什么；这里不再按文件名猜。
 export function LaunchPanel({
   employee,
   mode,
   initialForm,
-  pause,
   submitting,
   disabled,
   onSubmit,
@@ -65,7 +45,6 @@ export function LaunchPanel({
   employee: EmployeeInfo;
   mode: "launch" | "supplement";
   initialForm?: Record<string, unknown>;
-  pause?: PauseReason;
   submitting: boolean;
   disabled?: boolean;
   onSubmit: (form: Record<string, unknown>, uploads: UploadItem[]) => void;
@@ -80,15 +59,7 @@ export function LaunchPanel({
   const [files, setFiles] = useState<Record<string, File[]>>({});
   const formRef = useRef<{ validateForm: () => boolean }>(null);
 
-  const precheck = useMemo(() => {
-    const all = (s: string) => (files[s] ?? []).map((f) => ({ name: f.name }));
-    const period = (formData as { period?: { year: number; week: number } }).period;
-    // 预检按文件字段名取（经营周报员工：salesFile、minutesFiles）
-    return computePrecheck({ period, sales: all("salesFile"), minutes: all("minutesFiles") });
-  }, [files, formData]);
-
   const uploads: UploadItem[] = slots.flatMap((s) => (files[s.slot] ?? []).map((file) => ({ slot: s.slot, file })));
-  const missing = pause ? missingKeysOfPause(pause.code) : [];
 
   return (
     <div>
@@ -110,7 +81,6 @@ export function LaunchPanel({
       {slots.map((s) => (
         <UploadBox key={s.slot} def={s} files={files[s.slot] ?? []} onChange={(f) => setFiles((prev) => ({ ...prev, [s.slot]: f }))} />
       ))}
-      {employee.id === "weekly-report" && <PrecheckList items={precheck} missing={missing} />}
       <Button
         type="primary"
         size="large"

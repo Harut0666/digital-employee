@@ -13,6 +13,8 @@ export interface SessionApi {
   uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
   /** form 省略时用草稿 */
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
+  /** 发起人在开工清单上确认跳过一项可跳过项 */
+  skipChecklistItem(id: string, item: string): Promise<SessionResult>;
   /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
   draftFiling(id: string): Promise<SessionResult>;
   /** 提交前检查：默认模型连接有没有可用 Key */
@@ -59,6 +61,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       return act(session(id, "/attachments"), form, false);
     },
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
+    skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
     preflight: () => read<PreflightResult>(url("preflight")),
   };

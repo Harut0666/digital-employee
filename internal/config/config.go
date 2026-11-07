@@ -142,7 +142,80 @@ func LoadEmployeeConfig(dir string) (*contract.EmployeeConfig, error) {
 		}
 		cfg.FormUI = ui
 	}
+	cfg.Checklist = []contract.ChecklistItem{}
+	if text, err := readText(filepath.Join(root, ChecklistFile)); err == nil {
+		checklist, problems := ParseChecklist(text, cfg.FormSchema)
+		if len(problems) > 0 {
+			return nil, errors.New(problems[0])
+		}
+		cfg.Checklist = checklist.Items
+	}
 	return cfg, nil
+}
+
+// ChecklistFile 开工清单的配置文件名。
+const ChecklistFile = "checklist.yaml"
+
+// ParseChecklist 解析并校验 checklist.yaml；formSchema 用来检查引用的表单字段是否存在。
+func ParseChecklist(text string, formSchema map[string]any) (*contract.ChecklistConfig, []string) {
+	var checklist contract.ChecklistConfig
+	if err := yaml.Unmarshal([]byte(text), &checklist); err != nil {
+		return nil, []string{"checklist.yaml 不是合法的 YAML：" + err.Error()}
+	}
+	if checklist.Items == nil {
+		checklist.Items = []contract.ChecklistItem{}
+	}
+	return &checklist, ChecklistProblems(checklist.Items, formSchema)
+}
+
+// ChecklistProblems 开工清单的契约校验。
+func ChecklistProblems(items []contract.ChecklistItem, formSchema map[string]any) []string {
+	properties, _ := formSchema["properties"].(map[string]any)
+	hasField := func(name string) bool {
+		_, ok := properties[name]
+		return ok
+	}
+	problems := []string{}
+	seen := map[string]bool{}
+	for index, item := range items {
+		where := fmt.Sprintf("checklist.yaml：items[%d]", index)
+		if item.ID == "" {
+			problems = append(problems, where+" 缺少 id")
+		} else if seen[item.ID] {
+			problems = append(problems, fmt.Sprintf("checklist.yaml：id %q 重复", item.ID))
+		}
+		seen[item.ID] = true
+		if strings.TrimSpace(item.Label) == "" {
+			problems = append(problems, where+" 缺少 label")
+		}
+		switch item.Source {
+		case contract.ChecklistSourceUpload:
+			if len(item.Accept) == 0 {
+				problems = append(problems, where+" 判定来源是上传文件，accept 至少要有一个扩展名")
+			}
+			for _, extension := range item.Accept {
+				if !strings.HasPrefix(extension, ".") {
+					problems = append(problems, fmt.Sprintf("%s 的扩展名 %q 要以点开头，如 .xlsx", where, extension))
+				}
+			}
+		case contract.ChecklistSourceField:
+			if item.Field == "" {
+				problems = append(problems, where+" 判定来源是表单字段，必须写 field")
+			} else if !hasField(item.Field) {
+				problems = append(problems, fmt.Sprintf("%s 的 field %q 不在表单字段里", where, item.Field))
+			}
+		default:
+			problems = append(problems, where+" 的 source 必须是 upload 或 field")
+		}
+		if item.SkipField != "" {
+			if item.Required {
+				problems = append(problems, where+" 是必需项，不能配 skipField")
+			} else if !hasField(item.SkipField) {
+				problems = append(problems, fmt.Sprintf("%s 的 skipField %q 不在表单字段里", where, item.SkipField))
+			}
+		}
+	}
+	return problems
 }
 
 // NormalizeRef 把配置里写的相对路径统一成配置表里的键（正斜杠，去掉开头的 ./）。

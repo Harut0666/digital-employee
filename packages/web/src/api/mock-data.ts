@@ -2,6 +2,7 @@
 
 import type { PauseCode, PauseReason, QcCheckResult, TaskEvent } from "@de/core/contract";
 import type { StepDef } from "../view/session-view";
+import type { ChecklistItemConfig } from "./mock-rules";
 import type { EmployeeInfo } from "./types";
 
 export const EMPLOYEES: EmployeeInfo[] = [
@@ -336,3 +337,12 @@ export const SEEDS: SeedTask[] = [
 ];
 
 
+
+/** 模拟员工的开工清单（对应 employees/<id>/checklist.yaml）；没有的员工开工不用备齐任何东西 */
+export const CHECKLISTS: Record<string, ChecklistItemConfig[]> = {
+  "weekly-report": [
+    { id: "period", label: "统计周期", required: true, source: "field", field: "period" },
+    { id: "sales", label: "销售明细", required: true, source: "upload", accept: [".xlsx", ".csv"] },
+    { id: "minutes", label: "本周纪要", required: false, source: "upload", accept: [".docx"], skipField: "allowMissingMinutes", skipLabel: "无纪要继续" },
+  ],
+};

@@ -2,7 +2,7 @@
 // 它只替模拟适配器扮演后端（对应 Go 的 internal/engine/actions.go 和 pause_text.go），视图层不许引用。
 
 import { PAUSED_STATES, STATE_LABELS, type TaskState } from "@de/core/contract";
-import type { CommandType, PauseView, TaskAction, UiRole } from "./types";
+import type { CommandType, PauseView, SessionChecklist, TaskAction, UiRole } from "./types";
 
 const COMMAND_LABELS: Record<CommandType, string> = {
   submit: "提交",
@@ -61,4 +61,49 @@ const PAUSE_TEXT: Partial<Record<PauseView["code"], [title: string, resolution: 
 export function pauseTextOf(state: TaskState, code: PauseView["code"]): { title: string; resolution: string } {
   const [title, resolution] = PAUSE_TEXT[code] ?? [STATE_LABELS[state], "请按说明处理。"];
   return { title, resolution };
+}
+
+// ---- 开工清单（对应 internal/session/checklist.go 的 evaluateChecklist） ----
+
+export interface ChecklistItemConfig {
+  id: string;
+  label: string;
+  required: boolean;
+  source: "upload" | "field";
+  accept?: string[];
+  field?: string;
+  skipField?: string;
+  skipLabel?: string;
+}
+
+const filled = (value: unknown): boolean => {
+  if (value === undefined || value === null) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).length > 0 && Object.values(value).every(filled);
+  return true;
+};
+
+/** 按上传的文件名和表单判定清单；只看传了没有、填了没有，内容问题留给准入校验 */
+export function evaluateChecklist(
+  items: ChecklistItemConfig[],
+  form: Record<string, unknown>,
+  files: readonly { name: string }[],
+  skipped: ReadonlySet<string>,
+): SessionChecklist {
+  const ext = (name: string) => (/\.[^.]+$/.exec(name)?.[0] ?? "").toLowerCase();
+  const out: SessionChecklist = { items: [], ready: true, missing: [] };
+  for (const item of items) {
+    const done =
+      item.source === "upload"
+        ? files.some((f) => (item.accept ?? []).some((a) => a.toLowerCase() === ext(f.name)))
+        : filled(form[item.field ?? ""]);
+    const status = done ? "done" : !item.required && skipped.has(item.id) ? "skipped" : "missing";
+    if (status === "missing" && item.required) {
+      out.ready = false;
+      out.missing.push(item.label);
+    }
+    out.items.push({ id: item.id, label: item.label, required: item.required, status, ...(item.required ? {} : { skipLabel: item.skipLabel ?? "跳过" }) });
+  }
+  return out;
 }
