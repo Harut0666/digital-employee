@@ -197,7 +197,7 @@ type frontdeskDoc struct {
 const (
 	dutiesHeading         = "岗位职责"
 	cautionsHeading       = "注意事项"
-	frontdeskToolsHeading = "开放给你的只读工具"
+	frontdeskToolsHeading = contract.FrontdeskToolsHeading
 )
 
 func headingName(line string) (string, bool) {
@@ -294,30 +294,18 @@ func joinSkill(sections skillSections, original string) string {
 	return strings.Join(out, "\n")
 }
 
-// frontdeskTools 前台 Agent 可勾选的只读工具。
-var frontdeskTools = []struct {
-	Name  string
-	Label string
-}{
-	{"query_task", "只读查询任务"},
+// frontdeskToolLabels 前台 Agent 可勾选的只读工具写回 frontdesk.md 时的说明（工具表见 contract.FrontdeskReadonlyTools）。
+var frontdeskToolLabels = map[string]string{
+	contract.ToolQueryTask: "只读查询任务",
+	contract.ToolKBSearch:  "搜索知识库索引",
+	contract.ToolKBRead:    "读取知识库正文",
 }
 
 func defaultFrontdeskTools() []string {
-	out := make([]string, 0, len(frontdeskTools))
-	for _, tool := range frontdeskTools {
-		out = append(out, tool.Name)
-	}
-	return out
+	return append([]string{}, contract.FrontdeskDefaultTools...)
 }
 
-func isFrontdeskTool(name string) bool {
-	for _, tool := range frontdeskTools {
-		if tool.Name == name {
-			return true
-		}
-	}
-	return false
-}
+func isFrontdeskTool(name string) bool { return contract.IsFrontdeskReadonlyTool(name) }
 
 func normalizeFrontdeskBody(lines []string) string {
 	text := strings.TrimRight(strings.Join(lines, "\n"), " \t\n\r")
@@ -328,38 +316,22 @@ func normalizeFrontdeskBody(lines []string) string {
 }
 
 func frontdeskToolLabel(name string) string {
-	for _, tool := range frontdeskTools {
-		if tool.Name == name {
-			return tool.Label
-		}
+	if label, ok := frontdeskToolLabels[name]; ok {
+		return label
 	}
 	return name
 }
 
-// parseFrontdesk frontdesk.md → 人设正文 + 只读工具。
+// parseFrontdesk frontdesk.md → 人设正文 + 只读工具。工具勾选的读法和会话里的前台 Agent 共用 contract.FrontdeskTools。
 func parseFrontdesk(text string) frontdeskDoc {
 	lines := strings.Split(text, "\n")
-	index := findHeading(lines, frontdeskToolsHeading)
-	if index < 0 {
-		return frontdeskDoc{Body: normalizeFrontdeskBody(lines), Tools: defaultFrontdeskTools()}
+	tools := contract.FrontdeskTools(text)
+	start, end, ok := contract.FrontdeskToolsSection(lines)
+	if !ok {
+		return frontdeskDoc{Body: normalizeFrontdeskBody(lines), Tools: tools}
 	}
-	end := nextHeading(lines, index+1)
-	tools := []string{}
-	pattern := regexp.MustCompile(`^\s*[-*]\s+([a-z_][a-z0-9_]*)`)
-	for _, line := range lines[index+1 : end] {
-		match := pattern.FindStringSubmatch(strings.TrimSuffix(line, "\r"))
-		if match == nil {
-			continue
-		}
-		if isFrontdeskTool(match[1]) {
-			tools = append(tools, match[1])
-		}
-	}
-	bodyLines := append([]string{}, lines[:index]...)
+	bodyLines := append([]string{}, lines[:start]...)
 	bodyLines = append(bodyLines, lines[end:]...)
-	if len(tools) == 0 {
-		tools = defaultFrontdeskTools()
-	}
 	return frontdeskDoc{Body: normalizeFrontdeskBody(bodyLines), Tools: tools}
 }
 

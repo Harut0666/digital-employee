@@ -26,6 +26,7 @@ import (
 	"digital-employee/internal/agent"
 	"digital-employee/internal/config"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/knowledge"
 	"digital-employee/internal/qc"
 	"digital-employee/internal/settings"
 )
@@ -141,11 +142,13 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 	if now == nil {
 		now = time.Now
 	}
+	// 知识库工具对所有员工都注册，哪个步骤能用由步骤白名单决定
+	toolClient := knowledge.WithTools(knowledge.Open(workspaceDir), deps.ToolClient)
 	engine := &Engine{
 		workspaceDir: workspaceDir,
 		employeesDir: employeesDir,
 		tasksDir:     filepath.Join(workspaceDir, "tasks"),
-		toolClient:   deps.ToolClient,
+		toolClient:   toolClient,
 		model:        deps.Model,
 		now:          now,
 		faults:       faults,

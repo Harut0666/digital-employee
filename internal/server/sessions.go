@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"digital-employee/internal/contract"
+	"digital-employee/internal/knowledge"
 	"digital-employee/internal/session"
 	"digital-employee/internal/settings"
 )
@@ -66,7 +67,8 @@ func (s *Server) newSessions() *session.Manager {
 			execution := settings.Read(s.opts.WorkspaceDir).Execution
 			return &execution
 		},
-		Now: s.opts.Now,
+		Knowledge: knowledge.WithTools(s.knowledge, nil),
+		Now:       s.opts.Now,
 	})
 }
 

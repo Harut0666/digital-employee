@@ -1,9 +1,10 @@
 // Package server 是 Go 版后端：net/http REST + SSE，契约与 Elysia 版逐字段一致，
 // 前端 packages/web 零改动可用。
 //
-// 路由分成五块（与 packages/server/src 对应）：
+// 路由分成六块（前五块与 packages/server/src 对应）：
 //   - /api/tasks、/api/employees、/api/samples：任务与员工（index.ts）
 //   - /api/sessions：会话与前台 Agent（internal/session）
+//   - /api/knowledge：知识库（internal/knowledge）
 //   - /api/settings/*：设置中心（routes/settings.ts）
 //   - /api/employees/:id/config/*：员工配置页与版本（routes/config.ts）
 //   - 其余路径：托管 packages/web/dist，非 /api 找不到文件时回退 index.html（files.ts）
@@ -19,6 +20,7 @@ import (
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/knowledge"
 	"digital-employee/internal/session"
 )
 
@@ -68,12 +70,15 @@ type Server struct {
 	mux      *http.ServeMux
 	log      *Logger
 	sessions *session.Manager
+	// knowledge 本工作区的知识库
+	knowledge *knowledge.Store
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
 func New(opts Options) *Server {
 	s := &Server{opts: opts}
 	s.resolveDefaults()
+	s.knowledge = knowledge.Open(s.opts.WorkspaceDir)
 	s.sessions = s.newSessions()
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -215,6 +220,12 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
 	m.HandleFunc("POST /api/sessions/{id}/submit", s.sessionRoute(s.handleSubmitSession))
+
+	// ---- 知识库 ----
+	m.HandleFunc("GET /api/knowledge", s.handleListKnowledge)
+	m.HandleFunc("POST /api/knowledge", s.handleFileKnowledge)
+	m.HandleFunc("GET /api/knowledge/{id}", s.handleReadKnowledge)
+	m.HandleFunc("DELETE /api/knowledge/{id}", s.handleDeleteKnowledge)
 
 	// ---- 设置中心 ----
 	m.HandleFunc("GET /api/settings", s.handleSettingsConnections)
