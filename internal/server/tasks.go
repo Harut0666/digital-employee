@@ -160,6 +160,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, message))
 		return
 	}
+	if command.Type == contract.CmdSubmit && s.submitWouldProceed(id, role) {
+		if check := s.preflight(); !check.OK {
+			writeJSON(w, statusOf(check.Error), check)
+			return
+		}
+	}
 	uploads, err := saveUploads(files)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
@@ -223,7 +229,7 @@ func (s *Server) handleDeliverable(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if ref != nil && downloadResponse(w, r, ref.Path) {
+	if ref != nil && downloadResponse(w, r, ref.Path, s.deliverableDownloadName(snapshot, ref)) {
 		return
 	}
 	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可下载的交付物：%s", kind)))

@@ -26,19 +26,13 @@ var defaultSystemFonts = []string{
 }
 
 // vectorFont 一个可缩放的轮廓字体（ttf/otf/ttc 的第一个字面）。
+// 解析好的字体可以并发使用，进程内共享；由它创建的 face 不行，见 canvas.face。
 type vectorFont struct {
-	mu    sync.Mutex
-	font  *opentype.Font
-	faces map[float64]font.Face
+	font *opentype.Font
 }
 
-// face 取指定像素大小的 face（线程安全；大小缓存）。
-func (v *vectorFont) face(sizePx float64) font.Face {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if f, ok := v.faces[sizePx]; ok {
-		return f
-	}
+// newFace 新建指定像素大小的 face；失败返回 nil。
+func (v *vectorFont) newFace(sizePx float64) font.Face {
 	f, err := opentype.NewFace(v.font, &opentype.FaceOptions{
 		Size:    sizePx,
 		DPI:     72, // 1pt = 1px，sizePx 直接就是像素高度
@@ -47,7 +41,6 @@ func (v *vectorFont) face(sizePx float64) font.Face {
 	if err != nil {
 		return nil
 	}
-	v.faces[sizePx] = f
 	return f
 }
 
@@ -97,12 +90,12 @@ func loadVectorFont(paths []string) *vectorFont {
 		// ttc/otc 用 ParseCollection；单个 ttf/otf 它也会返回 1 个字面的集合。
 		if coll, err := opentype.ParseCollection(data); err == nil && coll.NumFonts() > 0 {
 			if f, err := coll.Font(0); err == nil {
-				return &vectorFont{font: f, faces: map[float64]font.Face{}}
+				return &vectorFont{font: f}
 			}
 		}
 		// 极少数单字面字体 ParseCollection 不认，退回 Parse 再试一次。
 		if f, err := opentype.Parse(data); err == nil {
-			return &vectorFont{font: f, faces: map[float64]font.Face{}}
+			return &vectorFont{font: f}
 		}
 	}
 	return nil

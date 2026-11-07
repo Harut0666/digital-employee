@@ -21,6 +21,7 @@ import (
 	"digital-employee/internal/contract"
 	"digital-employee/internal/engine"
 	"digital-employee/internal/server"
+	"digital-employee/internal/settings"
 	"digital-employee/internal/tools"
 )
 
@@ -68,6 +69,9 @@ func a01Files(t *testing.T) []upload {
 
 type harnessConfig struct {
 	workflowEdits [][2]string
+	connection    *contract.ModelConnection
+	env           map[string]string
+	wrapModel     func(agent.ModelProvider) agent.ModelProvider
 }
 
 // harnessOption 装置选项。
@@ -78,6 +82,21 @@ func withWorkflowEdit(old, replacement string) harnessOption {
 	return func(config *harnessConfig) {
 		config.workflowEdits = append(config.workflowEdits, [2]string{old, replacement})
 	}
+}
+
+// withModelConnection 不用剧本：引擎走真实模型提供者，这条连接写进工作区设置并设为默认。
+func withModelConnection(connection contract.ModelConnection) harnessOption {
+	return func(config *harnessConfig) { config.connection = &connection }
+}
+
+// withEnv 注入服务端看到的环境变量。
+func withEnv(env map[string]string) harnessOption {
+	return func(config *harnessConfig) { config.env = env }
+}
+
+// withModelWrapper 包一层模型提供者，比如控制模型调用的时机。
+func withModelWrapper(wrap func(agent.ModelProvider) agent.ModelProvider) harnessOption {
+	return func(config *harnessConfig) { config.wrapModel = wrap }
 }
 
 // harness 一个运行中的主接缝。
@@ -91,9 +110,10 @@ type harness struct {
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。
 //
-// 不要用 t.Parallel：渲染缓存的字体对象不是并发安全的，两个任务同时渲染会 panic。
+// 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。
 func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption) *harness {
 	t.Helper()
+	t.Parallel()
 	config := harnessConfig{
 		// 工具重试不等待，否则每次工具故障都要白等几秒
 		workflowEdits: [][2]string{{"backoffMs: [1000, 2000, 4000]", "backoffMs: [0]"}},
@@ -107,6 +127,26 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	copyEmployee(t, repoPath("employees", harnessEmployee), filepath.Join(employees, harnessEmployee))
 	editWorkflow(t, filepath.Join(employees, harnessEmployee, "workflow.yaml"), config.workflowEdits)
 
+	env := config.env
+	if env == nil {
+		env = map[string]string{}
+	}
+	var model agent.ModelProvider = agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
+	if config.connection != nil {
+		connection := *config.connection
+		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+			doc.Connections = []contract.ModelConnection{connection}
+			doc.DefaultConnection = connection.Name
+			doc.DefaultModel = connection.Models[0]
+		}); err != nil {
+			t.Fatalf("写模型设置失败：%v", err)
+		}
+		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+	}
+	if config.wrapModel != nil {
+		model = config.wrapModel(model)
+	}
+
 	registry := tools.NewRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
 	faults := &contract.FaultHooks{}
@@ -114,7 +154,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		WorkspaceDir: workspace,
 		EmployeesDir: employees,
 		ToolClient:   registry,
-		Model:        agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{}),
+		Model:        model,
 		Faults:       faults,
 	})
 	if err != nil {
@@ -126,7 +166,8 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		EmployeesDir: employees,
 		ToolClient:   registry,
 		Faults:       faults,
-		Env:          map[string]string{},
+		Scripted:     config.connection == nil,
+		Env:          env,
 		Logger:       server.NewLogger(server.LevelError, func(string, string) {}),
 	})
 	httpServer := httptest.NewServer(srv.Handler())

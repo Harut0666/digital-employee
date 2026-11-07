@@ -53,6 +53,8 @@ type Options struct {
 	Logger *Logger
 	// AppVersion 诊断页显示的版本号。
 	AppVersion string
+	// Scripted 剧本模式：模型不走网络，提交前检查视为通过。
+	Scripted bool
 }
 
 // Server HTTP 服务端。
@@ -108,9 +110,6 @@ func (s *Server) resolveDefaults() {
 	}
 	if s.opts.AppVersion == "" {
 		s.opts.AppVersion = "0.1.0"
-	}
-	if s.opts.Env == nil {
-		s.opts.Env = map[string]string{}
 	}
 	if s.opts.ProbeConnection == nil {
 		s.opts.ProbeConnection = probeConnection
@@ -182,12 +181,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// routes 注册全部端点（35 个）。
+// routes 注册全部端点（36 个）。
 func (s *Server) routes() {
 	m := s.mux
 
 	// ---- 任务与员工 ----
 	m.HandleFunc("GET /api/employees", s.handleListEmployees)
+	m.HandleFunc("GET /api/preflight", s.handlePreflight)
 	m.HandleFunc("GET /api/tasks", s.handleListTasks)
 	m.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	m.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)

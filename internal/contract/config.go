@@ -101,6 +101,9 @@ type EmployeeWorkflow struct {
 	QCSources     QCSources      `json:"qcSources" yaml:"qcSources"`
 	QCFixSteps    QCFixSteps     `json:"qcFixSteps" yaml:"qcFixSteps"`
 	Steps         []StepConfig   `json:"steps" yaml:"steps"`
+
+	// DeliverableName 交付物下载名模板，如 经营周报_{year}年第{week}周；省略时用磁盘上的文件名。
+	DeliverableName string `json:"deliverableName,omitempty" yaml:"deliverableName,omitempty"`
 }
 
 // SectionSpec 章节定义（顺序即周报章节顺序）。

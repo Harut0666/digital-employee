@@ -38,6 +38,8 @@ var errorStatus = map[string]int{
 	contract.ErrForbiddenRole:     http.StatusForbidden,
 	contract.ErrNotFound:          http.StatusNotFound,
 	contract.ErrIllegalTransition: http.StatusConflict,
+
+	contract.ErrModelNotConfigured: http.StatusPreconditionFailed,
 }
 
 func statusOf(code string) int {

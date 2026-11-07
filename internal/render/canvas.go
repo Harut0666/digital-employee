@@ -37,6 +37,7 @@ type canvas struct {
 	img   *image.RGBA
 	scale float64
 	vf    *vectorFont // nil 表示退到位图字体
+	faces map[float64]font.Face
 }
 
 func newChartCanvas(vf *vectorFont) *canvas {
@@ -46,7 +47,21 @@ func newChartCanvas(vf *vectorFont) *canvas {
 	}
 	img := image.NewRGBA(image.Rect(0, 0, int(chartWidth*scale), int(chartHeight*scale)))
 	stddraw.Draw(img, img.Bounds(), &image.Uniform{C: color.White}, image.Point{}, stddraw.Src)
-	return &canvas{img: img, scale: scale, vf: vf}
+	return &canvas{img: img, scale: scale, vf: vf, faces: map[float64]font.Face{}}
+}
+
+// face 取指定逻辑字号的矢量 face。face 内部有绘制缓冲，不能并发使用，
+// 所以缓存在画布上：一块画布只在一个协程里画，同时渲染的任务互不影响。
+func (c *canvas) face(size float64) font.Face {
+	sizePx := size * c.scale
+	if f, ok := c.faces[sizePx]; ok {
+		return f
+	}
+	f := c.vf.newFace(sizePx)
+	if f != nil {
+		c.faces[sizePx] = f
+	}
+	return f
 }
 
 // dev 逻辑坐标 → 设备坐标（四舍五入）。
@@ -208,7 +223,7 @@ func (c *canvas) textWidth(s string, size float64) float64 {
 		return 0
 	}
 	if c.vf != nil {
-		face := c.vf.face(size * c.scale)
+		face := c.face(size)
 		if face == nil {
 			return 0
 		}
@@ -230,7 +245,7 @@ func (c *canvas) text(x, y float64, s string, size float64, col color.RGBA, a al
 	}
 	var face font.Face
 	if c.vf != nil {
-		face = c.vf.face(size * c.scale)
+		face = c.face(size)
 	} else {
 		face = basicfont.Face7x13
 	}

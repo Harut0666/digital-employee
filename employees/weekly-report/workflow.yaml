@@ -3,6 +3,8 @@
 id: weekly-report
 name: 经营周报员工
 description: 依据销售明细和周会纪要，生成符合运营部《周报格式要求》的经营周报（Word）。
+# 交付物的下载文件名（不含扩展名），{字段} 由表单填充；磁盘上的文件名不变
+deliverableName: 经营周报_{year}年第{week}周
 
 limits:
   task:

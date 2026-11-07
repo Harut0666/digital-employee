@@ -223,7 +223,7 @@ func streamOpenAICompatible(ctx context.Context, model Model, request StreamRequ
 		response, err := postChatCompletion(ctx, model, raw, options.APIKey, timeout)
 		if err != nil {
 			lastError = err
-			if ctx.Err() != nil {
+			if ctx.Err() != nil || !retriesCanHelp(err) {
 				break
 			}
 			continue
@@ -248,7 +248,7 @@ func postChatCompletion(ctx context.Context, model Model, body []byte, apiKey st
 	url := strings.TrimRight(model.BaseURL, "/") + "/chat/completions"
 	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, newModelCallError(contract.ModelErrorNetwork, apiKey, "%v", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
@@ -257,22 +257,23 @@ func postChatCompletion(ctx context.Context, model Model, body []byte, apiKey st
 	client := &http.Client{}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, err
+		return nil, newModelCallError(contract.ModelErrorNetwork, apiKey, "%v", err)
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, err
+		return nil, newModelCallError(contract.ModelErrorNetwork, apiKey, "%v", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("模型接口返回 %d：%s", response.StatusCode, truncate(string(raw), 500))
+		return nil, newModelCallError(modelErrorKindOf(response.StatusCode), apiKey,
+			"模型接口返回 %d：%s", response.StatusCode, truncate(string(raw), 500))
 	}
 	var parsed openAIChatResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("模型响应不是合法的 JSON：%v", err)
+		return nil, newModelCallError(contract.ModelErrorServer, apiKey, "模型响应不是合法的 JSON：%v", err)
 	}
 	if parsed.Error.Message != "" {
-		return nil, fmt.Errorf("模型接口报错：%s", parsed.Error.Message)
+		return nil, newModelCallError(contract.ModelErrorServer, apiKey, "模型接口报错：%s", parsed.Error.Message)
 	}
 	return &parsed, nil
 }

@@ -976,6 +976,8 @@ var judgmentPause = map[contract.JudgmentFailure]contract.TransitionTrigger{
 	contract.FailModelError:    contract.TriggerToolFailed,
 	contract.FailNoOutput:      contract.TriggerToolFailed,
 	contract.FailInvalidOutput: contract.TriggerToolFailed,
+
+	contract.FailModelUnavailable: contract.TriggerModelUnavailable,
 }
 
 func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any, crashArmed bool) (string, error) {
@@ -1137,15 +1139,19 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		if !known {
 			trigger = contract.TriggerToolFailed
 		}
+		detail := map[string]any{
+			"failure":        string(result.Failure),
+			"error":          result.Message,
+			"completedSteps": view(rt, func(p *projection) int { return len(p.done) }),
+			"totalSteps":     len(rt.config.Workflow.Steps),
+		}
+		if result.ModelError != "" {
+			detail["modelError"] = string(result.ModelError)
+		}
 		return e.failStep(rt, step, trigger,
 			fmt.Sprintf("步骤「%s」未能完成（%s）：%s。%s。", step.Label, result.Failure, result.Message, e.progressText(rt)),
 			fmt.Sprintf("步骤「%s」未能完成。%s。", step.Label, e.progressText(rt)),
-			map[string]any{
-				"failure":        string(result.Failure),
-				"error":          result.Message,
-				"completedSteps": view(rt, func(p *projection) int { return len(p.done) }),
-				"totalSteps":     len(rt.config.Workflow.Steps),
-			})
+			detail)
 	}
 
 	output := result.Output

@@ -80,6 +80,7 @@ const (
 	TriggerStepsCompleted         TransitionTrigger = "steps_completed"
 	TriggerLimitExceeded          TransitionTrigger = "limit_exceeded"
 	TriggerToolFailed             TransitionTrigger = "tool_failed"
+	TriggerModelUnavailable       TransitionTrigger = "model_unavailable"
 	TriggerQcPassed               TransitionTrigger = "qc_passed"
 	TriggerQcAutofix              TransitionTrigger = "qc_autofix"
 	TriggerQcExhausted            TransitionTrigger = "qc_exhausted"
@@ -113,6 +114,7 @@ var Transitions = []Transition{
 	{StateRunning, StateQC, TriggerStepsCompleted, RoleSystem},
 	{StateRunning, StateAwaitingOperator, TriggerLimitExceeded, RoleSystem},
 	{StateRunning, StateAwaitingOperator, TriggerToolFailed, RoleSystem},
+	{StateRunning, StateAwaitingOperator, TriggerModelUnavailable, RoleSystem},
 	{StateRunning, StateAwaitingReview, TriggerNeedsHuman, RoleSystem},
 	{StateQC, StateAwaitingReview, TriggerQcPassed, RoleSystem},
 	{StateQC, StateRunning, TriggerQcAutofix, RoleSystem},
@@ -152,6 +154,7 @@ const (
 	PauseInsufficientMaterial PauseCode = "insufficient_material"
 	PauseMaterialIssue        PauseCode = "material_issue"
 	PauseToolFailed           PauseCode = "tool_failed"
+	PauseModelUnavailable     PauseCode = "model_unavailable"
 	PauseLimitExceeded        PauseCode = "limit_exceeded"
 	PauseQcExhausted          PauseCode = "qc_exhausted"
 	PauseReworkNeedsHuman     PauseCode = "rework_needs_human"

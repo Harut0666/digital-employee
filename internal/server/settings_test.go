@@ -13,6 +13,32 @@ import (
 	"digital-employee/internal/contract"
 )
 
+// 生产环境不注入 Env：环境变量里的 Key 必须能被看到，否则只配环境变量的人提交不了任务。
+func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "sk-process-env")
+	srv := New(Options{
+		Engine:       newFakeEngine(),
+		WorkspaceDir: t.TempDir(),
+		EmployeesDir: filepath.Join("..", "..", "employees"),
+		Logger:       NewLogger(LevelError, func(string, string) {}),
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	response, err := http.Get(ts.URL + "/api/preflight")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reply := preflightResult{}
+	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil {
+		t.Fatal(err)
+	}
+	if !reply.OK {
+		t.Fatalf("环境变量里有 Key 时应通过：%+v", reply)
+	}
+}
+
 func newServerWith(t *testing.T, options Options) (*httptest.Server, *fakeEngine) {
 	t.Helper()
 	engine := newFakeEngine()

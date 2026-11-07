@@ -10,6 +10,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -275,6 +276,12 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 				if ctx.Err() != nil {
 					failureKind, failureMessage = classifyCancel(in.Signal, taskDeadline, stepTimeoutMS)
 					break
+				}
+				var callErr *ModelCallError
+				if errors.As(streamErr, &callErr) {
+					result := fail(contract.FailModelUnavailable, callErr.Message)
+					result.ModelError = callErr.Kind
+					return result, nil
 				}
 				modelError = streamErr.Error()
 				break

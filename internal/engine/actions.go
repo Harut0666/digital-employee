@@ -49,9 +49,9 @@ func availableActions(state contract.TaskState, pause *contract.PauseReason) []c
 		}
 		return append(actions, taskAction(contract.CmdTerminate, contract.ActionDanger, contract.RoleInitiator))
 	case contract.StateAwaitingOperator:
-		// 超限和质检用尽是高风险决定，只由操作员处理；工具故障发起人也能重试
+		// 超限和质检用尽是高风险决定，只由操作员处理；工具故障和模型不可用发起人也能重试
 		retryRoles := []contract.Role{contract.RoleOperator}
-		if code == contract.PauseToolFailed {
+		if code == contract.PauseToolFailed || code == contract.PauseModelUnavailable {
 			retryRoles = []contract.Role{contract.RoleInitiator, contract.RoleOperator}
 		}
 		return []contract.TaskAction{
