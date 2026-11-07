@@ -8,6 +8,7 @@
 package engine
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -56,6 +57,9 @@ type SimulatedCrash struct {
 func (c *SimulatedCrash) Error() string {
 	return fmt.Sprintf("simulated crash at step %q", c.StepID)
 }
+
+// errTaskStopped 任务已终止，运行中的步骤写不进任何事件，只能收工。
+var errTaskStopped = errors.New("任务已终止")
 
 // judgmentRunner 判断步骤执行器（消费方接口，便于测试注入）。
 type judgmentRunner interface {
@@ -197,13 +201,19 @@ type taskRuntime struct {
 	failure   error
 
 	artifactCache map[string]any
+
+	// signal 任务被终止时取消。已终止是终态，所以一个运行时只需要一个，不用重置。
+	signal context.Context
+	stop   context.CancelFunc
 }
 
 func (e *Engine) newRuntime(id, dir string, cfg *contract.EmployeeConfig) *taskRuntime {
+	signal, stop := context.WithCancel(context.Background())
 	return &taskRuntime{
 		id: id, dir: dir, config: cfg, proj: newProjection(cfg),
 		events: []contract.TaskEvent{}, logPath: filepath.Join(dir, "events.jsonl"),
 		artifactCache: map[string]any{},
+		signal:        signal, stop: stop,
 	}
 }
 
@@ -251,10 +261,14 @@ func (e *Engine) deadError() error {
 	return errors.New("引擎已停止")
 }
 
-// append 追加一条事件：落盘、更新投影、通知订阅者。调用方不得持有 rt.mu。
+// append 编排写事件的入口：落盘、更新投影、通知订阅者。调用方不得持有 rt.mu。
+// 任务一旦终止，迟到的步骤结果在这里被丢弃；命令走 appendLocked，不受影响。
 func (e *Engine) append(rt *taskRuntime, event contract.TaskEvent) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	if rt.proj.State == contract.StateTerminated {
+		return errTaskStopped
+	}
 	return e.appendLocked(rt, event)
 }
 
@@ -620,6 +634,10 @@ func (e *Engine) drive(rt *taskRuntime) (err error) {
 			if errors.As(err, &crash) || e.engineDead() {
 				return err
 			}
+			// 终止之后步骤怎么结束都不算数，不转人工
+			if view(rt, func(p *projection) contract.TaskState { return p.State }) == contract.StateTerminated {
+				return nil
+			}
 			if pauseErr := e.unexpectedFailure(rt, err); pauseErr != nil {
 				return pauseErr
 			}
@@ -948,7 +966,13 @@ func (e *Engine) runCompute(rt *taskRuntime, step contract.StepConfig, args any)
 			wait = backoffMS[position]
 		}
 		if wait > 0 {
-			time.Sleep(time.Duration(wait) * time.Millisecond)
+			timer := time.NewTimer(time.Duration(wait) * time.Millisecond)
+			select {
+			case <-timer.C:
+			case <-rt.signal.Done():
+				timer.Stop()
+				return "", errTaskStopped
+			}
 		}
 	}
 	if !result.OK && result.MaterialIssue != nil {
@@ -1061,6 +1085,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		OutputSchema: outputSchema,
 		Budget:       agent.Budget{RemainingModelCalls: remaining, Deadline: deadline},
 		Replay:       replay,
+		Signal:       rt.signal,
 		OnModelCalled: func(event agent.ModelCalledEvent) error {
 			seen := view(rt, func(p *projection) bool {
 				for _, response := range p.modelResponses[step.ID] {
@@ -1747,6 +1772,9 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 	if err := e.transitionLocked(rt, trigger, actor, nil); err != nil {
 		rt.mu.Unlock()
 		return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
+	}
+	if trigger == contract.TriggerTerminate {
+		rt.stop()
 	}
 	snapshot := rt.proj.Snapshot(rt.id, e.now().UnixMilli())
 	active := activeStates[rt.proj.State]

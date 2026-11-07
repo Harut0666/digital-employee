@@ -72,6 +72,14 @@ type harnessConfig struct {
 	connection    *contract.ModelConnection
 	env           map[string]string
 	wrapModel     func(agent.ModelProvider) agent.ModelProvider
+	wrapTools     func(contract.ToolClient) contract.ToolClient
+	qc            qcRunner
+	crashAtStep   string
+}
+
+// qcRunner 质检引擎的形状，测试用它包住真实质检。
+type qcRunner interface {
+	Run(input contract.QcInput) []contract.QcCheckResult
 }
 
 // harnessOption 装置选项。
@@ -97,6 +105,26 @@ func withEnv(env map[string]string) harnessOption {
 // withModelWrapper 包一层模型提供者，比如控制模型调用的时机。
 func withModelWrapper(wrap func(agent.ModelProvider) agent.ModelProvider) harnessOption {
 	return func(config *harnessConfig) { config.wrapModel = wrap }
+}
+
+// withModel 包住剧本模型（比如让某次调用停住）。
+func withModel(wrap func(agent.ModelProvider) agent.ModelProvider) harnessOption {
+	return func(config *harnessConfig) { config.wrapModel = wrap }
+}
+
+// withTools 包住真实工具（比如让某次调用停住）。
+func withTools(wrap func(contract.ToolClient) contract.ToolClient) harnessOption {
+	return func(config *harnessConfig) { config.wrapTools = wrap }
+}
+
+// withQC 换掉质检引擎。
+func withQC(qc qcRunner) harnessOption {
+	return func(config *harnessConfig) { config.qc = qc }
+}
+
+// withCrashAt 模拟进程在某个步骤崩溃。
+func withCrashAt(step string) harnessOption {
+	return func(config *harnessConfig) { config.crashAtStep = step }
 }
 
 // harness 一个运行中的主接缝。
@@ -160,14 +188,18 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 
 	registry := tools.NewRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
-	faults := &contract.FaultHooks{}
-	eng, err := engine.New(engine.Deps{
+	faults := &contract.FaultHooks{CrashAtStep: config.crashAtStep}
+	var toolClient contract.ToolClient = registry
+	if config.wrapTools != nil {
+		toolClient = config.wrapTools(toolClient)
+	}
+	eng, err := engine.NewWithOptions(engine.Deps{
 		WorkspaceDir: workspace,
 		EmployeesDir: employees,
-		ToolClient:   registry,
+		ToolClient:   toolClient,
 		Model:        model,
 		Faults:       faults,
-	})
+	}, engine.Options{QC: config.qc})
 	if err != nil {
 		t.Fatalf("创建引擎失败：%v", err)
 	}

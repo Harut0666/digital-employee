@@ -39,6 +39,8 @@ func availableActions(state contract.TaskState, pause *contract.PauseReason) []c
 			taskAction(contract.CmdSubmit, contract.ActionPrimary, contract.RoleInitiator),
 			abandon,
 		}
+	case contract.StateAdmission, contract.StateRunning, contract.StateQC:
+		return []contract.TaskAction{taskAction(contract.CmdTerminate, contract.ActionDanger, contract.RoleInitiator)}
 	case contract.StateAwaitingInitiator:
 		actions := []contract.TaskAction{taskAction(contract.CmdSupplement, contract.ActionPrimary, contract.RoleInitiator)}
 		switch code {
