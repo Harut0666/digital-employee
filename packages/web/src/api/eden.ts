@@ -111,7 +111,8 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
       es.onmessage = handle;
       return () => es.close();
     },
-    deliverableUrl: (id, kind: DeliverableKind) => `${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}`,
+    deliverableUrl: (id, kind: DeliverableKind, version?: number) =>
+      `${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}${version ? `?version=${version}` : ""}`,
 
     // ---- 员工配置页 ----
     getEmployeeConfig: configApi.getEmployeeConfig,

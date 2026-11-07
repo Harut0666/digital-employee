@@ -4,6 +4,8 @@
 import type {
   CommandResult as ContractCommandResult,
   ConfigDiff,
+  DeliverableRef,
+  StepStatus,
   ConfigVersion,
   EmployeeConfigResponse,
   PauseCode,
@@ -41,10 +43,38 @@ export interface PauseView extends Omit<PauseReason, "code"> {
   resolution?: string;
 }
 
-export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause"> {
+/** 快照里的步骤：Go 后端多了工作流配置里的业务话 activity。 */
+export interface StepStatusView extends StepStatus {
+  activity?: string;
+}
+
+/** 修改说明：逐条退回意见改了哪些章节、改了什么。 */
+export interface RevisionNote {
+  comment: string;
+  sections: string[];
+  change: string;
+}
+
+/** 一版交付物：每次送审一版，退回重做产出下一版。 */
+export interface DeliverableVersion {
+  version: number;
+  reworkRound: number;
+  createdAt: string;
+  files: DeliverableRef[];
+  /** 引出这一版的退回意见；第 1 版没有 */
+  feedback?: { comment: string; sections?: string[] };
+  revisionNotes?: RevisionNote[];
+}
+
+export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause" | "steps"> {
   pause?: PauseView;
+  steps: StepStatusView[];
   actions: TaskAction[];
   waitingFor: UiRole[];
+  /** 历次送审的交付物，旧到新 */
+  versions: DeliverableVersion[];
+  /** 当前交付物下载时的文件名（按类型） */
+  downloadNames?: Partial<Record<DeliverableKind, string>>;
 }
 
 export interface TaskSummary extends ContractTaskSummary {
@@ -199,8 +229,8 @@ export interface WebApi extends SessionApi {
   loadPublicSample(): Promise<TaskSnapshot>;
   /** 订阅任务事件：先补发 afterSeq 之后的事件，再实时推送。返回取消函数。 */
   subscribe(id: string, afterSeq: number, onEvent: (event: TaskEvent) => void): () => void;
-  /** 交付物下载地址；无则 undefined。 */
-  deliverableUrl(id: string, kind: DeliverableKind): string | undefined;
+  /** 交付物下载地址；无则 undefined。给了版本号时取那一版。 */
+  deliverableUrl(id: string, kind: DeliverableKind, version?: number): string | undefined;
 
   // ---- 员工配置页 ----
   /** 配置页的数据：每个文件的原文与解析结果、派生视图、版本列表。 */

@@ -9,7 +9,7 @@ import { EMPLOYEES, QC_CHECKS_PASSED, REWORK_STEPS, SEEDS, STEP_DEFS, type Event
 import { actionsOf, pauseTextOf, waitingForOf } from "./mock-rules";
 import { createMockSessions } from "./mock-sessions";
 import type { SessionApi } from "./sessions";
-import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PauseView, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
+import type { CommandResult, CreateTaskInput, DeliverableKind, DeliverableVersion, EmployeeInfo, PauseView, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 interface MockTask {
   id: string;
@@ -22,6 +22,31 @@ interface MockTask {
   listeners: Set<(e: TaskEvent) => void>;
   allowMissingMinutes: boolean;
   allowPartial: boolean;
+}
+
+/** 模拟的版本列表：每出一份 docx 开一版，退回意见和修改说明跟着下一版（对应 Go 的 engine/versions.go） */
+function versionsOf(events: readonly TaskEvent[]): DeliverableVersion[] {
+  const versions: DeliverableVersion[] = [];
+  let feedback: string | undefined;
+  for (const ev of events) {
+    if (ev.type === "review_decision" && ev.decision === "return") feedback = ev.comment;
+    if (ev.type !== "deliverable_created") continue;
+    const file = { kind: ev.kind, path: ev.path, sha256: ev.sha256 };
+    if (ev.kind === "qc_record" && versions.length > 0) {
+      versions.at(-1)!.files.push(file);
+      continue;
+    }
+    versions.push({
+      version: versions.length + 1,
+      reworkRound: versions.length,
+      createdAt: ev.ts,
+      files: [file],
+      ...(versions.length > 0 && feedback
+        ? { feedback: { comment: feedback }, revisionNotes: [{ comment: feedback, sections: [], change: `已按意见修改：${feedback}` }] }
+        : {}),
+    });
+  }
+  return versions;
 }
 
 const STEP_GAP_MS = 900;
@@ -163,6 +188,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       qc: view.qc?.checks,
       deliverables: view.deliverables,
       lastSeq: view.lastSeq,
+      versions: versionsOf(t.events),
     };
   };
 

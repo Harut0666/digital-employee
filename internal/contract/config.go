@@ -37,6 +37,8 @@ type StepConfig struct {
 	ID    string `json:"id" yaml:"id"`
 	Label string `json:"label" yaml:"label"`
 	Kind  string `json:"kind" yaml:"kind"` // compute | judge | qc
+	// Activity 步骤运行时给业务人员看的说法，如“正在撰写周报”；工具名等技术细节只在轨迹详情里出现
+	Activity string `json:"activity,omitempty" yaml:"activity,omitempty"`
 
 	Tool   string         `json:"tool,omitempty" yaml:"tool,omitempty"`
 	Prompt string         `json:"prompt,omitempty" yaml:"prompt,omitempty"`

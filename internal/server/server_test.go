@@ -532,7 +532,7 @@ func TestEmployeeConfigFlow(t *testing.T) {
 		t.Fatalf("配置视图不对：%s", body)
 	}
 	// 配置哈希必须与 TS 版一致（唯一事实来源是 internal/config；golden-a01 要到 T35 才跟上 T25、T29 的配置改动）
-	const goldenConfigHash = "b1bf91ab60dde653090cb8d45982817dc1ce737eacc544e231d055e518885cb3"
+	const goldenConfigHash = "c2dc6d630a34e8477c20a326d47c54ebbe99545ee73a91a6da6c86a0d7fa43ae"
 	if config["hash"] != goldenConfigHash {
 		t.Fatalf("配置哈希与 TS 版不一致：%v", config["hash"])
 	}

@@ -17,8 +17,8 @@ var commandLabels = map[string]string{
 	contract.CmdContinueWithPartial:    "按已有数据继续",
 	contract.CmdRetry:                  "重试",
 	contract.CmdTerminate:              "终止",
-	contract.CmdApprove:                "通过",
-	contract.CmdReturn:                 "退回",
+	contract.CmdApprove:                "通过并交付",
+	contract.CmdReturn:                 "退回修改",
 }
 
 func taskAction(command, style string, roles ...contract.Role) contract.TaskAction {

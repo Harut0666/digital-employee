@@ -103,13 +103,23 @@ body {
 
 .shell {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  grid-template-columns: 256px minmax(0, 1fr) 360px;
   gap: 12px;
   height: 100%;
   padding: 12px;
 }
+/* 审核时右栏加宽到一半左右 */
+.shell.wide {
+  grid-template-columns: 236px minmax(0, 1fr) 48vw;
+}
 .shell.no-panel {
-  grid-template-columns: 280px minmax(0, 1fr) 0;
+  grid-template-columns: 256px minmax(0, 1fr);
+}
+/* 窄窗口：右栏收成抽屉，左栏也收窄 */
+.shell.narrow {
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
 }
 .col {
   min-height: 0;
@@ -144,6 +154,29 @@ body {
   display: grid;
   place-items: center;
   font-size: 20px;
+}
+.side-top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 2px 12px;
+}
+.workspace-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+}
+.workspace-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .side-title {
   padding: 8px 10px 4px;
@@ -290,6 +323,122 @@ body {
 .chat-head h2 {
   margin: 0;
   font-size: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-head-main {
+  flex: 1;
+  min-width: 0;
+}
+.chat-title {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+.trace-toggle {
+  flex: none;
+  align-self: flex-start;
+  padding-inline: 0;
+}
+
+/* ---------- 轨迹状态机 ---------- */
+.stages {
+  flex: none;
+  padding: 10px 20px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.stage-track {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.stage {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+  min-width: 0;
+}
+/* 两点之间的连线：画在每段左半边，第一段不画 */
+.stage + .stage::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: calc(50% + 12px);
+  left: calc(-50% + 12px);
+  height: 2px;
+  background: var(--line);
+}
+.stage.done + .stage::before,
+.stage.done + .stage.done::before {
+  background: var(--primary);
+}
+.stage-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--muted-border);
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: #fff;
+}
+.stage.done .stage-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.stage.current .stage-dot {
+  border: 4px solid var(--warn);
+}
+.stage.current .stage-label {
+  color: var(--warn);
+  font-weight: 600;
+}
+.stage.paused .stage-dot {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.stage.paused .stage-label {
+  color: var(--warn);
+  font-weight: 600;
+}
+.stage.stopped .stage-dot {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.stage.stopped .stage-label {
+  color: var(--danger);
+}
+.stage.done .stage-label {
+  color: var(--text-2);
+}
+.stage-activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--text-2);
+  font-size: calc(var(--font-size) - 1px);
+  min-width: 0;
+}
+.stage-activity > span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stage-meta {
+  margin-left: auto;
+  color: var(--muted);
+  flex: none;
+  font-size: calc(var(--font-size) - 2px);
 }
 .chat-sub {
   color: var(--muted);
@@ -564,6 +713,168 @@ body {
   background: transparent;
   border: none;
 }
+.panel-title {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+/* 交付物右栏：本身不滚动，文档区单独滚动，审核区固定在底部 */
+.panel.panel-review {
+  padding: 0;
+  overflow: hidden;
+}
+.drawer-panel {
+  flex: 1;
+  min-height: 0;
+}
+.drawer-toggle {
+  flex: none;
+  align-self: flex-start;
+}
+.review {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.review-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 18px;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.review-label {
+  font-weight: 700;
+  flex: none;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+.review-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-doc {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--doc-frame);
+  padding: 12px;
+}
+.review-doc .docx-host {
+  max-height: none;
+  overflow: visible;
+}
+/* 重排：页面跟随右栏宽度，页边距收窄，图表和表格不超出 */
+.docx-host.reflow .docx-wrapper {
+  padding: 0 !important;
+  background: transparent !important;
+  align-items: stretch !important;
+}
+.docx-host.reflow section.docx {
+  width: 100% !important;
+  min-height: 0 !important;
+  margin: 0 auto !important;
+  padding: 28px 32px !important;
+  max-width: 820px;
+}
+.docx-host.reflow section.docx > article {
+  width: auto !important;
+  min-width: 0;
+}
+.docx-host.reflow section.docx img,
+.docx-host.reflow section.docx svg {
+  max-width: 100%;
+  height: auto;
+}
+.docx-host.reflow section.docx table {
+  width: 100% !important;
+  max-width: 100%;
+  table-layout: auto !important;
+}
+.docx-host.reflow section.docx td,
+.docx-host.reflow section.docx th {
+  width: auto !important;
+}
+.docx-host.reflow section.docx col {
+  width: auto !important;
+}
+.review-empty {
+  margin: auto;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.review > .review-empty {
+  flex: 1;
+  justify-content: center;
+}
+.review-foot {
+  flex: none;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  max-height: 45%;
+  overflow: auto;
+}
+.review-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.review-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.review-row > b {
+  flex: none;
+}
+.review-chips {
+  margin-top: 0;
+}
+.review-ok {
+  color: var(--primary);
+}
+.review-bad {
+  color: var(--danger);
+}
+.review-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line);
+}
+.review-actions .card-actions {
+  flex-direction: column;
+  margin-top: 0;
+}
+.review-actions .card-actions .ant-btn {
+  min-width: 132px;
+}
+.review-actions .handoff {
+  margin-top: 0;
+  max-width: 200px;
+}
 .panel-card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -738,6 +1049,12 @@ body {
 }
 .trace-head:hover {
   background: var(--hover);
+}
+.trace-head.static {
+  cursor: default;
+}
+.trace-head.static:hover {
+  background: transparent;
 }
 .trace-title {
   display: inline-flex;

@@ -1,15 +1,19 @@
 // 轨迹：当前会话（任务）的只读执行过程记录，固定在对话框顶部。
-// 折叠时一行摘要；运行中自动展开并跟随最新事件，暂停/终态默认折叠。数据来自 view/trajectory.ts。
+// 默认只显示状态机和业务话，人点“轨迹详情”才展开这里。数据来自 view/trajectory.ts。
 import { useEffect, useRef, useState } from "react";
 import { Tag } from "antd";
 import {
   BranchesOutlined,
+  CheckCircleFilled,
   ClockCircleOutlined,
   CloseCircleFilled,
   DownOutlined,
   ExclamationCircleFilled,
+  FileTextOutlined,
   InfoCircleFilled,
   LoadingOutlined,
+  MinusCircleOutlined,
+  PaperClipOutlined,
   RightOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
@@ -17,9 +21,16 @@ import {
 } from "@ant-design/icons";
 import type { TrajectoryDetail, TaskState } from "@de/core/contract";
 import type { TraceItem, TrajectoryView } from "../view/trajectory";
-import { trajectoryDisplay, shouldAutoExpand, shouldStayOpenAfterRun, type TrajectoryDisplay } from "../pages/settings/preferences";
-import { onUserInput, useUiPreferences } from "./Preferences";
-import { StepIcon } from "./TaskPanel";
+import { trajectoryDisplay, shouldAutoExpand, type TrajectoryDisplay } from "../pages/settings/preferences";
+import { onUserInput, useLinkProps, useUiPreferences } from "./Preferences";
+
+
+export function StepIcon({ status }: { status: string }) {
+  if (status === "done") return <CheckCircleFilled style={{ color: "var(--primary)" }} />;
+  if (status === "failed") return <CloseCircleFilled style={{ color: "var(--danger)" }} />;
+  if (status === "running") return <LoadingOutlined style={{ color: "var(--info)" }} />;
+  return <MinusCircleOutlined style={{ color: "var(--dot-default)" }} />;
+}
 
 const STEP_KIND = { compute: "计算", judge: "判断", qc: "质检" } as const;
 const STEP_KIND_COLOR = { compute: "default", judge: "purple", qc: "cyan" } as const;
@@ -121,76 +132,103 @@ function TraceRow({ item, detail }: { item: TraceItem; detail: TrajectoryDetail 
   );
 }
 
-export function Trajectory({
+/** 轨迹详情的展开状态：默认收起，人点“轨迹详情”展开；一轮执行结束后按「折叠时机」偏好收起。 */
+export function useTrajectoryOpen(active: boolean): [boolean, (open: boolean) => void] {
+  const [open, setOpen] = useState(false);
+  const { ui } = useUiPreferences();
+  const wasActive = useRef(active);
+
+  useEffect(() => {
+    // 完成即折叠：执行刚结束就收起；下次输入时折叠：留到下一次输入
+    if (ui.collapseTiming === "completion" && wasActive.current && !active) setOpen(false);
+    wasActive.current = active;
+  }, [ui.collapseTiming, active]);
+
+  useEffect(() => onUserInput(() => ui.collapseTiming === "next-input" && setOpen(false)), [ui.collapseTiming]);
+  return [open, setOpen];
+}
+
+export interface TraceFile {
+  key: string;
+  label: string;
+  url?: string;
+}
+
+/** 轨迹详情：按轮次与步骤的工具调用、模型轮次、质检，加上任务附件和产物。只读。 */
+export function TrajectoryDetails({
   view,
-  elapsedMs,
   modelCalls,
+  elapsedMs,
+  attachments,
+  artifacts,
 }: {
   view: TrajectoryView;
-  elapsedMs: number;
   modelCalls: { used: number; limit: number };
+  elapsedMs: number;
+  attachments: string[];
+  artifacts: TraceFile[];
 }) {
-  const [userOpen, setUserOpen] = useState<boolean | undefined>();
-  const [holdOpen, setHoldOpen] = useState(false);
   const { ui } = useUiPreferences();
-  const wasActive = useRef(view.active);
-
-  // 折叠时机：完成即折叠（默认收起）；下次输入时折叠（先留着，等用户下一次输入再收）
-  useEffect(() => {
-    if (ui.collapseTiming === "completion") setHoldOpen(false);
-    else if (shouldStayOpenAfterRun(ui.collapseTiming, wasActive.current, view.active)) setHoldOpen(true);
-    wasActive.current = view.active;
-  }, [ui.collapseTiming, view.active]);
-
-  // 用户开始新的输入 → 收起上一轮（「下次输入时折叠」）
-  useEffect(() => onUserInput(() => setHoldOpen(false)), []);
-
-  const expanded = userOpen ?? (view.active || holdOpen);
+  const linkProps = useLinkProps();
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // 运行中展开时跟随最新事件（像看日志 tail）
+  // 运行中跟随最新事件（像看日志 tail）
   useEffect(() => {
-    if (!expanded || !view.active) return;
+    if (!view.active) return;
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [expanded, view.active, view.lastSeq]);
+  }, [view.active, view.lastSeq]);
 
   const s = view.summary;
   const summary = [`已完成 ${s.done}/${s.steps} 步`, ...(s.failed > 0 ? [`${s.failed} 步失败`] : []), `模型 ${modelCalls.used}/${modelCalls.limit}`, fmtTime(elapsedMs)].join(" · ");
 
   return (
-    <div className={`trace ${expanded ? "open" : ""}`}>
-      <div
-        className="trace-head"
-        onClick={() => setUserOpen(!expanded)}
-        role="button"
-        aria-expanded={expanded}
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") setUserOpen(!expanded);
-        }}
-      >
+    <div className="trace open">
+      <div className="trace-head static">
         <span className="trace-title">
-          <BranchesOutlined /> 轨迹
+          <BranchesOutlined /> 轨迹详情
         </span>
         <span className={`dot ${dotOf(view.state)}`} />
         <span className="trace-summary">{summary}</span>
         {view.active && <LoadingOutlined className="trace-live" />}
-        <span className="trace-arrow">{expanded ? <DownOutlined /> : <RightOutlined />}</span>
       </div>
-      {expanded && (
-        <div className="trace-body" ref={bodyRef}>
-          {view.rounds.length === 0 && <div className="trace-empty">尚未开始执行</div>}
-          {view.rounds.map((round) => (
-            <div key={round.round} className="trace-round">
-              {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
-              {round.items.map((item) => (
-                <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} />
-              ))}
+      <div className="trace-body" ref={bodyRef}>
+        {view.rounds.length === 0 && <div className="trace-empty">尚未开始执行</div>}
+        {view.rounds.map((round) => (
+          <div key={round.round} className="trace-round">
+            {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
+            {round.items.map((item) => (
+              <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} />
+            ))}
+          </div>
+        ))}
+        <div className="trace-round">
+          <div className="trace-round-label">任务附件</div>
+          {attachments.length === 0 && <div className="trace-empty">没有附件</div>}
+          {attachments.map((name) => (
+            <div key={name} className="trace-child">
+              <span className="trace-child-icon"><PaperClipOutlined /></span>
+              <span className="trace-child-label">{name}</span>
             </div>
           ))}
         </div>
-      )}
+        <div className="trace-round">
+          <div className="trace-round-label">步骤产物</div>
+          {artifacts.length === 0 && <div className="trace-empty">还没有产物</div>}
+          {artifacts.map((file) => (
+            <div key={file.key} className="trace-child">
+              <span className="trace-child-icon"><FileTextOutlined /></span>
+              {file.url ? (
+                <a className="trace-child-label" href={file.url} {...linkProps(file.url)}>
+                  {file.label}
+                </a>
+              ) : (
+                <span className="trace-child-label">{file.label}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

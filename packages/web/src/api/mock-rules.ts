@@ -11,8 +11,8 @@ const COMMAND_LABELS: Record<CommandType, string> = {
   continue_with_partial: "按已有数据继续",
   retry: "重试",
   terminate: "终止",
-  approve: "通过",
-  return: "退回",
+  approve: "通过并交付",
+  return: "退回修改",
 };
 
 const action = (command: CommandType, style: TaskAction["style"], ...roles: UiRole[]): TaskAction => ({

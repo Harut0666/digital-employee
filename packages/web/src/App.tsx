@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Button, ConfigProvider, theme, Tooltip } from "antd";
+import { App as AntApp, Button, ConfigProvider, Drawer, theme } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
-import { LeftOutlined, RightOutlined } from "@ant-design/icons";
+import { LeftOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
-import { createApi, IS_MOCK, type SessionResult, type UiRole, type UploadItem } from "./api";
+import { createApi, IS_MOCK, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, SessionChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
-import { TaskPanel } from "./components/TaskPanel";
+import { ReviewPanel } from "./components/ReviewPanel";
+import type { TraceFile } from "./components/Trajectory";
 import { Handoff, TaskActionBar, type CardActions, type SessionActions } from "./components/Cards";
 import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
 import { EmployeeConfigPage } from "./pages/EmployeeConfig";
 import { SettingsPage } from "./pages/Settings";
 import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
+import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
@@ -36,8 +38,15 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   roleRef.current = role;
 
   const [selection, setSelection] = useState<Selection>({ kind: "new" });
-  const [panelOpen, setPanelOpen] = useState(true);
+  /** 窄窗口时右栏是抽屉，这里记它是否打开 */
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [panelKey, setPanelKey] = useState(0);
+  const windowWidth = useWindowWidth();
+  const drawerMode = windowWidth < DRAWER_BELOW;
+  const [workspaceDir, setWorkspaceDir] = useState<string>();
+  useEffect(() => {
+    settingsApi.getWorkspace().then((w) => setWorkspaceDir(w.workspaceDir), () => {});
+  }, [settingsApi]);
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const { preflight, reload: reloadPreflight } = usePreflight();
@@ -161,11 +170,12 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     onRole: setRoleState,
     openSettings: () => setSelection({ kind: "page", page: "settings" }),
     openSupplement: () => {
-      setPanelOpen(true);
+      setDrawerOpen(true);
       panelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     },
+    openPanel: () => setDrawerOpen(true),
     sections: employee?.reviewSections ?? DEFAULT_SECTIONS,
-    downloadUrl: (kind) => (taskId ? api.deliverableUrl(taskId, kind) : undefined),
+    downloadUrl: (kind, version) => (taskId ? api.deliverableUrl(taskId, kind, version) : undefined),
   };
 
   const items = useMemo(
@@ -199,9 +209,18 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         actions={actions}
         session={sessionActions}
         events={task.events}
-        stepDefs={task.snapshot?.steps ?? []}
+        steps={task.snapshot?.steps ?? NO_STEPS}
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
+        attachments={(task.snapshot?.attachments ?? []).map((a) => a.name)}
+        artifacts={artifactsOf(task.snapshot, actions.downloadUrl)}
+        headerExtra={
+          drawerMode && taskId ? (
+            <Button className="drawer-toggle" icon={<LeftOutlined />} onClick={() => setDrawerOpen(true)}>
+              {taskState === "awaiting_initiator" ? "补充材料" : taskState === "draft" ? "草稿任务" : "交付物"}
+            </Button>
+          ) : undefined
+        }
         onSend={send}
       />
     );
@@ -230,46 +249,86 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       </>
     ) : taskState === "draft" ? (
       <div className="panel-card">
-        <h4>草稿任务</h4>
         <p className="chat-sub" style={{ marginBottom: 12 }}>
           已载入公开样例的销售明细与周会纪要（第 44 周）。提交后员工开始执行。
         </p>
         <TaskActionBar actions={actions} />
       </div>
     ) : (
-      <TaskPanel snapshot={task.snapshot} view={task.view} downloadUrl={actions.downloadUrl} />
+      <ReviewPanel snapshot={live ?? task.snapshot} actions={actions} />
     );
   }
 
-  const showPanel = panelOpen && panel !== null;
+  // 有交付物要读时右栏加宽到一半左右；窗口较窄时收成抽屉
+  const reading = (task.snapshot?.versions?.length ?? 0) > 0 && (taskState === "awaiting_review" || taskState === "delivered");
+  const layout = panelLayout(windowWidth, reading && panel !== null);
+  const drawer = layout.mode === "drawer";
+  const columnPanel = panel !== null && !drawer;
+  const supplementing = taskState === "awaiting_initiator";
+  const titled = taskState === "draft" || supplementing;
+  const panelBody = (
+    <>
+      {titled && <h3 className="panel-title">{taskState === "draft" ? "草稿任务" : "补充材料"}</h3>}
+      {panel}
+    </>
+  );
   return (
-    <div className={`shell ${showPanel ? "" : "no-panel"}`}>
-      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} />
+    <div className={`shell ${columnPanel ? (layout.wide ? "wide" : "") : "no-panel"} ${drawer ? "narrow" : ""}`}>
+      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} workspaceDir={workspaceDir} />
       <div className="col surface chat">{center}</div>
-      {showPanel ? (
-        <div className="col panel" ref={panelRef}>
-          <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
-            <h3 style={{ margin: 0, flex: 1, fontSize: 18 }}>
-              {taskState === "draft" ? "草稿任务" : taskState === "awaiting_initiator" ? "补充材料" : "任务面板"}
-            </h3>
-            <Tooltip title="收起">
-              <Button type="text" icon={<RightOutlined />} onClick={() => setPanelOpen(false)} />
-            </Tooltip>
-          </div>
-          {panel}
+      {columnPanel && (
+        <div className={`col panel ${titled ? "" : "panel-review"}`} ref={panelRef}>
+          {panelBody}
         </div>
-      ) : (
-        panel !== null && (
-          <Button style={{ position: "fixed", right: 16, top: 16 }} icon={<LeftOutlined />} onClick={() => setPanelOpen(true)}>
-            任务面板
-          </Button>
-        )
+      )}
+      {drawer && panel !== null && (
+        <>
+          <Drawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            placement="right"
+            width={Math.min(windowWidth - 24, reading ? 720 : 420)}
+            title={null}
+            closable={false}
+            styles={{ body: { padding: 12, display: "flex", flexDirection: "column", background: "var(--bg)" } }}
+          >
+            <div className={`col panel drawer-panel ${titled ? "" : "panel-review"}`} ref={panelRef}>
+              {panelBody}
+            </div>
+          </Drawer>
+        </>
       )}
       {IS_MOCK && <div style={{ position: "fixed", left: 18, bottom: 2, fontSize: 11, color: "var(--muted)" }}>模拟数据模式</div>}
     </div>
   );
 }
 
+const NO_STEPS: StepStatusView[] = [];
+
+/** 轨迹详情里的产物：每一版交付物和它的检验记录 */
+function artifactsOf(snapshot: TaskSnapshot | undefined, downloadUrl: CardActions["downloadUrl"]): TraceFile[] {
+  const versions = snapshot?.versions ?? [];
+  const latest = versions.length;
+  return versions.flatMap((v) =>
+    v.files.map((f) => ({
+      key: `${v.version}:${f.kind}`,
+      label: `第 ${v.version} 版 · ${FILE_NAMES[f.kind] ?? f.kind}`,
+      url: downloadUrl(f.kind, v.version === latest ? undefined : v.version),
+    })),
+  );
+}
+
+const FILE_NAMES: Record<string, string> = { docx: "Word 文档", md: "Markdown 报告", qc_record: "检验记录" };
+
+function useWindowWidth(): number {
+  const [width, setWidth] = useState(() => window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return width;
+}
 function initialRole(): UiRole | undefined {
   const q = new URLSearchParams(location.search).get("role");
   return q === "initiator" || q === "reviewer" || q === "operator" ? q : undefined;

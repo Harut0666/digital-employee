@@ -5,8 +5,10 @@ import {
   CloseCircleFilled,
   DownloadOutlined,
   ExclamationCircleFilled,
+  EyeOutlined,
   FileWordOutlined,
   ReloadOutlined,
+  RollbackOutlined,
   SettingOutlined,
   SwapOutlined,
   TeamOutlined,
@@ -31,9 +33,11 @@ export interface CardActions {
   openSettings: () => void;
   /** 聚焦右栏的补充表单 */
   openSupplement: () => void;
+  /** 打开右栏（窄窗口时是抽屉） */
+  openPanel: () => void;
   /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
   sections: { id: string; heading: string }[];
-  downloadUrl: (kind: "docx" | "md" | "qc_record") => string | undefined;
+  downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number) => string | undefined;
 }
 
 /** 会话层的操作：确认员工、上传材料、提交表单。都只有发起人能做，后端仍会校验。 */
@@ -220,55 +224,51 @@ export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
   );
 }
 
-export function ReviewCard({ item, actions }: { item: Extract<ChatItem, { kind: "review" }>; actions: CardActions }) {
-  // Agent 在对话里起草的退回意见带在卡片上，由审核人检查后确认
+/** 送审提示：审核在右栏进行，对话里只说一句；等别的角色时给切换入口。 */
+export function ReviewNoticeCard({ item, actions }: { item: Extract<ChatItem, { kind: "review_notice" }>; actions: CardActions }) {
+  if (!item.active) return <div className="notice">交付物已送审（已处理）</div>;
+  const pause = item.pause;
+  const outOfScope = pause !== undefined && pause.code !== "awaiting_review";
+  const reviewer = actions.waitingFor.includes(actions.role);
+  return (
+    <div className={`card ${outOfScope ? "warn" : ""}`}>
+      <div className="card-title" style={outOfScope ? { color: "var(--warn)" } : undefined}>
+        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined style={{ color: "var(--info)" }} />}
+        {outOfScope ? pause.title : "交付物写好了，请在右侧审核"}
+      </div>
+      {outOfScope && <div className="card-body">{pause.message}</div>}
+      {outOfScope && pause.resolution && <div className="card-body">{pause.resolution}</div>}
+      <div className="card-actions">
+        <Button size="small" icon={<EyeOutlined />} onClick={actions.openPanel}>
+          {reviewer ? "打开审核区" : "查看交付物"}
+        </Button>
+      </div>
+      {!reviewer && actions.waitingFor.length > 0 && (
+        <Handoff handoff={{ text: `等待${actions.waitingFor.map((r) => ROLE_LABELS[r]).join("、")}审核`, switchTo: actions.waitingFor }} onRole={actions.onRole} />
+      )}
+    </div>
+  );
+}
+
+/** 对话里写的退回意见：Agent 起草，审核人检查后在卡片上确认，才真正退回。 */
+export function ReturnConfirmCard({ item, actions }: { item: Extract<ChatItem, { kind: "return_confirm" }>; actions: CardActions }) {
   const [picked, setPicked] = useState<string[]>(item.sections ?? []);
-  const [comment, setComment] = useState(item.comment ?? "");
-  const docx = actions.downloadUrl("docx");
-  const linkProps = useLinkProps();
+  const [comment, setComment] = useState(item.comment);
 
-  if (!item.active) return <div className="card muted">{item.comment ? `退回意见草稿：${item.comment}（已处理）` : "审核已结束"}</div>;
+  if (!item.active) return <div className="card muted">退回意见草稿：{item.comment}（已处理）</div>;
 
-  const scoped: CardActions = { ...actions, taskActions: item.actions, pause: item.pause };
-  // 普通待审核的说明就是这张卡本身；超范围意见要说清为什么回到这里
-  const pause = item.pause?.code === "awaiting_review" ? undefined : item.pause;
-  const canReturn = item.actions.some((a) => a.command === "return" && a.roles.includes(actions.role));
+  const scoped: CardActions = { ...actions, taskActions: item.actions };
+  const mine = item.actions.some((a) => a.roles.includes(actions.role));
   return (
     <div className="card">
       <div className="card-title">
-        <FileWordOutlined style={{ color: "#2f6fed", fontSize: 28 }} />
-        <span>
-          {item.comment ? "确认退回意见" : "请审核交付物"}
-          <div className="chat-sub" style={{ fontWeight: 400 }}>{clock(item.ts)}</div>
-        </span>
-        {docx && (
-          <Button style={{ marginLeft: "auto" }} icon={<DownloadOutlined />} href={docx} {...linkProps(docx)}>
-            下载
-          </Button>
-        )}
+        <RollbackOutlined style={{ color: "var(--warn)" }} /> 确认退回意见
+        <span className="chat-sub" style={{ fontWeight: 400, marginLeft: "auto" }}>{clock(item.ts)}</span>
       </div>
-      {pause && (
-        <div className="card-body review-pause">
-          <b>{pause.title}</b>
-          <div>{pause.message}</div>
-          {pause.resolution && <div>{pause.resolution}</div>}
-        </div>
-      )}
-      {canReturn && (
-        <div className="card-body">
-          <div>退回涉及章节（可选）</div>
-          <Checkbox.Group className="section-grid" options={actions.sections.map((s) => ({ label: s.heading, value: s.id }))} value={picked} onChange={(v) => setPicked(v as string[])} />
-          <div>退回意见</div>
-          <Input.TextArea
-            rows={3}
-            maxLength={500}
-            showCount
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-            placeholder="写明需要修改的地方…"
-            style={{ marginTop: 6 }}
-          />
-        </div>
+      {mine ? (
+        <ReturnForm sections={actions.sections} picked={picked} onPick={setPicked} comment={comment} onComment={setComment} />
+      ) : (
+        <div className="card-body">{item.comment}</div>
       )}
       <TaskActionBar
         actions={scoped}
@@ -287,6 +287,37 @@ export function ReviewCard({ item, actions }: { item: Extract<ChatItem, { kind: 
   );
 }
 
+/** 退回意见的编辑区：涉及章节（可选）和意见正文。右栏的退回对话框和对话里的确认卡片共用。 */
+export function ReturnForm({
+  sections,
+  picked,
+  onPick,
+  comment,
+  onComment,
+}: {
+  sections: { id: string; heading: string }[];
+  picked: string[];
+  onPick: (ids: string[]) => void;
+  comment: string;
+  onComment: (text: string) => void;
+}) {
+  return (
+    <div className="card-body">
+      <div>退回涉及章节（可选）</div>
+      <Checkbox.Group className="section-grid" options={sections.map((s) => ({ label: s.heading, value: s.id }))} value={picked} onChange={(v) => onPick(v as string[])} />
+      <div>退回意见</div>
+      <Input.TextArea
+        rows={3}
+        maxLength={500}
+        showCount
+        value={comment}
+        onChange={(e) => onComment(e.target.value)}
+        placeholder="写明需要修改的地方…"
+        style={{ marginTop: 6 }}
+      />
+    </div>
+  );
+}
 export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kind: "delivered" }>; actions: CardActions }) {
   const names: Record<string, string> = { docx: "Word 文档", md: "Markdown 报告", qc_record: "检验记录" };
   const linkProps = useLinkProps();
@@ -322,8 +353,10 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <PauseCard key={item.key} item={item} actions={actions} />;
     case "qc":
       return <QcCard key={item.key} item={item} />;
-    case "review":
-      return <ReviewCard key={item.key} item={item} actions={actions} />;
+    case "review_notice":
+      return <ReviewNoticeCard key={item.key} item={item} actions={actions} />;
+    case "return_confirm":
+      return <ReturnConfirmCard key={item.key} item={item} actions={actions} />;
     case "delivered":
       return <DeliveredCard key={item.key} item={item} actions={actions} />;
   }
