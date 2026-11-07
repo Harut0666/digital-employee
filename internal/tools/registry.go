@@ -8,7 +8,9 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -174,12 +176,30 @@ func (r *Registry) faultResult(name string, mode contract.FaultMode) contract.To
 	return contract.ToolCallResult{OK: false, Error: fmt.Sprintf("工具 %s 执行失败（未知故障模式）", name), Retryable: true}
 }
 
+// materialError 工具读不了发起人上传的文件：这是材料问题，不是工具故障。
+type materialError struct {
+	path string
+	err  error
+}
+
+func (e *materialError) Error() string { return e.err.Error() }
+func (e *materialError) Unwrap() error { return e.err }
+
 func failure(name string, err error) contract.ToolCallResult {
-	return contract.ToolCallResult{
+	result := contract.ToolCallResult{
 		OK:        false,
 		Error:     fmt.Sprintf("工具 %s 执行失败：%v", name, err),
 		Retryable: true,
 	}
+	var material *materialError
+	if errors.As(err, &material) {
+		result.Retryable = false
+		result.MaterialIssue = &contract.MaterialIssue{
+			Path:    material.path,
+			Message: fmt.Sprintf("文件「%s」无法读取，可能已损坏。请重新上传后继续。", filepath.Base(material.path)),
+		}
+	}
+	return result
 }
 
 func decodeFailure(name string, err error) contract.ToolCallResult {

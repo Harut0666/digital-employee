@@ -265,7 +265,7 @@ func ParseMinutes(paths []string) (contract.ParseMinutesOutput, error) {
 	for _, path := range paths {
 		m, err := parseMinutesFile(path)
 		if err != nil {
-			return contract.ParseMinutesOutput{}, err
+			return contract.ParseMinutesOutput{}, &materialError{path: path, err: err}
 		}
 		out.Minutes = append(out.Minutes, *m)
 	}

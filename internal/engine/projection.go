@@ -159,6 +159,15 @@ func (p *projection) rewind(fromIndex int) {
 	}
 }
 
+// restoreRewound 把被回退、这一轮没有重新完成的步骤恢复成旧检查点。
+func (p *projection) restoreRewound() {
+	for stepID, checkpoint := range p.prior {
+		if _, done := p.done[stepID]; !done {
+			p.done[stepID] = checkpoint
+		}
+	}
+}
+
 // ElapsedMS 任务活跃时长（暂停期间不计）。
 func (p *projection) ElapsedMS(nowMS int64) int64 {
 	elapsed := p.activeAccumMS
@@ -278,6 +287,11 @@ func (p *projection) applyStateChange(event contract.TaskEvent) {
 		p.rewind(p.FirstReworkIndex())
 		p.ReworkRound++
 		p.resetWindow()
+	case contract.TriggerNeedsHuman:
+		// 回到待审核时原交付物不变，步骤也恢复到送审时；旧日志里转待人工处理的任务靠重试重跑，不恢复
+		if event.To == contract.StateAwaitingReview {
+			p.restoreRewound()
+		}
 	}
 
 	if p.activeSince != nil {
@@ -365,12 +379,13 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 	if form == nil {
 		form = map[string]any{}
 	}
+	actions := availableActions(p.State, p.Pause)
 	return contract.TaskSnapshot{
 		ID:          taskID,
 		Employee:    p.Employee,
 		ConfigHash:  p.ConfigHash,
 		State:       p.State,
-		Pause:       p.Pause,
+		Pause:       presentPause(p.State, p.Pause, actions),
 		Form:        form,
 		Attachments: attachments,
 		Steps:       steps,
@@ -382,6 +397,8 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 		QC:           p.QC,
 		Deliverables: deliverables,
 		LastSeq:      p.LastSeq,
+		Actions:      actions,
+		WaitingFor:   waitingForRoles(p.State, actions),
 	}
 }
 

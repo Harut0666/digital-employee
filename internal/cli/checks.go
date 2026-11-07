@@ -75,7 +75,7 @@ type RunEvidence struct {
 var pauseCodes = []string{
 	"missing_sales", "missing_dimensions", "period_out_of_range", "period_incomplete",
 	"minutes_missing", "minutes_week_mismatch", "invalid_input", "list_direction_mismatch",
-	"insufficient_material", "tool_failed", "limit_exceeded", "qc_exhausted",
+	"insufficient_material", "material_issue", "tool_failed", "limit_exceeded", "qc_exhausted",
 	"rework_needs_human", "awaiting_review",
 }
 

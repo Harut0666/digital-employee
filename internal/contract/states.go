@@ -57,6 +57,14 @@ const (
 	RoleSystem    Role = "system"
 )
 
+// RoleLabels 界面显示名。
+var RoleLabels = map[Role]string{
+	RoleInitiator: "发起人",
+	RoleReviewer:  "审核人",
+	RoleOperator:  "操作员",
+	RoleSystem:    "系统",
+}
+
 // TransitionTrigger 流转触发器。
 type TransitionTrigger string
 
@@ -90,8 +98,10 @@ type Transition struct {
 }
 
 // Transitions 表外的流转一律拒绝，并写 transition_rejected 事件。
+// 表只回答“这条流转是否合法”；某个暂停下谁能发起什么，由引擎的 availableActions 决定。
 var Transitions = []Transition{
 	{StateDraft, StateAdmission, TriggerSubmit, RoleInitiator},
+	{StateDraft, StateTerminated, TriggerTerminate, RoleInitiator},
 	{StateAdmission, StateRunning, TriggerAdmissionPassed, RoleSystem},
 	{StateAdmission, StateAwaitingInitiator, TriggerAdmissionFailed, RoleSystem},
 	{StateAdmission, StateAwaitingOperator, TriggerToolFailed, RoleSystem},
@@ -103,15 +113,18 @@ var Transitions = []Transition{
 	{StateRunning, StateQC, TriggerStepsCompleted, RoleSystem},
 	{StateRunning, StateAwaitingOperator, TriggerLimitExceeded, RoleSystem},
 	{StateRunning, StateAwaitingOperator, TriggerToolFailed, RoleSystem},
-	{StateRunning, StateAwaitingOperator, TriggerNeedsHuman, RoleSystem},
+	{StateRunning, StateAwaitingReview, TriggerNeedsHuman, RoleSystem},
 	{StateQC, StateAwaitingReview, TriggerQcPassed, RoleSystem},
 	{StateQC, StateRunning, TriggerQcAutofix, RoleSystem},
 	{StateQC, StateAwaitingOperator, TriggerQcExhausted, RoleSystem},
 	{StateAwaitingOperator, StateRunning, TriggerRetry, RoleOperator},
 	{StateAwaitingOperator, StateAdmission, TriggerRetry, RoleOperator},
+	{StateAwaitingOperator, StateRunning, TriggerRetry, RoleInitiator},
+	{StateAwaitingOperator, StateAdmission, TriggerRetry, RoleInitiator},
 	{StateAwaitingOperator, StateTerminated, TriggerTerminate, RoleOperator},
 	{StateAwaitingReview, StateDelivered, TriggerApprove, RoleReviewer},
 	{StateAwaitingReview, StateRunning, TriggerReturn, RoleReviewer},
+	{StateAwaitingReview, StateTerminated, TriggerTerminate, RoleReviewer},
 }
 
 // FindTransition 在流转表里查 from + trigger 的唯一一条（同一 from+trigger 只有一种目标）。
@@ -137,6 +150,7 @@ const (
 	PauseInvalidInput         PauseCode = "invalid_input"
 	PauseListDirection        PauseCode = "list_direction_mismatch"
 	PauseInsufficientMaterial PauseCode = "insufficient_material"
+	PauseMaterialIssue        PauseCode = "material_issue"
 	PauseToolFailed           PauseCode = "tool_failed"
 	PauseLimitExceeded        PauseCode = "limit_exceeded"
 	PauseQcExhausted          PauseCode = "qc_exhausted"
@@ -145,9 +159,13 @@ const (
 )
 
 // PauseReason 暂停原因：给人看的中文说明 + 本暂停下允许发起的命令。
+// Title、Resolution 只在快照里出现，读取时按 Code 和 Detail 生成，不写入事件；
+// 工具名、失败代码等技术细节放在 Detail。
 type PauseReason struct {
-	Code    PauseCode      `json:"code" yaml:"code"`
-	Message string         `json:"message" yaml:"message"`
-	Options []string       `json:"options,omitempty" yaml:"options,omitempty"`
-	Detail  map[string]any `json:"detail,omitempty" yaml:"detail,omitempty"`
+	Code       PauseCode      `json:"code" yaml:"code"`
+	Title      string         `json:"title,omitempty" yaml:"title,omitempty"`
+	Message    string         `json:"message" yaml:"message"`
+	Resolution string         `json:"resolution,omitempty" yaml:"resolution,omitempty"`
+	Options    []string       `json:"options,omitempty" yaml:"options,omitempty"`
+	Detail     map[string]any `json:"detail,omitempty" yaml:"detail,omitempty"`
 }

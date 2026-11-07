@@ -48,9 +48,6 @@ const defaultFactsStep = "compute_metrics"
 // contradictionsTool 用这个工具的计算步骤输出纪要矛盾，供“纪要矛盾覆盖”质检使用。
 const contradictionsTool = "detect_contradictions"
 
-// operatorOptions 操作员在暂停态可发起的命令。
-var operatorOptions = []string{contract.CmdRetry, contract.CmdTerminate}
-
 // SimulatedCrash 模拟进程被杀：崩溃注入命中时返回。返回之后这个引擎实例不再写任何事件。
 type SimulatedCrash struct {
 	StepID string
@@ -294,40 +291,36 @@ func (e *Engine) nowISO() string {
 	return e.now().UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-// transition 按流转表推进状态。retry 在 awaiting_operator 下有两个目标：
+// transitionTarget 按流转表查目标状态（调用方持有 rt.mu）。retry 在 awaiting_operator 下有两个目标：
 // 失败的是准入步骤（尚未完成）回到准入，否则回到执行。
+func transitionTarget(rt *taskRuntime, from contract.TaskState, trigger contract.TransitionTrigger) (contract.TaskState, bool) {
+	transition, ok := contract.FindTransition(from, trigger)
+	if !ok {
+		return "", false
+	}
+	if trigger == contract.TriggerRetry {
+		if _, admissionDone := rt.proj.done[rt.config.Workflow.AdmissionStep]; !admissionDone {
+			return contract.StateAdmission, true
+		}
+	}
+	return transition.To, true
+}
+
+// transition 按流转表推进状态。
 func (e *Engine) transition(rt *taskRuntime, trigger contract.TransitionTrigger, actor contract.Role, pause *contract.PauseReason) error {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
+	return e.transitionLocked(rt, trigger, actor, pause)
+}
+
+func (e *Engine) transitionLocked(rt *taskRuntime, trigger contract.TransitionTrigger, actor contract.Role, pause *contract.PauseReason) error {
 	from := rt.proj.State
-	candidates := []contract.Transition{}
-	for _, item := range contract.Transitions {
-		if item.From == from && item.Trigger == trigger {
-			candidates = append(candidates, item)
-		}
-	}
-	var chosen *contract.Transition
-	if trigger == contract.TriggerRetry && len(candidates) > 1 {
-		admissionDone := false
-		if checkpoint, ok := rt.proj.done[rt.config.Workflow.AdmissionStep]; ok {
-			_ = checkpoint
-			admissionDone = true
-		}
-		for index := range candidates {
-			if (candidates[index].To == contract.StateAdmission) == !admissionDone {
-				chosen = &candidates[index]
-				break
-			}
-		}
-	}
-	if chosen == nil && len(candidates) > 0 {
-		chosen = &candidates[0]
-	}
-	if chosen == nil {
+	to, ok := transitionTarget(rt, from, trigger)
+	if !ok {
 		return fmt.Errorf("流转表中没有 %s --%s-->", from, trigger)
 	}
 	return e.appendLocked(rt, contract.TaskEvent{
-		Type: contract.EventStateChanged, From: from, To: chosen.To, Trigger: trigger, Actor: actor, Pause: pause,
+		Type: contract.EventStateChanged, From: from, To: to, Trigger: trigger, Actor: actor, Pause: pause,
 	})
 }
 
@@ -637,39 +630,28 @@ func (e *Engine) drive(rt *taskRuntime) (err error) {
 
 // unexpectedFailure 引擎自身遇到未预料的错误：留痕并转人工，不吞掉也不崩溃。
 func (e *Engine) unexpectedFailure(rt *taskRuntime, failure error) error {
-	message := fmt.Sprintf("任务执行时发生内部错误：%v", failure)
+	message := "任务执行时发生内部错误。"
+	detail := map[string]any{"error": failure.Error()}
 	state := view(rt, func(p *projection) contract.TaskState { return p.State })
 	switch state {
 	case contract.StateAdmission:
-		return e.pauseOperator(rt, contract.TriggerToolFailed, contract.PauseToolFailed, message, nil)
+		return e.pauseOperator(rt, contract.TriggerToolFailed, contract.PauseToolFailed, message, detail)
 	case contract.StateRunning:
-		return e.pauseOperator(rt, contract.TriggerToolFailed, contract.PauseToolFailed, message, nil)
+		return e.pauseOperator(rt, contract.TriggerToolFailed, contract.PauseToolFailed, message, detail)
 	default:
-		return e.pauseOperator(rt, contract.TriggerQcExhausted, contract.PauseToolFailed, message, nil)
+		return e.pauseOperator(rt, contract.TriggerQcExhausted, contract.PauseToolFailed, message, detail)
 	}
 }
 
 func (e *Engine) pauseOperator(rt *taskRuntime, trigger contract.TransitionTrigger, code contract.PauseCode, message string, detail map[string]any) error {
 	return e.transition(rt, trigger, contract.RoleSystem, &contract.PauseReason{
-		Code: code, Message: message, Options: operatorOptions, Detail: detail,
+		Code: code, Message: message, Options: pauseOptions(contract.StateAwaitingOperator, code), Detail: detail,
 	})
 }
 
 func (e *Engine) progressText(rt *taskRuntime) string {
 	doneCount := view(rt, func(p *projection) int { return len(p.done) })
 	return fmt.Sprintf("已完成 %d/%d 步", doneCount, len(rt.config.Workflow.Steps))
-}
-
-// initiatorOptions 准入不通过时各暂停原因下发起人可以做的事。
-func initiatorOptions(code contract.PauseCode) []string {
-	switch code {
-	case contract.PauseMinutesMissing, contract.PauseMinutesWeekMismatch:
-		return []string{contract.CmdSupplement, contract.CmdContinueWithoutMinutes, contract.CmdTerminate}
-	case contract.PausePeriodIncomplete:
-		return []string{contract.CmdSupplement, contract.CmdContinueWithPartial, contract.CmdTerminate}
-	default:
-		return []string{contract.CmdSupplement, contract.CmdTerminate}
-	}
 }
 
 func (e *Engine) stepAdmission(rt *taskRuntime) error {
@@ -721,7 +703,7 @@ func (e *Engine) stepAdmission(rt *taskRuntime) error {
 			}
 		}
 		return e.transition(rt, contract.TriggerAdmissionFailed, contract.RoleSystem, &contract.PauseReason{
-			Code: code, Message: message, Options: initiatorOptions(code), Detail: detail,
+			Code: code, Message: message, Options: pauseOptions(contract.StateAwaitingInitiator, code), Detail: detail,
 		})
 	}
 	return e.transition(rt, contract.TriggerAdmissionPassed, contract.RoleSystem, nil)
@@ -830,8 +812,8 @@ func (e *Engine) executeStep(rt *taskRuntime, step contract.StepConfig) (string,
 		return "", e.crash(rt, step.ID)
 	}
 	if resolveErr != nil {
-		return e.failStep(rt, step, contract.TriggerToolFailed,
-			fmt.Sprintf("步骤「%s」的输入无法解析：%v。%s。", step.Label, resolveErr, e.progressText(rt)), nil)
+		message := fmt.Sprintf("步骤「%s」的输入无法解析：%v。%s。", step.Label, resolveErr, e.progressText(rt))
+		return e.failStep(rt, step, contract.TriggerToolFailed, message, message, nil)
 	}
 	if step.Kind == contract.StepKindCompute {
 		return e.runCompute(rt, step, args)
@@ -869,9 +851,10 @@ func (e *Engine) crash(rt *taskRuntime, stepID string) error {
 }
 
 // failStep 步骤失败：写 step_failed；可选步骤直接跳过，否则转暂停。
-func (e *Engine) failStep(rt *taskRuntime, step contract.StepConfig, code contract.TransitionTrigger, message string, detail map[string]any) (string, error) {
+// stepError 是给轨迹看的技术说明，message 是给人看的暂停说明，工具名和失败代码放进 detail。
+func (e *Engine) failStep(rt *taskRuntime, step contract.StepConfig, code contract.TransitionTrigger, stepError, message string, detail map[string]any) (string, error) {
 	if err := e.append(rt, contract.TaskEvent{
-		Type: contract.EventStepFailed, StepID: step.ID, Error: message,
+		Type: contract.EventStepFailed, StepID: step.ID, Error: stepError,
 	}); err != nil {
 		return "", err
 	}
@@ -886,6 +869,25 @@ func (e *Engine) failStep(rt *taskRuntime, step contract.StepConfig, code contra
 		trigger = contract.TriggerToolFailed
 	}
 	return outcomePaused, e.pauseOperator(rt, trigger, pauseCode, message, detail)
+}
+
+// failForMaterial 工具报告材料问题：写 step_failed，转待发起人补充。可选步骤照常跳过。
+func (e *Engine) failForMaterial(rt *taskRuntime, step contract.StepConfig, result contract.ToolCallResult) (string, error) {
+	issue := result.MaterialIssue
+	if err := e.append(rt, contract.TaskEvent{
+		Type: contract.EventStepFailed, StepID: step.ID, Error: result.Error,
+	}); err != nil {
+		return "", err
+	}
+	if step.Optional {
+		return outcomeDone, nil
+	}
+	return outcomePaused, e.transition(rt, contract.TriggerMaterialIssue, contract.RoleSystem, &contract.PauseReason{
+		Code:    contract.PauseMaterialIssue,
+		Message: fmt.Sprintf("步骤「%s」发现材料问题：%s", step.Label, issue.Message),
+		Options: pauseOptions(contract.StateAwaitingInitiator, contract.PauseMaterialIssue),
+		Detail:  map[string]any{"tool": step.Tool, "path": issue.Path, "error": result.Error},
+	})
 }
 
 func (e *Engine) completeStep(rt *taskRuntime, step contract.StepConfig, output any) error {
@@ -949,9 +951,13 @@ func (e *Engine) runCompute(rt *taskRuntime, step contract.StepConfig, args any)
 			time.Sleep(time.Duration(wait) * time.Millisecond)
 		}
 	}
+	if !result.OK && result.MaterialIssue != nil {
+		return e.failForMaterial(rt, step, result)
+	}
 	if !result.OK {
 		return e.failStep(rt, step, contract.TriggerToolFailed,
 			fmt.Sprintf("工具 %s 调用失败（共尝试 %d 次）：%s。%s。", step.Tool, tried, result.Error, e.progressText(rt)),
+			fmt.Sprintf("步骤「%s」执行失败，已尝试 %d 次。%s。", step.Label, tried, e.progressText(rt)),
 			map[string]any{
 				"tool": step.Tool, "attempts": tried, "error": result.Error,
 				"completedSteps": view(rt, func(p *projection) int { return len(p.done) }),
@@ -1133,8 +1139,10 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		}
 		return e.failStep(rt, step, trigger,
 			fmt.Sprintf("步骤「%s」未能完成（%s）：%s。%s。", step.Label, result.Failure, result.Message, e.progressText(rt)),
+			fmt.Sprintf("步骤「%s」未能完成。%s。", step.Label, e.progressText(rt)),
 			map[string]any{
 				"failure":        string(result.Failure),
+				"error":          result.Message,
 				"completedSteps": view(rt, func(p *projection) int { return len(p.done) }),
 				"totalSteps":     len(rt.config.Workflow.Steps),
 			})
@@ -1151,12 +1159,22 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 				reason = "该意见超出自动处理范围"
 			}
 			message := fmt.Sprintf("步骤「%s」判断需要人工处理：%s。%s。", step.Label, reason, e.progressText(rt))
+			if !view(rt, func(p *projection) bool { return len(p.deliverables) > 0 }) {
+				// 还没有交付物，待审核无物可审，只能按步骤失败处理
+				return e.failStep(rt, step, contract.TriggerToolFailed, message, message, map[string]any{"output": output})
+			}
 			if err := e.append(rt, contract.TaskEvent{
 				Type: contract.EventStepFailed, StepID: step.ID, Error: message,
 			}); err != nil {
 				return "", err
 			}
-			return outcomePaused, e.pauseOperator(rt, contract.TriggerNeedsHuman, contract.PauseReworkNeedsHuman, message, map[string]any{"output": output})
+			// 超范围意见回到待审核：原交付物和版本保持不变，由审核人修改意见、直接通过或终止
+			return outcomePaused, e.transition(rt, contract.TriggerNeedsHuman, contract.RoleSystem, &contract.PauseReason{
+				Code:    contract.PauseReworkNeedsHuman,
+				Message: fmt.Sprintf("退回意见无法自动处理：%s。原交付物保持不变。", strings.TrimRight(reason, "。")),
+				Options: pauseOptions(contract.StateAwaitingReview, contract.PauseReworkNeedsHuman),
+				Detail:  map[string]any{"reason": reason, "step": step.ID, "output": output},
+			})
 		}
 	}
 
@@ -1214,13 +1232,14 @@ func (e *Engine) stepQc(rt *taskRuntime) error {
 
 		checks, err := e.runQcChecks(rt)
 		if err != nil {
-			message := fmt.Sprintf("质检引擎出错：%v。%s。", err, e.progressText(rt))
+			stepError := fmt.Sprintf("质检引擎出错：%v。%s。", err, e.progressText(rt))
 			if appendErr := e.append(rt, contract.TaskEvent{
-				Type: contract.EventStepFailed, StepID: qcStep.ID, Error: message,
+				Type: contract.EventStepFailed, StepID: qcStep.ID, Error: stepError,
 			}); appendErr != nil {
 				return appendErr
 			}
-			return e.pauseOperator(rt, contract.TriggerQcExhausted, contract.PauseToolFailed, message, nil)
+			return e.pauseOperator(rt, contract.TriggerQcExhausted, contract.PauseToolFailed,
+				fmt.Sprintf("质检未能完成。%s。", e.progressText(rt)), map[string]any{"error": err.Error()})
 		}
 		allPassed := true
 		for _, check := range checks {
@@ -1360,6 +1379,7 @@ func (e *Engine) finishQcPassed(rt *taskRuntime, checks []contract.QcCheckResult
 	if err := e.createDeliverables(rt, checks); err != nil {
 		return err
 	}
+	// Options 写进事件后属于 A-01 对拍基准，这里保持原样；快照读取时按 availableActions 重算
 	return e.transition(rt, contract.TriggerQcPassed, contract.RoleSystem, &contract.PauseReason{
 		Code:    contract.PauseAwaitingReview,
 		Message: "已通过质检，等待审核人决定。",
@@ -1636,14 +1656,9 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 
 	rt.mu.Lock()
 	from := rt.proj.State
-	candidates := []contract.Transition{}
-	for _, item := range contract.Transitions {
-		if item.From == from && item.Trigger == trigger {
-			candidates = append(candidates, item)
-		}
-	}
-	if len(candidates) == 0 {
-		reason := fmt.Sprintf("任务当前处于「%s」，不能执行「%s」。", contract.StateLabels[from], command.Type)
+	action, available := findAction(availableActions(from, rt.proj.Pause), command.Type)
+	if !available {
+		reason := illegalCommandReason(from, command.Type)
 		if err := e.appendLocked(rt, contract.TaskEvent{
 			Type: contract.EventTransitionRejected, From: from, Trigger: trigger, Actor: actor, Reason: reason,
 		}); err != nil {
@@ -1653,20 +1668,8 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 		rt.mu.Unlock()
 		return contract.CommandResult{OK: false, Error: contract.ErrIllegalTransition, Message: reason}
 	}
-	matched := false
-	for _, item := range candidates {
-		if item.Actor == actor {
-			matched = true
-			break
-		}
-	}
-	if !matched {
-		actors := make([]string, 0, len(candidates))
-		for _, item := range candidates {
-			actors = append(actors, string(item.Actor))
-		}
-		reason := fmt.Sprintf("角色 %s 无权在「%s」执行「%s」，应由 %s 执行。",
-			actor, contract.StateLabels[from], command.Type, strings.Join(actors, " / "))
+	if !actionAllows(action, actor) {
+		reason := forbiddenRoleReason(from, action, actor)
 		_ = e.appendLocked(rt, contract.TaskEvent{
 			Type: contract.EventTransitionRejected, From: from, Trigger: trigger, Actor: actor, Reason: reason,
 		})
@@ -1690,7 +1693,7 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 			return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
 		}
 		merged := mergeForm(rt.proj.Form, command.Form)
-		attachments := append(append([]contract.AttachmentRef{}, rt.proj.Attachments...), added...)
+		attachments := append(attachmentsToKeep(rt.proj), added...)
 		if err := e.appendLocked(rt, contract.TaskEvent{
 			Type: contract.EventFormUpdated, Form: merged, Attachments: attachments, Actor: actor,
 		}); err != nil {
@@ -1735,38 +1738,7 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 			return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
 		}
 	}
-	// 状态流转（retry 的歧义在这里解决）
-	from = rt.proj.State
-	chosen := (*contract.Transition)(nil)
-	fresh := []contract.Transition{}
-	for _, item := range contract.Transitions {
-		if item.From == from && item.Trigger == trigger {
-			fresh = append(fresh, item)
-		}
-	}
-	if trigger == contract.TriggerRetry && len(fresh) > 1 {
-		admissionDone := false
-		if _, ok := rt.proj.done[rt.config.Workflow.AdmissionStep]; ok {
-			admissionDone = true
-		}
-		for index := range fresh {
-			if (fresh[index].To == contract.StateAdmission) == !admissionDone {
-				chosen = &fresh[index]
-				break
-			}
-		}
-	}
-	if chosen == nil && len(fresh) > 0 {
-		chosen = &fresh[0]
-	}
-	if chosen == nil {
-		rt.mu.Unlock()
-		return contract.CommandResult{OK: false, Error: contract.ErrIllegalTransition,
-			Message: fmt.Sprintf("流转表中没有 %s --%s-->", from, trigger)}
-	}
-	if err := e.appendLocked(rt, contract.TaskEvent{
-		Type: contract.EventStateChanged, From: from, To: chosen.To, Trigger: trigger, Actor: actor,
-	}); err != nil {
+	if err := e.transitionLocked(rt, trigger, actor, nil); err != nil {
 		rt.mu.Unlock()
 		return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
 	}
@@ -1778,6 +1750,21 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 		e.kick(rt)
 	}
 	return contract.CommandResult{OK: true, Snapshot: &snapshot}
+}
+
+// attachmentsToKeep 补充材料时保留的附件。材料问题点名的文件要移除，否则解析步骤还会在同一个文件上失败。
+func attachmentsToKeep(p *projection) []contract.AttachmentRef {
+	bad := ""
+	if p.Pause != nil && p.Pause.Code == contract.PauseMaterialIssue {
+		bad, _ = p.Pause.Detail["path"].(string)
+	}
+	kept := make([]contract.AttachmentRef, 0, len(p.Attachments))
+	for _, attachment := range p.Attachments {
+		if bad == "" || attachment.Path != bad {
+			kept = append(kept, attachment)
+		}
+	}
+	return kept
 }
 
 func mergeForm(base map[string]any, patch map[string]any) map[string]any {
@@ -2045,12 +2032,15 @@ func (e *Engine) titleOf(rt *taskRuntime) string {
 }
 
 func (e *Engine) summaryOf(rt *taskRuntime) contract.TaskSummary {
-	return contract.TaskSummary{
-		ID: rt.id, Employee: view(rt, func(p *projection) string { return p.Employee }),
-		Title:     e.titleOf(rt),
-		State:     view(rt, func(p *projection) contract.TaskState { return p.State }),
-		UpdatedAt: view(rt, func(p *projection) string { return p.LastTS }),
-	}
+	summary := view(rt, func(p *projection) contract.TaskSummary {
+		return contract.TaskSummary{
+			ID: rt.id, Employee: p.Employee, State: p.State, UpdatedAt: p.LastTS,
+			StatusText: statusText(p.State, p.Pause),
+			WaitingFor: waitingForRoles(p.State, availableActions(p.State, p.Pause)),
+		}
+	})
+	summary.Title = e.titleOf(rt)
+	return summary
 }
 
 // salvagedSummary 日志损坏的任务也要出现在列表里：按可解析的前缀给出最后已知状态，并带上错误说明。

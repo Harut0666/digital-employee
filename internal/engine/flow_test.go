@@ -404,11 +404,37 @@ func TestTransitionsTable(t *testing.T) {
 	}
 }
 
+func TestEveryActionHasALegalTransition(t *testing.T) {
+	// 可用操作决定谁能做什么，流转表决定流转是否合法，两者不能走偏
+	codes := []contract.PauseCode{
+		"", contract.PauseMissingSales, contract.PauseMinutesMissing, contract.PausePeriodIncomplete,
+		contract.PauseMaterialIssue, contract.PauseToolFailed, contract.PauseLimitExceeded,
+		contract.PauseQcExhausted, contract.PauseReworkNeedsHuman, contract.PauseAwaitingReview,
+	}
+	for _, state := range contract.TaskStates {
+		for _, code := range codes {
+			for _, action := range availableActions(state, &contract.PauseReason{Code: code}) {
+				for _, role := range action.Roles {
+					found := false
+					for _, transition := range contract.Transitions {
+						if transition.From == state && transition.Trigger == commandTrigger[action.Command] && transition.Actor == role {
+							found = true
+						}
+					}
+					if !found {
+						t.Errorf("%s/%s 的操作 %s 给了 %s，但流转表没有这条流转", state, code, action.Command, role)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestIllegalTransitionsAreRejected(t *testing.T) {
 	demo := newDemoEngine(t, demoEmployeeOptions{})
 	task := demo.create(t)
 
-	// draft 状态下只允许 initiator 的 submit
+	// draft 状态下只允许 initiator 的 submit 和 terminate
 	attempts := []struct {
 		command contract.TaskCommand
 		actor   contract.Role
@@ -418,7 +444,7 @@ func TestIllegalTransitionsAreRejected(t *testing.T) {
 		{contract.TaskCommand{Type: contract.CmdApprove}, contract.RoleReviewer, contract.ErrIllegalTransition, contract.TriggerApprove},
 		{contract.TaskCommand{Type: contract.CmdReturn, Comment: "改"}, contract.RoleReviewer, contract.ErrIllegalTransition, contract.TriggerReturn},
 		{contract.TaskCommand{Type: contract.CmdRetry}, contract.RoleOperator, contract.ErrIllegalTransition, contract.TriggerRetry},
-		{contract.TaskCommand{Type: contract.CmdTerminate}, contract.RoleInitiator, contract.ErrIllegalTransition, contract.TriggerTerminate},
+		{contract.TaskCommand{Type: contract.CmdTerminate}, contract.RoleReviewer, contract.ErrForbiddenRole, contract.TriggerTerminate},
 		{contract.TaskCommand{Type: contract.CmdSubmit}, contract.RoleReviewer, contract.ErrForbiddenRole, contract.TriggerSubmit},
 	}
 	for _, attempt := range attempts {
@@ -706,6 +732,20 @@ func TestJudgeFailurePauses(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("缺少 step_failed 事件")
+	}
+}
+
+func TestNeedsHumanWithoutDeliverableGoesToOperator(t *testing.T) {
+	// 首轮还没有交付物，待审核无物可审，只能按步骤失败处理
+	demo := newDemoEngine(t, demoEmployeeOptions{})
+	demo.judgment.outputs["causes"] = map[string]any{"needsHuman": true, "needsHumanReason": "无法判断"}
+	task := demo.create(t)
+	snapshot := demo.submit(t, task.ID)
+	if snapshot.State != contract.StateAwaitingOperator {
+		t.Fatalf("状态 = %s，want awaiting_operator", snapshot.State)
+	}
+	if snapshot.Pause == nil || snapshot.Pause.Code != contract.PauseToolFailed {
+		t.Fatalf("暂停原因 = %+v", snapshot.Pause)
 	}
 }
 

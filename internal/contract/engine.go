@@ -91,6 +91,21 @@ type BudgetItem struct {
 	Limit int64 `json:"limit"`
 }
 
+// 操作按钮的样式。
+const (
+	ActionPrimary = "primary"
+	ActionDefault = "default"
+	ActionDanger  = "danger"
+)
+
+// TaskAction 当前可用的一个操作：由状态和暂停原因算出，不写入事件。
+type TaskAction struct {
+	Command string `json:"command"`
+	Label   string `json:"label"`
+	Roles   []Role `json:"roles"`
+	Style   string `json:"style"`
+}
+
 // TaskSnapshot 任务快照：`GET /api/tasks/:id` 的响应体，前端据此渲染。
 type TaskSnapshot struct {
 	ID           TaskID           `json:"id"`
@@ -106,6 +121,9 @@ type TaskSnapshot struct {
 	QC           []QcCheckResult  `json:"qc,omitempty"`
 	Deliverables []DeliverableRef `json:"deliverables"`
 	LastSeq      int64            `json:"lastSeq"`
+	// Actions 当前可用的操作，WaitingFor 在等哪些角色：都是读取时算出的投影
+	Actions    []TaskAction `json:"actions"`
+	WaitingFor []Role       `json:"waitingFor"`
 }
 
 // TaskSummary 任务列表项。
@@ -115,6 +133,9 @@ type TaskSummary struct {
 	Title     string    `json:"title"`
 	State     TaskState `json:"state"`
 	UpdatedAt string    `json:"updatedAt"`
+	// StatusText 给人看的状态，WaitingFor 在等哪些角色：都是读取时算出的投影
+	StatusText string `json:"statusText"`
+	WaitingFor []Role `json:"waitingFor"`
 	// Error 事件日志损坏时的说明（任务仍以最后已知状态出现）
 	Error string `json:"error,omitempty"`
 }
@@ -126,12 +147,21 @@ type ToolDescriptor struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
+// MaterialIssue 工具失败是因为材料本身有问题，不是工具故障：重试没有用，要发起人补充。
+type MaterialIssue struct {
+	// Path 有问题的附件；发起人补充时它会被移除
+	Path string `json:"path"`
+	// Message 给发起人看的说明
+	Message string `json:"message"`
+}
+
 // ToolCallResult 工具调用结果。失败时 Retryable 决定是否按配置重试。
 type ToolCallResult struct {
-	OK        bool   `json:"ok"`
-	Data      any    `json:"data,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Retryable bool   `json:"retryable,omitempty"`
+	OK            bool           `json:"ok"`
+	Data          any            `json:"data,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	Retryable     bool           `json:"retryable,omitempty"`
+	MaterialIssue *MaterialIssue `json:"materialIssue,omitempty"`
 }
 
 // ToolClient 工具客户端：生产走进程内直连，CLI 测试也走同一路径。
