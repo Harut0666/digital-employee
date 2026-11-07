@@ -36,7 +36,8 @@ const usageText = `用法：
   digital-employee fixtures [--out <dir>] [--source <xlsx>]
   digital-employee mcp-server
 
-环境变量：DE_WORKSPACE / DE_PORT / PORT / DE_NO_OPEN=1 / DE_EMPLOYEES_DIR / DE_WEB_DIST / DE_SCRIPTED
+环境变量：DE_WORKSPACE / DE_PORT / PORT / DE_NO_OPEN=1 / DE_EMPLOYEES_DIR / DE_WEB_DIST / DE_SCRIPTED / DE_APP_DIR
+  DE_WORKSPACE 指定工作区时界面上不能切换工作区；工作区列表保存在 DE_APP_DIR（缺省 %APPDATA%\digital-employee-app）
 `
 
 func main() {

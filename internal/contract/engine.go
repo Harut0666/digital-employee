@@ -238,6 +238,21 @@ type Engine interface {
 	ResumeAll() error
 }
 
+// EngineStopper 能停下的引擎（切换工作区时用）：停下后不再接受命令，也不再写入。
+// 有任务处于准入校验、执行中或质检中时拒绝停下，返回 *EngineBusyError，引擎照常工作。
+type EngineStopper interface {
+	Stop() error
+}
+
+// EngineBusyError 有任务处于准入校验、执行中或质检中。
+type EngineBusyError struct {
+	TaskIDs []TaskID
+}
+
+func (e *EngineBusyError) Error() string {
+	return "有任务正在准入校验、执行中或质检中"
+}
+
 // CreateTaskInput 建草稿任务的入参。
 type CreateTaskInput struct {
 	Employee    string            `json:"employee"`

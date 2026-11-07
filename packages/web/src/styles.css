@@ -173,7 +173,15 @@ body {
   border-radius: 8px;
   color: var(--text);
 }
+.workspace-pick.switchable {
+  cursor: pointer;
+}
+.workspace-pick.switchable:hover {
+  border-color: var(--primary);
+}
 .workspace-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

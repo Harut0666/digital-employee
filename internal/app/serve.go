@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"syscall"
@@ -45,7 +44,8 @@ type EngineDeps struct {
 type Options struct {
 	// RepoRoot 仓库根；缺省自动向上查找（含 employees/ 与 samples/）。
 	RepoRoot string
-	// WorkspaceDir 工作区根目录；缺省 DE_WORKSPACE / %APPDATA%/digital-employee。
+	// WorkspaceDir 启动时的工作区；缺省 DE_WORKSPACE / 工作区列表里的当前工作区 / %APPDATA%/digital-employee。
+	// 只有 DE_WORKSPACE 会让切换入口只读。
 	WorkspaceDir string
 	// EmployeesDir 覆盖员工目录（DE_EMPLOYEES_DIR）。
 	EmployeesDir string
@@ -87,14 +87,12 @@ type Options struct {
 
 // Running 已启动的服务端。
 type Running struct {
-	URL        string
-	Port       int
-	Engine     contract.Engine
-	ToolClient contract.ToolClient
-	Server     *http.Server
+	URL    string
+	Port   int
+	Server *http.Server
 
+	host       *workspaceHost
 	listener   net.Listener
-	ownsTool   bool
 	closeOnce  sync.Once
 	closeError error
 }
@@ -123,59 +121,45 @@ func envInt(env map[string]string, keys ...string) int {
 // Start 准备并启动服务端；返回后可继续做别的事（例如打开桌面窗口）。
 func Start(options Options) (*Running, error) {
 	env := options.Env
-	workspaceDir := options.WorkspaceDir
-	if workspaceDir == "" {
-		workspaceDir = ResolveWorkspace(env)
+	repoRoot := options.RepoRoot
+	if repoRoot == "" && !options.SkipPrepare {
+		repoRoot = FindRepoRoot("")
+	}
+	scriptFile := options.ScriptFile
+	if scriptFile == "" {
+		scriptFile = envValue(env, "DE_SCRIPTED")
+	}
+	host := &workspaceHost{
+		options: options, env: env, repoRoot: repoRoot, scriptFile: scriptFile,
+		locked: envValue(env, "DE_WORKSPACE") != "",
 	}
 
-	var prepared *PreparedWorkspace
-	if !options.SkipPrepare {
-		repoRoot := options.RepoRoot
-		if repoRoot == "" {
-			repoRoot = FindRepoRoot("")
-		}
-		employeesOverride := options.EmployeesDir
-		if employeesOverride == "" {
-			employeesOverride = envValue(env, "DE_EMPLOYEES_DIR")
-		}
-		webOverride := options.WebDistDir
-		if webOverride == "" {
-			webOverride = envValue(env, "DE_WEB_DIST")
-		}
-		released, err := PrepareWorkspace(PrepareOptions{
-			WorkspaceDir: workspaceDir,
-			RepoRoot:     repoRoot,
-			EmployeesDir: employeesOverride,
-			WebDistDir:   webOverride,
-		})
+	// 启动时的工作区：参数 > DE_WORKSPACE > 工作区列表里的当前工作区 > 默认目录
+	workspaceDir := options.WorkspaceDir
+	if workspaceDir == "" && host.locked {
+		workspaceDir = envValue(env, "DE_WORKSPACE")
+	}
+	if !host.locked {
+		registry, err := loadWorkspaceRegistry(ResolveAppDir(env))
 		if err != nil {
 			return nil, err
 		}
-		prepared = released
+		host.registry = registry
+		if workspaceDir == "" {
+			workspaceDir = registry.currentPath()
+		}
 	}
-
-	employeesDir := options.EmployeesDir
-	if employeesDir == "" && prepared != nil {
-		employeesDir = prepared.EmployeesDir
+	if workspaceDir == "" {
+		workspaceDir = ResolveWorkspace(env)
 	}
-	if employeesDir == "" {
-		employeesDir = envValue(env, "DE_EMPLOYEES_DIR")
+	workspaceDir = absolutePath(workspaceDir)
+	if host.registry != nil {
+		host.registry.Current = host.registry.ensure(workspaceDir).ID
+		if err := host.registry.save(); err != nil {
+			return nil, fmt.Errorf("保存工作区列表失败：%w", err)
+		}
 	}
-	if employeesDir == "" {
-		employeesDir = filepath.Join(workspaceDir, "employees")
-	}
-	defaultEmployeesDir := filepath.Join(workspaceDir, runtimeDir, "default-employees")
-	if prepared != nil && prepared.DefaultEmployeesDir != "" {
-		defaultEmployeesDir = prepared.DefaultEmployeesDir
-	}
-	webDistDir := options.WebDistDir
-	if webDistDir == "" && prepared != nil {
-		webDistDir = prepared.WebDistDir
-	}
-	if webDistDir == "" {
-		webDistDir = envValue(env, "DE_WEB_DIST")
-	}
-	if err := os.MkdirAll(filepath.Join(workspaceDir, "tasks"), 0o755); err != nil {
+	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 		return nil, err
 	}
 
@@ -191,79 +175,14 @@ func Start(options Options) (*Running, error) {
 		logger = server.NewLogger(doc.Diagnostics.LogLevel, nil)
 	}
 	logger.Debugf("设置文档：v%d revision %d；日志级别 %s", doc.Version, doc.Revision, doc.Diagnostics.LogLevel)
+	host.logger = logger
 
-	// 演示开关持久化在 settings.json；运行时可变对象与引擎、设置路由共享。
-	faults := options.Faults
-	if faults == nil {
-		faults = &contract.FaultHooks{}
+	initial, err := host.build(workspaceDir, options.Faults)
+	if err != nil {
+		return nil, err
 	}
-	faults.CorruptTraceability = doc.Demo.CorruptTraceability
-	faults.CrashOnNextStep = doc.Demo.CrashOnNextStep
-	if doc.Demo.ToolFaults != nil {
-		faults.Tools = doc.Demo.ToolFaults
-	}
-
-	scriptFile := options.ScriptFile
-	if scriptFile == "" {
-		scriptFile = envValue(env, "DE_SCRIPTED")
-	}
-
-	var toolClient contract.ToolClient
-	ownsTool := false
-	if options.ToolFactory != nil {
-		client, err := options.ToolFactory()
-		if err != nil {
-			return nil, fmt.Errorf("创建工具客户端失败：%w", err)
-		}
-		toolClient = client
-		ownsTool = true
-		if toolClient != nil {
-			// 启动时恢复上次演示留下的工具故障（设置页把开关持久化在 settings.json）
-			if result, err := toolClient.Call(contract.ToolAdminSetFaults, map[string]any{"tools": doc.Demo.ToolFaults}); err != nil {
-				logger.Warnf("工具故障开关恢复失败：%v", err)
-			} else if !result.OK {
-				logger.Warnf("工具故障开关恢复失败：%s", result.Error)
-			}
-		}
-	}
-
-	modelSettings := settings.LoadModelSettings(workspaceDir, settings.Env(env))
-	var engine contract.Engine
-	if options.EngineFactory != nil {
-		created, err := options.EngineFactory(EngineDeps{
-			WorkspaceDir: workspaceDir, EmployeesDir: employeesDir,
-			ToolClient: toolClient, Faults: faults, ScriptFile: scriptFile,
-			ModelSettings: modelSettings,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("创建任务引擎失败：%w", err)
-		}
-		engine = created
-	} else {
-		logger.Warnf("使用占位任务引擎（internal/engine 尚未接入）：只提供 HTTP 契约联调，不执行真实步骤")
-		engine = NewMockEngine(logger)
-	}
-	if err := engine.ResumeAll(); err != nil {
-		logger.Warnf("恢复未完成任务失败：%v", err)
-	}
-
-	srv := server.New(server.Options{
-		Engine:              engine,
-		EmployeesDir:        employeesDir,
-		WorkspaceDir:        workspaceDir,
-		DefaultEmployeesDir: defaultEmployeesDir,
-		WebDistDir:          webDistDir,
-		ToolClient:          toolClient,
-		Faults:              faults,
-		OnSettingsSaved:     options.OnSettingsSaved,
-		Model:               options.Model,
-		LoadEmployee:        options.LoadEmployee,
-		Env:                 env,
-		Logger:              logger,
-		AppVersion:          options.AppVersion,
-		// 占位引擎同样不调模型
-		Scripted: scriptFile != "" || options.EngineFactory == nil,
-	})
+	host.current.Store(initial)
+	host.resume(initial)
 
 	startPort := options.Port
 	if startPort == 0 {
@@ -278,6 +197,7 @@ func Start(options Options) (*Running, error) {
 	}
 	port, err := ChoosePort(startPort, attempts, IsPortAvailable)
 	if err != nil {
+		initial.close()
 		return nil, err
 	}
 	address := fmt.Sprintf(":%d", port)
@@ -286,13 +206,14 @@ func Start(options Options) (*Running, error) {
 	}
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
+		initial.close()
 		return nil, err
 	}
 	actualPort := port
 	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
 		actualPort = tcpAddr.Port
 	}
-	httpServer := &http.Server{Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpServer := &http.Server{Handler: http.HandlerFunc(host.ServeHTTP), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if serveErr := httpServer.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			logger.Errorf("HTTP 服务异常退出：%v", serveErr)
@@ -309,7 +230,7 @@ func Start(options Options) (*Running, error) {
 		scriptInfo = "，剧本式模型 " + scriptFile
 	}
 	logger.Infof("digital-employee 服务已启动：%s（工作区 %s%s）", url, workspaceDir, scriptInfo)
-	logger.Debugf("监听端口 %d（首选 %d，最多尝试 %d 个）；员工目录 %s", actualPort, startPort, attempts, employeesDir)
+	logger.Debugf("监听端口 %d（首选 %d，最多尝试 %d 个）", actualPort, startPort, attempts)
 
 	if !options.NoOpen && envValue(env, "DE_NO_OPEN") != "1" {
 		if err := server.OpenBrowser(url); err != nil {
@@ -317,13 +238,10 @@ func Start(options Options) (*Running, error) {
 		}
 	}
 
-	return &Running{
-		URL: url, Port: actualPort, Engine: engine, ToolClient: toolClient,
-		Server: httpServer, listener: listener, ownsTool: ownsTool,
-	}, nil
+	return &Running{URL: url, Port: actualPort, Server: httpServer, host: host, listener: listener}, nil
 }
 
-// Close 停止 HTTP（释放端口），再关自己起的工具客户端；注入的客户端由调用方负责。
+// Close 停止 HTTP（释放端口），再关当前工作区自己起的工具客户端；注入的客户端由调用方负责。
 func (r *Running) Close() error {
 	r.closeOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -332,8 +250,8 @@ func (r *Running) Close() error {
 		if shutdownErr != nil {
 			_ = r.Server.Close()
 		}
-		if r.ownsTool && r.ToolClient != nil {
-			_ = r.ToolClient.Close()
+		if current := r.host.current.Load(); current != nil {
+			current.close()
 		}
 		r.closeError = shutdownErr
 	})

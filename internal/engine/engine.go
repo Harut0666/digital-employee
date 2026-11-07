@@ -111,6 +111,9 @@ type Engine struct {
 	mu       sync.Mutex
 	runtimes map[string]*taskRuntime
 	dead     *SimulatedCrash
+	// stopping 正在停下：不再接受命令；stopped 已停下：也不再写入（见 Stop）
+	stopping bool
+	stopped  bool
 }
 
 // New 创建任务引擎。
@@ -252,7 +255,7 @@ type judgeView struct {
 func (e *Engine) engineDead() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.dead != nil
+	return e.dead != nil || e.stopped
 }
 
 func (e *Engine) deadError() error {
@@ -261,7 +264,46 @@ func (e *Engine) deadError() error {
 	if e.dead != nil {
 		return e.dead
 	}
-	return errors.New("引擎已停止")
+	return errEngineStopped
+}
+
+// errEngineStopped 引擎已停下（工作区已切换），不再写入。
+var errEngineStopped = errors.New("引擎已停止：工作区已切换")
+
+// refusesCommands 正在停下或已停下的引擎不接受命令。
+func (e *Engine) refusesCommands() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stopping || e.stopped
+}
+
+// Stop 停下引擎（切换工作区时用）：之后不接受命令、不建任务，也不再写任何事件。
+//
+// 有任务处于准入校验、执行中或质检中时拒绝，返回 *contract.EngineBusyError，引擎照常工作。
+// 先挡住新命令再检查状态：命令在持有任务锁时检查 stopping，所以检查时读到的状态不会再变成活跃。
+func (e *Engine) Stop() error {
+	e.mu.Lock()
+	if e.stopped {
+		e.mu.Unlock()
+		return nil
+	}
+	e.stopping = true
+	e.mu.Unlock()
+
+	busy := []string{}
+	for _, summary := range e.List() {
+		if activeStates[summary.State] {
+			busy = append(busy, summary.ID)
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.stopping = false
+	if len(busy) > 0 {
+		return &contract.EngineBusyError{TaskIDs: busy}
+	}
+	e.stopped = true
+	return nil
 }
 
 // append 编排写事件的入口：落盘、更新投影、通知订阅者。调用方不得持有 rt.mu。
@@ -1613,6 +1655,9 @@ func (e *Engine) copyAttachments(rt *taskRuntime, inputs []contract.AttachmentIn
 
 // Create 建草稿任务：校验员工目录、复制配置与附件、写 task_created。
 func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot, error) {
+	if e.refusesCommands() {
+		return nil, errors.New("工作区正在切换，任务没有创建")
+	}
 	if input.Actor != contract.RoleInitiator && input.Actor != contract.RoleSystem {
 		return nil, fmt.Errorf("角色 %s 不能创建任务", input.Actor)
 	}
@@ -1689,6 +1734,11 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 	}
 
 	rt.mu.Lock()
+	// 持有任务锁时检查，Stop 读到的任务状态因此不会再被这条命令改成活跃
+	if e.refusesCommands() {
+		rt.mu.Unlock()
+		return contract.CommandResult{OK: false, Error: contract.ErrIllegalTransition, Message: "工作区正在切换，命令没有执行"}
+	}
 	from := rt.proj.State
 	action, available := findAction(availableActions(from, rt.proj.Pause), command.Type)
 	if !available {

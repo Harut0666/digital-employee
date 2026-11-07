@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Segmented, Select, Tooltip } from "antd";
-import { DownOutlined, FolderOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
+import { DownOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Button } from "antd";
+import { WorkspacePicker } from "./WorkspacePicker";
 import type { SessionSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
 import { groupSessions, groupTodos } from "../view/session-groups";
@@ -19,9 +20,6 @@ const clock = (iso: string) => {
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`;
 };
 
-/** 工作区名：取路径最后一段 */
-const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).at(-1) ?? dir;
-
 export function Sidebar({
   sessions,
   role,
@@ -35,7 +33,7 @@ export function Sidebar({
   onRole: (r: UiRole) => void;
   selection: Selection;
   onSelect: (s: Selection) => void;
-  /** 当前工作区目录；切换入口由 T32 接上 */
+  /** 当前工作区目录：工作区列表读到之前先显示它 */
   workspaceDir?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -44,12 +42,7 @@ export function Sidebar({
   return (
     <div className="col surface sidebar">
       <div className="side-top">
-        <Tooltip title={workspaceDir ? `当前工作区：${workspaceDir}` : "当前工作区"}>
-          <div className="workspace-pick">
-            <FolderOutlined />
-            <span className="workspace-name">{workspaceDir ? baseName(workspaceDir) : "工作区"}</span>
-          </div>
-        </Tooltip>
+        <WorkspacePicker workspaceDir={workspaceDir} />
         <Tooltip title="设置">
           <Button
             aria-label="设置"
