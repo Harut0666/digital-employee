@@ -1,6 +1,6 @@
 // 占位任务引擎：internal/engine 就绪前的联调替身。
 //
-// 只实现 contract.Engine 的最小语义：建草稿、提交时产生 state_changed 事件（前端与 SSE 联调用）、
+// 只实现 contract.Engine 的最小语义：建草稿、提交和终止时产生 state_changed 事件（前端与 SSE 联调用）、
 // 其它命令一律按非法流转拒绝。真实引擎接入后由启动入口的 EngineFactory 替换，本文件不会进入生产路径。
 package app
 
@@ -37,6 +37,36 @@ func NewMockEngine(logger *server.Logger) *MockEngine {
 }
 
 func eventTS() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
+
+// mockActions 占位引擎真正支持的操作：只有发起人的提交和终止。
+func mockActions(state contract.TaskState) []contract.TaskAction {
+	initiator := []contract.Role{contract.RoleInitiator}
+	switch state {
+	case contract.StateDraft:
+		return []contract.TaskAction{
+			{Command: contract.CmdSubmit, Label: "提交", Roles: initiator, Style: contract.ActionPrimary},
+			{Command: contract.CmdTerminate, Label: "放弃草稿", Roles: initiator, Style: contract.ActionDanger},
+		}
+	case contract.StateAwaitingInitiator:
+		return []contract.TaskAction{{Command: contract.CmdTerminate, Label: "终止", Roles: initiator, Style: contract.ActionDanger}}
+	}
+	return []contract.TaskAction{}
+}
+
+func mockWaitingFor(actions []contract.TaskAction) []contract.Role {
+	if len(actions) == 0 {
+		return []contract.Role{}
+	}
+	return []contract.Role{contract.RoleInitiator}
+}
+
+// present 对外的快照：和真实引擎一样，操作和等待角色在读取时算出。
+func (t *mockTask) present() *contract.TaskSnapshot {
+	copied := t.snapshot
+	copied.Actions = mockActions(copied.State)
+	copied.WaitingFor = mockWaitingFor(copied.Actions)
+	return &copied
+}
 
 func newTaskID() string {
 	buffer := make([]byte, 3)
@@ -81,11 +111,10 @@ func (e *MockEngine) Create(input contract.CreateTaskInput) (*contract.TaskSnaps
 		Type: contract.EventTaskCreated, Employee: input.Employee,
 		Form: form, Attachments: attachments,
 	})
-	copied := task.snapshot
-	return &copied, nil
+	return task.present(), nil
 }
 
-// Command 命令：只实现 submit 的占位流转。
+// Command 命令：只实现 submit 和 terminate 的占位流转。
 func (e *MockEngine) Command(taskID contract.TaskID, command contract.TaskCommand, actor contract.Role) contract.CommandResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -102,9 +131,11 @@ func (e *MockEngine) Command(taskID contract.TaskID, command contract.TaskComman
 		})
 		from = task.snapshot.State
 		pause := &contract.PauseReason{
-			Code:    contract.PauseInvalidInput,
-			Message: "占位引擎：internal/engine 尚未接入，真实执行流程待接入后可用",
-			Options: []string{contract.CmdTerminate},
+			Code:       contract.PauseInvalidInput,
+			Title:      "占位引擎未接入执行流程",
+			Message:    "占位引擎：internal/engine 尚未接入，真实执行流程待接入后可用",
+			Resolution: "用默认构建运行真实引擎，或终止这个任务。",
+			Options:    []string{contract.CmdTerminate},
 		}
 		task.snapshot.State = contract.StateAwaitingInitiator
 		task.snapshot.Pause = pause
@@ -112,8 +143,17 @@ func (e *MockEngine) Command(taskID contract.TaskID, command contract.TaskComman
 			Type: contract.EventStateChanged, From: from, To: contract.StateAwaitingInitiator,
 			Trigger: contract.TriggerAdmissionFailed, Actor: contract.RoleSystem, Pause: pause,
 		})
-		copied := task.snapshot
-		return contract.CommandResult{OK: true, Snapshot: &copied}
+		return contract.CommandResult{OK: true, Snapshot: task.present()}
+	}
+	if command.Type == contract.CmdTerminate && len(mockActions(task.snapshot.State)) > 0 {
+		from := task.snapshot.State
+		task.snapshot.State = contract.StateTerminated
+		task.snapshot.Pause = nil
+		e.emit(task, contract.TaskEvent{
+			Type: contract.EventStateChanged, From: from, To: contract.StateTerminated,
+			Trigger: contract.TriggerTerminate, Actor: actor,
+		})
+		return contract.CommandResult{OK: true, Snapshot: task.present()}
 	}
 	return contract.CommandResult{
 		OK: false, Error: contract.ErrIllegalTransition,
@@ -129,8 +169,7 @@ func (e *MockEngine) Get(taskID contract.TaskID) (*contract.TaskSnapshot, bool) 
 	if !ok {
 		return nil, false
 	}
-	copied := task.snapshot
-	return &copied, true
+	return task.present(), true
 }
 
 // List 任务列表（新的在前）。
@@ -140,9 +179,14 @@ func (e *MockEngine) List() []contract.TaskSummary {
 	out := make([]contract.TaskSummary, 0, len(e.order))
 	for index := len(e.order) - 1; index >= 0; index-- {
 		task := e.tasks[e.order[index]]
+		statusText := contract.StateLabels[task.snapshot.State]
+		if task.snapshot.Pause != nil {
+			statusText = task.snapshot.Pause.Title
+		}
 		out = append(out, contract.TaskSummary{
 			ID: task.snapshot.ID, Employee: task.snapshot.Employee,
 			Title: task.snapshot.Employee, State: task.snapshot.State, UpdatedAt: task.updatedAt,
+			StatusText: statusText, WaitingFor: task.present().WaitingFor,
 		})
 	}
 	return out

@@ -2,22 +2,54 @@
 // 视图层只依赖这里的接口，不关心背后是谁。
 
 import type {
-  CommandResult,
+  CommandResult as ContractCommandResult,
   ConfigDiff,
   ConfigVersion,
   EmployeeConfigResponse,
+  PauseCode,
+  PauseReason,
   RestoreConfigResponse,
   Role,
   SaveConfigRequest,
   SaveConfigResponse,
   TaskCommand,
   TaskEvent,
-  TaskSnapshot,
-  TaskSummary,
+  TaskSnapshot as ContractTaskSnapshot,
+  TaskSummary as ContractTaskSummary,
 } from "@de/core/contract";
 
 /** 界面上可切换的三种角色；system 只出现在事件里。 */
 export type UiRole = Exclude<Role, "system">;
+
+export type CommandType = TaskCommand["type"];
+
+/** 快照给出的一个可用操作。按钮的文字、样式、归属角色都以它为准，前端不自行推算。 */
+export interface TaskAction {
+  command: CommandType;
+  label: string;
+  roles: UiRole[];
+  style: "primary" | "default" | "danger";
+}
+
+/** 快照里的暂停原因：比事件里的多了读取时生成的 title、resolution。TS 契约已冻结，Go 新增的代码在这里补。 */
+export interface PauseView extends Omit<PauseReason, "code"> {
+  code: PauseCode | "material_issue" | "model_unavailable";
+  title?: string;
+  resolution?: string;
+}
+
+export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause"> {
+  pause?: PauseView;
+  actions: TaskAction[];
+  waitingFor: UiRole[];
+}
+
+export interface TaskSummary extends ContractTaskSummary {
+  statusText: string;
+  waitingFor: UiRole[];
+}
+
+export type CommandResult = Exclude<ContractCommandResult, { ok: true }> | { ok: true; snapshot: TaskSnapshot };
 
 export interface EmployeeInfo {
   id: string;
