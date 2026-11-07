@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Progress, Segmented, Tag } from "antd";
 import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, FileTextOutlined, FolderOpenOutlined, LoadingOutlined, MinusCircleOutlined, ClockCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import type { TaskSnapshot } from "@de/core/contract";
+import type { TaskSnapshot } from "../api";
 import type { SessionView } from "../view/session-view";
 import { DocxPreview } from "./DocxPreview";
 import { useLinkProps } from "./Preferences";

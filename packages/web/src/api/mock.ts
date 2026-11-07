@@ -1,12 +1,13 @@
-// 模拟数据适配器（VITE_MOCK=1）：不依赖后端，在内存里模拟任务引擎，
-// 状态流转和角色校验按契约里的 TRANSITIONS 走，所以切换角色后按钮可用性和真实后端一致。
+// 模拟数据适配器（VITE_MOCK=1）：不依赖后端，在内存里模拟任务引擎。
+// 可用操作、等待角色和暂停说明由 mock-rules.ts 扮演后端给出，视图层和接真实后端时一样只读快照。
 
-import { TRANSITIONS } from "@de/core/contract";
-import type { AttachmentRef, CommandResult, PauseReason, TaskCommand, TaskEvent, TaskSnapshot, TaskState, TaskSummary } from "@de/core/contract";
+import type { AttachmentRef, PauseReason, TaskCommand, TaskEvent, TaskState } from "@de/core/contract";
+import { STATE_LABELS } from "@de/core/contract";
 import { deriveSessionView } from "../view/session-view";
 import { createMockConfigStore } from "./mock-config";
 import { EMPLOYEES, QC_CHECKS_PASSED, REWORK_STEPS, SEEDS, STEP_DEFS, type EventInput } from "./mock-data";
-import type { CreateTaskInput, DeliverableKind, EmployeeInfo, UiRole, UploadItem, WebApi } from "./types";
+import { actionsOf, pauseTextOf, waitingForOf } from "./mock-rules";
+import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, PauseView, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 interface MockTask {
   id: string;
@@ -102,7 +103,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
         change(t, "awaiting_initiator", "admission_failed", "system", {
           code: "missing_dimensions",
           message: "只上传了 CSV 销售明细，缺少门店信息和销售目标两张维表，无法计算区域和达成率。",
-          options: [...options, "continue_with_partial"],
+          options,
         });
       } else if (!hasMinutes) {
         change(t, "awaiting_initiator", "admission_failed", "system", {
@@ -117,22 +118,38 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     }, 600);
   }
 
-  const summary = (t: MockTask): TaskSummary => ({
-    id: t.id,
-    employee: t.employee,
-    title: t.title,
-    state: stateOf(t),
-    updatedAt: t.events.at(-1)?.ts ?? new Date().toISOString(),
-  });
+  const actionsNow = (t: MockTask) => {
+    const view = deriveSessionView(t.events);
+    return actionsOf(view.state ?? "draft", view.pause?.code);
+  };
+
+  const summary = (t: MockTask): TaskSummary => {
+    const state = stateOf(t);
+    const pause = deriveSessionView(t.events).pause;
+    return {
+      id: t.id,
+      employee: t.employee,
+      title: t.title,
+      state,
+      updatedAt: t.events.at(-1)?.ts ?? new Date().toISOString(),
+      statusText: pause ? pauseTextOf(state, pause.code).title : STATE_LABELS[state],
+      waitingFor: waitingForOf(state, actionsNow(t)),
+    };
+  };
 
   const snapshot = (t: MockTask): TaskSnapshot => {
     const view = deriveSessionView(t.events, defs(t));
+    const state = view.state ?? "draft";
+    const actions = actionsNow(t);
+    const pause: PauseView | undefined = view.pause && { ...view.pause, ...pauseTextOf(state, view.pause.code), options: actions.map((a) => a.command) };
     return {
       id: t.id,
       employee: t.employee,
       configHash: "mock",
-      state: view.state ?? "draft",
-      pause: view.pause,
+      state,
+      pause,
+      actions,
+      waitingFor: waitingForOf(state, actions),
       form: t.form,
       attachments: t.attachments,
       steps: view.steps,
@@ -186,10 +203,9 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       if (!t) return { ok: false, error: "not_found", message: "任务不存在" } satisfies CommandResult;
       const role = getRole();
       const from = stateOf(t);
-      const byTrigger = TRANSITIONS.filter((x) => x.from === from && x.trigger === command.type);
-      const hit = byTrigger.find((x) => x.actor === role);
-      if (!hit) {
-        const forbidden = byTrigger.length > 0;
+      const action = actionsNow(t).find((a) => a.command === command.type);
+      if (!action?.roles.includes(role)) {
+        const forbidden = action !== undefined;
         const reason = forbidden ? "该角色无权执行此操作" : "当前状态不允许此操作";
         emit(t, { type: "transition_rejected", from, trigger: command.type as never, actor: role, reason });
         return later({ ok: false, error: forbidden ? "forbidden_role" : "illegal_transition", message: reason } satisfies CommandResult);

@@ -1,6 +1,6 @@
 // 模拟数据：员工、步骤定义、种子任务。把暂停（待发起人补充 / 待人工处理）、待审核、已交付、执行中几种状态都摆出来。
 
-import type { PauseReason, QcCheckResult, TaskEvent } from "@de/core/contract";
+import type { PauseCode, PauseReason, QcCheckResult, TaskEvent } from "@de/core/contract";
 import type { StepDef } from "../view/session-view";
 import type { EmployeeInfo } from "./types";
 
@@ -230,6 +230,71 @@ export const SEEDS: SeedTask[] = [
             code: "minutes_missing",
             message: "缺少第 45 周的周会纪要。可以补传纪要，或选择“无纪要继续”（异常原因将标注“原因待核实”）。",
             options: ["supplement", "continue_without_minutes", "terminate"],
+          },
+        },
+      ],
+    ],
+  },
+  {
+    // 模型不可用：待人工处理，发起人可重试，卡片上有设置入口
+    id: "mock-47",
+    employee: "weekly-report",
+    title: "第 47 周周报",
+    form: weeklyForm(47),
+    startedAgoMs: 15 * 60_000,
+    script: [
+      [0, created("weekly-report", weeklyForm(47))],
+      [1, submit],
+      [3, passed],
+      ...spaced(4, 8, [...ok("admission"), ...ok("load"), ...ok("metrics"), ...ok("minutes")]),
+      [70, { type: "step_started", stepId: "match", attempt: 1, reworkRound: 0 }],
+      [80, { type: "step_failed", stepId: "match", error: "模型接口返回 401" }],
+      [
+        81,
+        {
+          type: "state_changed",
+          from: "running",
+          to: "awaiting_operator",
+          trigger: "tool_failed",
+          actor: "system",
+          pause: {
+            // TS 契约已冻结，这个代码只有 Go 后端有
+            code: "model_unavailable" as PauseCode,
+            message: "模型 Key 无效，已完成 4/8 步",
+            options: ["retry", "terminate"],
+          },
+        },
+      ],
+    ],
+  },
+  {
+    // 超范围意见：回到待审核，原交付物不变，卡片说明为什么不能自动处理
+    id: "mock-40",
+    employee: "weekly-report",
+    title: "第 40 周周报",
+    form: weeklyForm(40),
+    startedAgoMs: 5 * 3600_000,
+    script: [
+      [0, created("weekly-report", weeklyForm(40))],
+      [1, submit],
+      [3, passed],
+      ...spaced(4, 10, mainSteps()),
+      ...toQc(90),
+      [96, { type: "state_changed", from: "qc", to: "awaiting_review", trigger: "qc_passed", actor: "system", pause: reviewPause }],
+      [200, { type: "review_decision", decision: "return", comment: "把实收改成含税口径重算" }],
+      [201, { type: "state_changed", from: "awaiting_review", to: "running", trigger: "return", actor: "reviewer" }],
+      [
+        220,
+        {
+          type: "state_changed",
+          from: "running",
+          to: "awaiting_review",
+          trigger: "needs_human",
+          actor: "system",
+          pause: {
+            code: "rework_needs_human",
+            message: "退回意见要求更改计算口径，员工无法自动处理。",
+            options: ["approve", "return", "terminate"],
           },
         },
       ],
