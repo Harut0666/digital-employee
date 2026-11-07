@@ -39,9 +39,12 @@ func (s *Server) preflight() preflightResult {
 	return preflightResult{
 		Error:    contract.ErrModelNotConfigured,
 		Message:  fmt.Sprintf("默认模型连接「%s」还没有配置 Key，任务无法运行。请先到设置里填写 Key。", models.DefaultConnection),
-		Settings: &settingsEntry{Section: "models", Label: "去设置模型连接"},
+		Settings: &modelSettingsEntry,
 	}
 }
+
+// modelSettingsEntry 模型没配好时带人去的设置入口。
+var modelSettingsEntry = settingsEntry{Section: "models", Label: "去设置模型连接"}
 
 func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.preflight())

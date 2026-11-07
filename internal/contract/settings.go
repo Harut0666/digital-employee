@@ -99,7 +99,9 @@ type SettingsDocument struct {
 	Connections       []ModelConnection `json:"connections"`
 	DefaultConnection string            `json:"defaultConnection"`
 	DefaultModel      string            `json:"defaultModel"`
-	Demo              DemoSettings      `json:"demo"`
+	// DefaultEmployee 新会话优先提议的员工；空串表示没设。
+	DefaultEmployee string       `json:"defaultEmployee,omitempty"`
+	Demo            DemoSettings `json:"demo"`
 	// Extra 未识别的顶层键：读时保留，写时原样写回。
 	Extra map[string]any `json:"-"`
 }

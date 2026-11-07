@@ -32,6 +32,8 @@ func fullMode() bool { return true }
 var (
 	engineMu     sync.RWMutex
 	activeEngine *engine.Engine
+	// activeModel 引擎和前台 Agent 共用的模型提供者，设置保存后一起换
+	activeModel agent.ModelProvider
 	// lastModelSettings 最近一次保存的模型设置。
 	lastModelSettings contract.ModelSettings
 )
@@ -88,9 +90,17 @@ func newEngine(options cli.EngineOptions, faults *contract.FaultHooks) (contract
 	}
 	engineMu.Lock()
 	activeEngine = eng
+	activeModel = model
 	lastModelSettings = options.ModelSettings
 	engineMu.Unlock()
 	return eng, nil
+}
+
+// frontdeskModel 前台 Agent 当前的模型提供者。
+func frontdeskModel() agent.ModelProvider {
+	engineMu.RLock()
+	defer engineMu.RUnlock()
+	return activeModel
 }
 
 // appEngineFactory 服务端模式的引擎工厂。
@@ -135,6 +145,9 @@ func onSettingsSaved(settings contract.ModelSettings) error {
 	if err != nil {
 		return err
 	}
+	engineMu.Lock()
+	activeModel = provider
+	engineMu.Unlock()
 	if swapper, ok := any(eng).(modelSwapper); ok {
 		swapper.SetModelProvider(provider)
 		return nil

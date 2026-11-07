@@ -1,0 +1,499 @@
+// Package session 是会话模块：人和前台 Agent 的对话，独立于任务引擎。
+//
+// 会话只通过 contract.Engine 和任务打交道。Agent 能产生的只有草稿和提议，
+// 发送任务命令的路径只在人触发的 Submit 里，Agent 的工具拿到的是只读接口（见 frontdesk.go）。
+package session
+
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"digital-employee/internal/agent"
+	"digital-employee/internal/contract"
+)
+
+// 会话状态。
+const (
+	StatusReception = "reception" // 接待中：还没确认员工
+	StatusDrafting  = "drafting"  // 员工已接手，还没提交
+	StatusTask      = "task"      // 任务进行中
+	StatusClosed    = "closed"    // 任务已交付或已终止
+)
+
+// 业务错误码（contract 里的通用错误码之外）。
+const (
+	ErrSessionHasTask  = "session_has_task"
+	ErrSessionReadOnly = "session_read_only"
+	ErrSessionBusy     = "session_busy"
+	ErrEmployeeMissing = "employee_required"
+)
+
+// Error 带错误码的业务错误，HTTP 层据此定状态码。
+type Error struct {
+	Code    string
+	Message string
+}
+
+func (e *Error) Error() string { return e.Message }
+
+func failure(code, format string, args ...any) *Error {
+	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// Employee 路由用的员工信息。
+type Employee struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// Deps 会话模块的依赖。
+type Deps struct {
+	WorkspaceDir string
+	Engine       contract.Engine
+	// Model 取当前模型提供者（设置保存后会换）；nil 或返回 nil 都算模型不可用
+	Model func() agent.ModelProvider
+	// Employees 列出可接手的员工
+	Employees func() ([]Employee, error)
+	// LoadEmployee 读一个员工的完整配置
+	LoadEmployee func(id string) (*contract.EmployeeConfig, error)
+	// DefaultEmployee 设置里的默认员工；空串表示没设
+	DefaultEmployee func() string
+	// Execution 模型重试和超时的默认值
+	Execution func() *contract.ExecutionSettings
+	// Preflight 提交前检查：返回错误时任务不会创建
+	Preflight func() error
+	Now       func() time.Time
+}
+
+// Manager 会话模块的入口。
+type Manager struct {
+	deps  Deps
+	store *store
+	mu    sync.Mutex
+	turns map[string]*sync.Mutex
+}
+
+// New 组装会话模块。
+func New(deps Deps) *Manager {
+	if deps.Now == nil {
+		deps.Now = time.Now
+	}
+	return &Manager{deps: deps, store: newStore(deps.WorkspaceDir, deps.Now), turns: map[string]*sync.Mutex{}}
+}
+
+// View 读取时返回的会话。
+type View struct {
+	ID          string         `json:"id"`
+	Status      string         `json:"status"`
+	ReadOnly    bool           `json:"readOnly"`
+	Title       string         `json:"title"`
+	Employee    string         `json:"employee,omitempty"`
+	TaskID      string         `json:"taskId,omitempty"`
+	Draft       map[string]any `json:"draft,omitempty"`
+	Attachments []Attachment   `json:"attachments"`
+	CreatedAt   string         `json:"createdAt"`
+	UpdatedAt   string         `json:"updatedAt"`
+	// StatusText、WaitingFor 来自任务摘要，没有任务时为空
+	StatusText string          `json:"statusText,omitempty"`
+	WaitingFor []contract.Role `json:"waitingFor"`
+}
+
+// Detail 读取单个会话时返回：会话加全部消息。
+type Detail struct {
+	View
+	Messages []Message `json:"messages"`
+}
+
+func newID(now time.Time) string {
+	buffer := make([]byte, 3)
+	if _, err := rand.Read(buffer); err != nil {
+		return fmt.Sprintf("s-%d", now.UnixNano())
+	}
+	return fmt.Sprintf("s-%s-%x", now.UTC().Format("20060102150405"), buffer)
+}
+
+// Create 开一个新会话。
+func (m *Manager) Create() (*View, error) {
+	id := newID(m.deps.Now())
+	if _, err := m.store.append(id, Message{Kind: kindCreated}); err != nil {
+		return nil, err
+	}
+	current, err := m.load(id)
+	if err != nil {
+		return nil, err
+	}
+	return m.view(current), nil
+}
+
+// Get 读一个会话和它的全部消息。
+func (m *Manager) Get(id string) (*Detail, error) {
+	if strings.HasPrefix(id, legacyPrefix) {
+		return m.getLegacy(id)
+	}
+	current, err := m.load(id)
+	if err != nil {
+		return nil, err
+	}
+	messages := visibleMessages(current.messages)
+	if current.taskID != "" {
+		if messages, err = m.withTask(messages, current.taskID); err != nil {
+			return nil, err
+		}
+	}
+	return &Detail{View: *m.view(current), Messages: messages}, nil
+}
+
+// Reply 一次人的操作得到的结果：这次新写入的消息和最新的会话。
+type Reply struct {
+	OK       bool      `json:"ok"`
+	Messages []Message `json:"messages"`
+	Session  *View     `json:"session"`
+}
+
+// begin 占住会话：同一时间只处理一条回复，避免两次模型循环同时改草稿。
+func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
+	if _, err := m.load(id); err != nil {
+		return nil, nil, err
+	}
+	m.mu.Lock()
+	lock := m.turns[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.turns[id] = lock
+	}
+	m.mu.Unlock()
+	if !lock.TryLock() {
+		return nil, nil, failure(ErrSessionBusy, "上一条消息还在处理，请稍候")
+	}
+	// 拿到锁之后才读，看到的才是上一条回复写完的状态
+	current, err := m.load(id)
+	if err != nil {
+		lock.Unlock()
+		return nil, nil, err
+	}
+	return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, lock.Unlock, nil
+}
+
+func (m *Manager) reply(t *turn) (*Reply, error) {
+	messages := visibleMessages(t.out)
+	if taskID := t.current.taskID; taskID != "" {
+		events, err := m.deps.Engine.Events(taskID, 0)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.attachActions(messages, taskID, events); err != nil {
+			return nil, err
+		}
+	}
+	return &Reply{OK: true, Messages: messages, Session: m.view(t.current)}, nil
+}
+
+// Send 收一条人的消息，等前台 Agent 回复完。
+func (m *Manager) Send(ctx context.Context, id string, role contract.Role, text string) (*Reply, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, failure(contract.ErrInvalidInput, "消息不能为空")
+	}
+	t, done, err := m.begin(id, role)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if err := t.write(Message{Kind: KindUser, Role: role, Text: text}); err != nil {
+		return nil, err
+	}
+	if t.current.employee == "" {
+		err = t.route(ctx)
+	} else if err = t.assist(ctx, t.history()); err == nil {
+		err = t.flushCards()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m.reply(t)
+}
+
+// Confirm 人在卡片上确认由哪个员工接手。这是人的动作，Agent 没有对应的工具。
+func (m *Manager) Confirm(ctx context.Context, id string, role contract.Role, employee string) (*Reply, error) {
+	if role != contract.RoleInitiator {
+		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以确认员工")
+	}
+	t, done, err := m.begin(id, role)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if t.current.employee != "" {
+		return nil, failure(contract.ErrIllegalTransition, "这个会话已由员工接手")
+	}
+	employees, err := m.deps.Employees()
+	if err != nil {
+		return nil, err
+	}
+	name := ""
+	for _, candidate := range employees {
+		if candidate.ID == employee {
+			name = candidate.Name
+		}
+	}
+	if name == "" {
+		return nil, failure(contract.ErrInvalidInput, "没有这个员工：%s", employee)
+	}
+	if err := t.write(Message{Kind: kindEmployeeSet, Employee: employee}); err != nil {
+		return nil, err
+	}
+	if err := t.write(Message{Kind: KindNotice, Text: name + "已接手。"}); err != nil {
+		return nil, err
+	}
+	if t.current.spoken() {
+		// 人说过的话不用再说一遍：让 Agent 据此填表
+		conversation := append(t.history(), textMessage("user", handoverNote))
+		if err := t.assist(ctx, conversation); err != nil {
+			return nil, err
+		}
+	}
+	if !t.drafted {
+		t.cards = append(t.cards, t.formCard())
+	}
+	if err := t.flushCards(); err != nil {
+		return nil, err
+	}
+	return m.reply(t)
+}
+
+// AddAttachments 把人上传的材料暂存进会话，提交时才进任务。
+// 不占回复锁：人可以在 Agent 回复的时候继续传文件。
+func (m *Manager) AddAttachments(id string, role contract.Role, files []contract.AttachmentInput) (*Reply, error) {
+	if role != contract.RoleInitiator {
+		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以上传材料")
+	}
+	if len(files) == 0 {
+		return nil, failure(contract.ErrInvalidInput, "没有收到文件")
+	}
+	current, err := m.load(id)
+	if err != nil {
+		return nil, err
+	}
+	if current.taskID != "" {
+		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
+	}
+	t := &turn{manager: m, current: current}
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		size, err := m.store.saveAttachment(id, file)
+		if err != nil {
+			return nil, err
+		}
+		if err := t.write(Message{Kind: kindAttachmentAdded, Attachment: &Attachment{Name: file.Name, Size: size}}); err != nil {
+			return nil, err
+		}
+		names = append(names, file.Name)
+	}
+	if err := t.write(Message{Kind: KindNotice, Text: "已收到材料：" + strings.Join(names, "、")}); err != nil {
+		return nil, err
+	}
+	return m.reply(t)
+}
+
+// Submit 人在表单卡片上点提交：建任务，发提交命令。
+// 这是会话里唯一发任务命令的地方；form 为 nil 时用草稿，否则以人改过的内容为准。
+func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*Reply, error) {
+	if role != contract.RoleInitiator {
+		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以提交")
+	}
+	t, done, err := m.begin(id, role)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if t.current.taskID != "" {
+		return nil, failure(ErrSessionHasTask, "这个会话已有任务，要做新任务请开新会话")
+	}
+	if t.current.employee == "" {
+		return nil, failure(ErrEmployeeMissing, "请先确认由哪个员工接手")
+	}
+	if m.deps.Preflight != nil {
+		if err := m.deps.Preflight(); err != nil {
+			return nil, err
+		}
+	}
+	if form != nil {
+		if err := t.write(Message{Kind: kindDraftSet, Draft: form}); err != nil {
+			return nil, err
+		}
+	}
+	inputs := make([]contract.AttachmentInput, 0, len(t.current.attachments))
+	for _, attachment := range t.current.attachments {
+		inputs = append(inputs, contract.AttachmentInput{Name: attachment.Name, SourcePath: m.store.attachmentPath(id, attachment.Name)})
+	}
+	snapshot, err := m.deps.Engine.Create(contract.CreateTaskInput{
+		Employee: t.current.employee, Form: t.current.draft, Attachments: inputs, Actor: role,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := t.write(Message{Kind: kindTaskBound, TaskID: snapshot.ID}); err != nil {
+		return nil, err
+	}
+	if result := m.deps.Engine.Command(snapshot.ID, contract.TaskCommand{Type: contract.CmdSubmit}, role); !result.OK {
+		return nil, failure(result.Error, "%s", result.Message)
+	}
+	return m.reply(t)
+}
+
+// legacyPrefix 由任务事件推导出的只读会话的 ID 前缀。
+const legacyPrefix = "task-"
+
+// load 读一个可以写入的会话。
+func (m *Manager) load(id string) (*record, error) {
+	if !idPattern.MatchString(id) {
+		return nil, notFound(id)
+	}
+	if strings.HasPrefix(id, legacyPrefix) {
+		if _, found := m.deps.Engine.Get(strings.TrimPrefix(id, legacyPrefix)); found {
+			return nil, failure(ErrSessionReadOnly, "这是由旧任务推导出的只读会话，要继续工作请开新会话")
+		}
+		return nil, notFound(id)
+	}
+	current, err := m.store.read(id)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, notFound(id)
+	}
+	return current, nil
+}
+
+// legacyView 没有会话的旧任务：由事件推导出只读会话。
+func (m *Manager) legacyView(summary contract.TaskSummary) *View {
+	view := &View{
+		ID: legacyPrefix + summary.ID, Status: StatusTask, ReadOnly: true, Title: summary.Title,
+		Employee: summary.Employee, TaskID: summary.ID, Attachments: []Attachment{},
+		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{},
+	}
+	m.applySummary(view, summary)
+	return view
+}
+
+// getLegacy 读一个只读会话和它的全部消息。
+func (m *Manager) getLegacy(id string) (*Detail, error) {
+	taskID := strings.TrimPrefix(id, legacyPrefix)
+	for _, summary := range m.deps.Engine.List() {
+		if summary.ID != taskID {
+			continue
+		}
+		messages, err := m.withTask(nil, taskID)
+		if err != nil {
+			return nil, err
+		}
+		return &Detail{View: *m.legacyView(summary), Messages: messages}, nil
+	}
+	return nil, notFound(id)
+}
+
+// List 列出全部会话，最新的在前；已归属会话的任务不再单独列出。
+func (m *Manager) List() ([]*View, error) {
+	out := []*View{}
+	bound := map[string]bool{}
+	for _, id := range m.store.ids() {
+		current, err := m.store.read(id)
+		if err != nil {
+			return nil, err
+		}
+		if current == nil {
+			continue
+		}
+		bound[current.taskID] = true
+		out = append(out, m.view(current))
+	}
+	for _, summary := range m.deps.Engine.List() {
+		if !bound[summary.ID] {
+			out = append(out, m.legacyView(summary))
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
+	return out, nil
+}
+
+func notFound(id string) error {
+	return failure(contract.ErrNotFound, "会话不存在：%s", id)
+}
+
+func (m *Manager) view(current *record) *View {
+	view := &View{
+		ID: current.id, Status: StatusReception, Title: titleOf(current),
+		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
+		Attachments: append([]Attachment{}, current.attachments...),
+		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
+		WaitingFor: []contract.Role{},
+	}
+	if current.employee != "" {
+		view.Status = StatusDrafting
+	}
+	if current.taskID != "" {
+		view.Status = StatusTask
+		m.applyTask(view, current.taskID)
+	}
+	return view
+}
+
+// applyTask 把任务摘要投影到会话上。
+func (m *Manager) applyTask(view *View, taskID string) {
+	for _, summary := range m.deps.Engine.List() {
+		if summary.ID == taskID {
+			m.applySummary(view, summary)
+		}
+	}
+}
+
+func (m *Manager) applySummary(view *View, summary contract.TaskSummary) {
+	view.StatusText = summary.StatusText
+	view.WaitingFor = summary.WaitingFor
+	if contract.IsTerminal(summary.State) {
+		view.Status = StatusClosed
+	}
+	if parseTime(summary.UpdatedAt).After(parseTime(view.UpdatedAt)) {
+		view.UpdatedAt = summary.UpdatedAt
+	}
+}
+
+// titleOf 会话标题：第一句话。
+func titleOf(current *record) string {
+	for _, message := range current.messages {
+		if message.Kind == KindUser {
+			runes := []rune(strings.TrimSpace(message.Text))
+			if len(runes) > 30 {
+				return string(runes[:30]) + "…"
+			}
+			return string(runes)
+		}
+	}
+	return "新对话"
+}
+
+func visibleMessages(messages []Message) []Message {
+	out := []Message{}
+	for _, message := range messages {
+		if message.visible() {
+			out = append(out, message)
+		}
+	}
+	return out
+}
+
+// CodeOf 取业务错误码；不是业务错误时返回空串。
+func CodeOf(err error) (code string, message string) {
+	var typed *Error
+	if errors.As(err, &typed) {
+		return typed.Code, typed.Message
+	}
+	return "", ""
+}

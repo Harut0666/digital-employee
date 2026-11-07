@@ -764,6 +764,12 @@ func (s *Server) handlePatchAppSettings(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
 		return
 	}
+	if patch.DefaultEmployee != nil && *patch.DefaultEmployee != "" && !s.employeeExists(*patch.DefaultEmployee) {
+		message := "设置值不合法（defaultEmployee：员工不存在）"
+		s.auditDangerousFailures(sandboxIntent, approvalIntent, r, message)
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, message))
+		return
+	}
 	current := settings.Read(s.opts.WorkspaceDir)
 	if patch.Revision != current.Revision {
 		message := "设置已被修改，请刷新后重试"

@@ -41,7 +41,7 @@ func (h *harness) reviewedTask(form string) contract.TaskSnapshot {
 	return review
 }
 
-const week44Form = `{"period":{"year":2026,"week":44}}`
+const week44FormJSON = `{"period":{"year":2026,"week":44}}`
 
 func diskName(t *testing.T, snapshot contract.TaskSnapshot, kind contract.DeliverableKind) string {
 	t.Helper()
@@ -56,7 +56,7 @@ func diskName(t *testing.T, snapshot contract.TaskSnapshot, kind contract.Delive
 
 func TestDeliverableDownloadsUnderTemplateName(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"))
-	task := h.reviewedTask(week44Form)
+	task := h.reviewedTask(week44FormJSON)
 
 	if got, want := h.downloadName(task.ID, contract.DeliverableDocx), "经营周报_2026年第44周.docx"; got != want {
 		t.Fatalf("下载名 = %q，want %q", got, want)
@@ -69,7 +69,7 @@ func TestDeliverableDownloadsUnderTemplateName(t *testing.T) {
 
 func TestQcRecordKeepsItsOwnName(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"))
-	task := h.reviewedTask(week44Form)
+	task := h.reviewedTask(week44FormJSON)
 
 	got := h.downloadName(task.ID, contract.DeliverableQCRecord)
 	if want := diskName(t, task, contract.DeliverableQCRecord); got != want {
@@ -79,7 +79,7 @@ func TestQcRecordKeepsItsOwnName(t *testing.T) {
 
 func TestDownloadFallsBackWithoutTemplate(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"), withWorkflowEdit("deliverableName: 经营周报_{year}年第{week}周\n", ""))
-	task := h.reviewedTask(week44Form)
+	task := h.reviewedTask(week44FormJSON)
 
 	got := h.downloadName(task.ID, contract.DeliverableDocx)
 	if want := diskName(t, task, contract.DeliverableDocx); got != want {
@@ -90,7 +90,7 @@ func TestDownloadFallsBackWithoutTemplate(t *testing.T) {
 func TestDownloadFallsBackWhenFormLacksField(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"),
 		withWorkflowEdit("deliverableName: 经营周报_{year}年第{week}周", "deliverableName: 周报_{region}"))
-	task := h.reviewedTask(week44Form)
+	task := h.reviewedTask(week44FormJSON)
 
 	got := h.downloadName(task.ID, contract.DeliverableDocx)
 	if want := diskName(t, task, contract.DeliverableDocx); got != want {

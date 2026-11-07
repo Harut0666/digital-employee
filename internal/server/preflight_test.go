@@ -82,6 +82,26 @@ func TestSubmitWithoutKeyIsBlockedAndWritesNothing(t *testing.T) {
 	}
 }
 
+func TestSessionSubmitWithoutKeyIsBlockedBeforeATaskExists(t *testing.T) {
+	h := newHarness(t, nil, withModelConnection(keylessConnection()))
+	view := h.createSession()
+	h.confirm(view.ID, initiator, harnessEmployee)
+	if status, data := h.uploadTo(view.ID, a01Files(t)); status != http.StatusOK {
+		t.Fatalf("上传失败：%d %s", status, data)
+	}
+
+	status, data := h.trySubmit(view.ID, initiator, map[string]any{
+		"period": map[string]any{"year": 2026, "week": 44},
+	})
+	if status != http.StatusPreconditionFailed {
+		t.Fatalf("状态码 = %d：%s", status, data)
+	}
+	expectBlockedBySettings(t, decode[preflightReply](t, data))
+	if count := h.taskCount(); count != 0 {
+		t.Fatalf("被拦下的提交不应创建任务：%d", count)
+	}
+}
+
 func TestSubmitPassesOnceKeyIsSaved(t *testing.T) {
 	connection := keylessConnection()
 	h := newHarness(t, nil, withModelConnection(connection))
