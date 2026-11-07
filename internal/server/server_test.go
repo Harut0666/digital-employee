@@ -639,14 +639,10 @@ func TestPrepareConfigTextValidation(t *testing.T) {
 	}
 }
 
-func TestOpenFolderAndChat(t *testing.T) {
+func TestOpenFolder(t *testing.T) {
 	ts := newTestServer(t)
-	response, body := ts.request(t, http.MethodGet, "/api/chat/session-1", "", nil)
-	if response.StatusCode != 200 || !strings.Contains(string(body), "chat") {
-		t.Fatalf("chat 占位接口不对：%d %s", response.StatusCode, body)
-	}
 	// workspace 视图
-	response, body = ts.request(t, http.MethodGet, "/api/settings/workspace", "", nil)
+	response, body := ts.request(t, http.MethodGet, "/api/settings/workspace", "", nil)
 	if response.StatusCode != 200 {
 		t.Fatalf("workspace 接口失败：%d %s", response.StatusCode, body)
 	}

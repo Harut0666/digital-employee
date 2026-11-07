@@ -1,8 +1,9 @@
 // Package server 是 Go 版后端：net/http REST + SSE，契约与 Elysia 版逐字段一致，
 // 前端 packages/web 零改动可用。
 //
-// 路由分成四块（与 packages/server/src 对应）：
-//   - /api/tasks、/api/employees、/api/samples、/api/chat：任务与员工（index.ts）
+// 路由分成五块（与 packages/server/src 对应）：
+//   - /api/tasks、/api/employees、/api/samples：任务与员工（index.ts）
+//   - /api/sessions：会话与前台 Agent（internal/session）
 //   - /api/settings/*：设置中心（routes/settings.ts）
 //   - /api/employees/:id/config/*：员工配置页与版本（routes/config.ts）
 //   - 其余路径：托管 packages/web/dist，非 /api 找不到文件时回退 index.html（files.ts）
@@ -16,7 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/session"
 )
 
 // Options 服务端依赖。除 Engine 外都有默认实现，方便测试注入。
@@ -53,19 +56,23 @@ type Options struct {
 	Logger *Logger
 	// AppVersion 诊断页显示的版本号。
 	AppVersion string
+	// Model 取前台 Agent 当前可用的模型提供者；nil 时会话按模型不可用处理。
+	Model func() agent.ModelProvider
 }
 
 // Server HTTP 服务端。
 type Server struct {
-	opts Options
-	mux  *http.ServeMux
-	log  *Logger
+	opts     Options
+	mux      *http.ServeMux
+	log      *Logger
+	sessions *session.Manager
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
 func New(opts Options) *Server {
 	s := &Server{opts: opts}
 	s.resolveDefaults()
+	s.sessions = s.newSessions()
 	s.mux = http.NewServeMux()
 	s.routes()
 	return s
@@ -182,7 +189,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// routes 注册全部端点（35 个）。
+// routes 注册全部端点。
 func (s *Server) routes() {
 	m := s.mux
 
@@ -200,8 +207,14 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/samples", s.handleListSamples)
 	m.HandleFunc("POST /api/samples/{id}/tasks", s.handleCreateSampleTask)
 
-	// ---- 前台 Agent（可砍范围，先返回最小实现） ----
-	m.HandleFunc("GET /api/chat/{sessionId}", s.handleChat)
+	// ---- 会话 ----
+	m.HandleFunc("GET /api/sessions", s.sessionRoute(s.handleListSessions))
+	m.HandleFunc("POST /api/sessions", s.sessionRoute(s.handleCreateSession))
+	m.HandleFunc("GET /api/sessions/{id}", s.sessionRoute(s.handleGetSession))
+	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
+	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
+	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
+	m.HandleFunc("POST /api/sessions/{id}/submit", s.sessionRoute(s.handleSubmitSession))
 
 	// ---- 设置中心 ----
 	m.HandleFunc("GET /api/settings", s.handleSettingsConnections)

@@ -36,7 +36,7 @@ var DefaultConnections = []contract.ModelConnection{
 // knownTopLevelKeys 由本模块认识的顶层键；其余键进 Extra 原样保留。
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "revision": true, "connections": true, "defaultConnection": true,
-	"defaultModel": true, "demo": true, "ui": true, "execution": true,
+	"defaultModel": true, "defaultEmployee": true, "demo": true, "ui": true, "execution": true,
 	"diagnostics": true, "permissions": true,
 }
 
@@ -386,6 +386,9 @@ func Normalize(raw map[string]any) contract.SettingsDocument {
 	} else {
 		doc.DefaultModel = DefaultDefaultModel
 	}
+	if s, ok := raw["defaultEmployee"].(string); ok {
+		doc.DefaultEmployee = s
+	}
 	doc.Demo = normalizeDemo(raw["demo"])
 
 	doc.Extra = map[string]any{}
@@ -457,6 +460,9 @@ func Serialize(doc contract.SettingsDocument) map[string]any {
 	out["connections"] = connections
 	out["defaultConnection"] = doc.DefaultConnection
 	out["defaultModel"] = doc.DefaultModel
+	if doc.DefaultEmployee != "" {
+		out["defaultEmployee"] = doc.DefaultEmployee
+	}
 	demo := map[string]any{
 		"toolFaults":          doc.Demo.ToolFaults,
 		"corruptTraceability": doc.Demo.CorruptTraceability,
@@ -584,6 +590,7 @@ type AppView struct {
 	Connections       []ConnectionView             `json:"connections"`
 	DefaultConnection string                       `json:"defaultConnection"`
 	DefaultModel      string                       `json:"defaultModel"`
+	DefaultEmployee   string                       `json:"defaultEmployee"`
 	Demo              contract.DemoSettings        `json:"demo"`
 	Extra             map[string]any               `json:"extra"`
 	EnvOverride       bool                         `json:"envOverride"`
@@ -649,7 +656,8 @@ func View(doc contract.SettingsDocument, env Env) AppView {
 		OK: true, Version: doc.Version, Revision: doc.Revision,
 		UI: doc.UI, Execution: execution, Diagnostics: doc.Diagnostics, Permissions: doc.Permissions,
 		Connections: connections, DefaultConnection: doc.DefaultConnection, DefaultModel: doc.DefaultModel,
-		Demo: demo, Extra: extra, EnvOverride: env.get("DEEPSEEK_API_KEY") != "",
+		DefaultEmployee: doc.DefaultEmployee,
+		Demo:            demo, Extra: extra, EnvOverride: env.get("DEEPSEEK_API_KEY") != "",
 	}
 }
 
@@ -677,6 +685,8 @@ type Patch struct {
 	Execution   map[string]any
 	Diagnostics map[string]any
 	Permissions map[string]any
+	// DefaultEmployee 请求里出现时非 nil；空串表示清除
+	DefaultEmployee *string
 }
 
 func badValue(format string, args ...any) error {
@@ -827,6 +837,12 @@ func ParsePatch(body map[string]any) (*Patch, error) {
 		switch key {
 		case "revision":
 			continue
+		case "defaultEmployee":
+			text, ok := value.(string)
+			if !ok {
+				return nil, badValue("defaultEmployee：必须是字符串")
+			}
+			patch.DefaultEmployee = &text
 		case "ui", "execution", "diagnostics", "permissions":
 			section, ok := isRecord(value)
 			if !ok {
@@ -886,6 +902,9 @@ func mergeInto(dst any, patch map[string]any) error {
 // ApplyPatch 把 PATCH 的分区字段合并进文档（只碰传了的分区）。
 func ApplyPatch(doc *contract.SettingsDocument, patch *Patch) error {
 	var err error
+	if patch.DefaultEmployee != nil {
+		doc.DefaultEmployee = *patch.DefaultEmployee
+	}
 	if patch.UI != nil {
 		if err = mergeInto(&doc.UI, patch.UI); err != nil {
 			return err
@@ -996,7 +1015,7 @@ func ValidateImport(value any) (migrated bool, err error) {
 			}
 		}
 	}
-	for _, key := range []string{"defaultConnection", "defaultModel"} {
+	for _, key := range []string{"defaultConnection", "defaultModel", "defaultEmployee"} {
 		if raw, ok := doc[key]; ok {
 			if _, ok := raw.(string); !ok {
 				return false, fmt.Errorf("%s 必须是字符串", key)

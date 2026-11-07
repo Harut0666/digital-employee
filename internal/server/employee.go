@@ -73,6 +73,11 @@ func (s *Server) listEmployees() ([]employeeInfo, error) {
 	return result, nil
 }
 
+// employeeExists 这个 id 是否对应一个合法的员工目录。
+func (s *Server) employeeExists(id string) bool {
+	return IsEmployeeID(id) && isFile(filepath.Join(s.opts.EmployeesDir, id, "workflow.yaml"))
+}
+
 func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 	employees, err := s.listEmployees()
 	if err != nil {

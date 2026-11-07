@@ -82,9 +82,14 @@ func withWorkflowEdit(old, replacement string) harnessOption {
 
 // harness 一个运行中的主接缝。
 type harness struct {
-	t         *testing.T
-	baseURL   string
-	engine    *engine.Engine
+	t        *testing.T
+	baseURL  string
+	engine   *engine.Engine
+	provider *agent.ScriptedProvider
+	// frontdesk 不为 nil 时前台 Agent 改用它，比如接本地假服务的真实提供者
+	frontdesk agent.ModelProvider
+	registry  contract.ToolClient
+	faults    *contract.FaultHooks
 	workspace string
 	employees string
 }
@@ -110,28 +115,44 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	registry := tools.NewRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
 	faults := &contract.FaultHooks{}
+	// 判断步骤和前台 Agent 共用一个剧本模型，前台 Agent 消费 agent.FrontdeskStepID 下的轮次
+	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	eng, err := engine.New(engine.Deps{
 		WorkspaceDir: workspace,
 		EmployeesDir: employees,
 		ToolClient:   registry,
-		Model:        agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{}),
+		Model:        provider,
 		Faults:       faults,
 	})
 	if err != nil {
 		t.Fatalf("创建引擎失败：%v", err)
 	}
+	h := &harness{t: t, engine: eng, provider: provider, registry: registry, faults: faults, workspace: workspace, employees: employees}
+	h.baseURL = h.serve()
+	return h
+}
+
+// serve 在同一个工作区上起一个服务端，返回地址。再调一次就是“重启后”的服务端。
+func (h *harness) serve() string {
+	h.t.Helper()
 	srv := server.New(server.Options{
-		Engine:       eng,
-		WorkspaceDir: workspace,
-		EmployeesDir: employees,
-		ToolClient:   registry,
-		Faults:       faults,
-		Env:          map[string]string{},
-		Logger:       server.NewLogger(server.LevelError, func(string, string) {}),
+		Engine:       h.engine,
+		WorkspaceDir: h.workspace,
+		EmployeesDir: h.employees,
+		ToolClient:   h.registry,
+		Faults:       h.faults,
+		Model: func() agent.ModelProvider {
+			if h.frontdesk != nil {
+				return h.frontdesk
+			}
+			return h.provider
+		},
+		Env:    map[string]string{},
+		Logger: server.NewLogger(server.LevelError, func(string, string) {}),
 	})
 	httpServer := httptest.NewServer(srv.Handler())
-	t.Cleanup(httpServer.Close)
-	return &harness{t: t, baseURL: httpServer.URL, engine: eng, workspace: workspace, employees: employees}
+	h.t.Cleanup(httpServer.Close)
+	return httpServer.URL
 }
 
 func copyEmployee(t *testing.T, source, target string) {

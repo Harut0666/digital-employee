@@ -5,6 +5,7 @@
 package main
 
 import (
+	"digital-employee/internal/agent"
 	"digital-employee/internal/app"
 	"digital-employee/internal/cli"
 	"digital-employee/internal/contract"
@@ -32,6 +33,9 @@ func cliEngineFactory(options cli.EngineOptions) (contract.Engine, error) {
 func cliToolFactory() (contract.ToolClient, error) {
 	return &app.MockToolClient{}, nil
 }
+
+// frontdeskModel 前台 Agent 的模型提供者（占位：没有模型，会话按模型不可用处理）。
+func frontdeskModel() agent.ModelProvider { return nil }
 
 // onSettingsSaved 设置保存后重建模型提供者（占位：没有模型，直接成功）。
 func onSettingsSaved(settings contract.ModelSettings) error {

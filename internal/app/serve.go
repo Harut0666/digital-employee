@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/server"
 	"digital-employee/internal/settings"
@@ -70,6 +71,8 @@ type Options struct {
 	LoadEmployee func(dir string) (*contract.EmployeeConfig, error)
 	// OnSettingsSaved 设置保存后重建模型提供者。
 	OnSettingsSaved func(contract.ModelSettings) error
+	// Model 取前台 Agent 当前的模型提供者；nil 时会话按模型不可用处理。
+	Model func() agent.ModelProvider
 	// Faults 演示开关的运行时可变对象，与引擎、设置路由共享；nil 时新建。
 	Faults *contract.FaultHooks
 	// Env 环境变量；nil 时读进程环境。
@@ -253,6 +256,7 @@ func Start(options Options) (*Running, error) {
 		ToolClient:          toolClient,
 		Faults:              faults,
 		OnSettingsSaved:     options.OnSettingsSaved,
+		Model:               options.Model,
 		LoadEmployee:        options.LoadEmployee,
 		Env:                 env,
 		Logger:              logger,

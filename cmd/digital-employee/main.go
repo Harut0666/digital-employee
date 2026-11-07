@@ -93,6 +93,7 @@ func serve(argv []string) int {
 		EngineFactory:   appEngineFactory,
 		ToolFactory:     appToolFactory,
 		OnSettingsSaved: onSettingsSaved,
+		Model:           frontdeskModel,
 		AppVersion:      appVersion,
 	}
 	window := false

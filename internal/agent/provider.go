@@ -10,6 +10,10 @@ import (
 	"digital-employee/internal/contract"
 )
 
+// FrontdeskStepID 前台 Agent 向提供者要模型时用的步骤 id，剧本里也按它分组。
+// 前台 Agent 不属于员工的工作步骤，这个 id 不会和工作流里的步骤重名。
+const FrontdeskStepID = "frontdesk"
+
 // ToolSpec 交给模型的工具描述。
 type ToolSpec struct {
 	Name        string         `json:"name"`
