@@ -315,7 +315,7 @@ func transitionTarget(rt *taskRuntime, from contract.TaskState, trigger contract
 	if !ok {
 		return "", false
 	}
-	if trigger == contract.TriggerRetry {
+	if trigger == contract.TriggerRetry && rt.config.Workflow.AdmissionStep != "" {
 		if _, admissionDone := rt.proj.done[rt.config.Workflow.AdmissionStep]; !admissionDone {
 			return contract.StateAdmission, true
 		}
@@ -676,6 +676,10 @@ func (e *Engine) progressText(rt *taskRuntime) string {
 }
 
 func (e *Engine) stepAdmission(rt *taskRuntime) error {
+	// 没配准入步骤（只有技能的员工）：没有材料要校验，直接通过
+	if rt.config.Workflow.AdmissionStep == "" {
+		return e.transition(rt, contract.TriggerAdmissionPassed, contract.RoleSystem, nil)
+	}
 	var step *contract.StepConfig
 	for index := range rt.config.Workflow.Steps {
 		if rt.config.Workflow.Steps[index].ID == rt.config.Workflow.AdmissionStep {

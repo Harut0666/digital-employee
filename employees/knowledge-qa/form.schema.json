@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "知识库问答",
+  "description": "写下想问的问题，员工到知识库里查找已入库的成果来回答。",
+  "type": "object",
+  "required": ["question"],
+  "properties": {
+    "question": {
+      "type": "string",
+      "title": "问题",
+      "description": "想从知识库里查什么，例如“第 44 周周报里杭州湖滨店怎么了”。",
+      "minLength": 1
+    }
+  }
+}

@@ -422,6 +422,7 @@ func ConsistencyProblems(w *contract.EmployeeWorkflow) []string {
 		problems = append(problems, "workflow.yaml 中的步骤 id 不唯一")
 	}
 
+	// 准入步骤可以不配：只有技能的员工（一个判断步骤）没有材料要校验
 	var admission *contract.StepConfig
 	for i := range w.Steps {
 		if w.Steps[i].ID == w.AdmissionStep {
@@ -429,7 +430,9 @@ func ConsistencyProblems(w *contract.EmployeeWorkflow) []string {
 			break
 		}
 	}
-	if admission == nil {
+	if w.AdmissionStep == "" {
+		// 不配准入步骤
+	} else if admission == nil {
 		problems = append(problems, fmt.Sprintf("admissionStep %q 不在 workflow.yaml 的步骤中", w.AdmissionStep))
 	} else if admission.Kind != contract.StepKindCompute {
 		problems = append(problems, fmt.Sprintf("admissionStep %q 必须是计算步骤", admission.ID))

@@ -6,6 +6,7 @@
 // 这样保存一次配置不会因为重新排版而制造无意义的差异。
 
 import {
+  FRONTDESK_DEFAULT_TOOLS,
   FRONTDESK_READONLY_TOOLS,
   isFrontdeskReadonlyTool,
   type FrontdeskDoc,
@@ -93,7 +94,7 @@ export function joinSkill(sections: SkillSections, original: string): string {
 
 // ---------------------------------------------------------------- frontdesk.md
 
-const DEFAULT_FRONTDESK_TOOLS = FRONTDESK_READONLY_TOOLS.map((t) => t.name);
+const DEFAULT_FRONTDESK_TOOLS = FRONTDESK_DEFAULT_TOOLS;
 
 function normalizeBody(lines: string[]): string {
   const text = lines.join("\n").replace(/\s+$/, "");

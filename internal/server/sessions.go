@@ -68,6 +68,7 @@ func (s *Server) newSessions() *session.Manager {
 			return &execution
 		},
 		Knowledge: knowledge.WithTools(s.knowledge, nil),
+		Filing:    filingSource{server: s},
 		Now:       s.opts.Now,
 	})
 }
@@ -193,6 +194,21 @@ func (s *Server) handleSubmitSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	reply, err := s.sessions.Submit(r.PathValue("id"), role, form)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleDraftFiling 入库卡片上请模型起草描述；模型不可用时回一条说明，由人手写。
+func (s *Server) handleDraftFiling(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	reply, err := s.sessions.DraftFiling(r.Context(), r.PathValue("id"), role)
 	if err != nil {
 		writeSessionError(w, err)
 		return

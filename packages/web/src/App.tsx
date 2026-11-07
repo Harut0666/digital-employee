@@ -16,6 +16,7 @@ import { Handoff, TaskActionBar, type CardActions, type SessionActions } from ".
 import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
 import { EmployeeConfigPage } from "./pages/EmployeeConfig";
 import { SettingsPage } from "./pages/Settings";
+import { KnowledgePage } from "./pages/Knowledge";
 import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
 
@@ -126,6 +127,18 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       if (!res.ok) message.error(res.message);
     },
     submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
+    async draftFiling() {
+      if (!sessionId) return;
+      const res = await settle(api.draftFiling(sessionId));
+      if (!res.ok) message.error(res.message);
+    },
+    async fileKnowledge(filing) {
+      const res = await api.fileKnowledge(filing).catch((e: unknown) => ({ ok: false as const, error: "internal", message: e instanceof Error ? e.message : "入库失败" }));
+      if (res.ok) message.success(`已放入知识库：${res.entry.title}`);
+      else message.error(res.message);
+      session.reload();
+    },
+    openKnowledge: () => setSelection({ kind: "page", page: "knowledge" }),
   };
 
   const send = async (text: string): Promise<boolean> => {
@@ -177,7 +190,14 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   let panel: React.ReactNode = null;
   if (selection.kind === "page") {
     // 页面组件各自一个文件，T10/T11 并行填充时互不冲突。
-    center = selection.page === "settings" ? <SettingsPage api={settingsApi} /> : <EmployeeConfigPage employees={employees} />;
+    center =
+      selection.page === "settings" ? (
+        <SettingsPage api={settingsApi} />
+      ) : selection.page === "knowledge" ? (
+        <KnowledgePage role={role} employees={employees} />
+      ) : (
+        <EmployeeConfigPage employees={employees} />
+      );
   } else if (selection.kind === "new") {
     center = (
       <NewConversation

@@ -19,6 +19,8 @@ const (
 	CardPause           = "pause"
 	CardQC              = "qc"
 	CardReview          = "review"
+	// CardFiling 入库确认：交付后由程序发出，模型起草描述，人确认后入库
+	CardFiling = "knowledge_filing"
 )
 
 // 员工确认卡片的来源。
@@ -60,6 +62,13 @@ type Card struct {
 	// review：退回意见的草稿，人确认后才退回
 	Comment  string   `json:"comment,omitempty"`
 	Sections []string `json:"sections,omitempty"`
+
+	// knowledge_filing：默认标题、模型起草的描述（人确认或修改后才入库）、已入库的条目 ID
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// DraftFailed 模型起草失败，由人手写
+	DraftFailed bool   `json:"draftFailed,omitempty"`
+	Filed       string `json:"filed,omitempty"`
 }
 
 func confirmCard(employees []Employee, proposed, source, reason string) Card {
@@ -110,7 +119,8 @@ func projectEvent(event contract.TaskEvent) (Message, bool) {
 }
 
 // withTask 把任务的卡片并进会话消息，按时间排好，并给还有效的卡片配上现在能点的按钮。
-func (m *Manager) withTask(messages []Message, taskID string) ([]Message, error) {
+// current 是会话回放后的状态，带着入库描述的草稿；由旧任务推导出的只读会话没有，传 nil。
+func (m *Manager) withTask(messages []Message, taskID string, current *record) ([]Message, error) {
 	events, err := m.deps.Engine.Events(taskID, 0)
 	if err != nil {
 		return nil, err
@@ -120,9 +130,34 @@ func (m *Manager) withTask(messages []Message, taskID string) ([]Message, error)
 		if message, ok := projectEvent(event); ok {
 			merged = append(merged, message)
 		}
+		if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
+			if message, ok := m.filingMessage(event, current); ok {
+				merged = append(merged, message)
+			}
+		}
 	}
 	sort.SliceStable(merged, func(i, j int) bool { return parseTime(merged[i].TS).Before(parseTime(merged[j].TS)) })
 	return merged, m.attachActions(merged, taskID, events)
+}
+
+// filingMessage 交付之后的入库确认卡片：紧跟在“任务已交付”之后。
+// 标题和是否已入库读取时从知识库取，描述草稿取自会话日志。没有可入库的交付物时不发。
+func (m *Manager) filingMessage(delivered contract.TaskEvent, current *record) (Message, bool) {
+	if m.deps.Filing == nil {
+		return Message{}, false
+	}
+	offer, ok := m.deps.Filing.Offer(delivered.TaskID)
+	if !ok {
+		return Message{}, false
+	}
+	card := Card{Type: CardFiling, TaskID: delivered.TaskID, AtSeq: delivered.Seq, Title: offer.Title, Filed: offer.Filed}
+	if current != nil {
+		card.Description = current.filingDraft
+		card.DraftFailed = current.filingFailed
+	}
+	return Message{
+		ID: fmt.Sprintf("t%d-filing", delivered.Seq), Seq: delivered.Seq, TS: delivered.TS, Kind: KindCard, Card: &card,
+	}, true
 }
 
 // attachActions 给当前暂停的卡片配上快照里的按钮和暂停说明；更早的卡片已失效，不配。

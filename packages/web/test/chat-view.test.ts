@@ -149,4 +149,28 @@ describe("deriveChat", () => {
     // 没交付就不给
     expect(deriveChat(session([], { status: "task", taskId: "t1" }), { state: "awaiting_review", deliverables: [] }).map((i) => i.kind)).toEqual([]);
   });
+
+  test("入库确认卡片排在交付物之后；入库前可以操作，入库后只读；只读会话不能请模型起草", () => {
+    const deliveredTask = { state: "delivered" as const, deliverables: [{ kind: "docx" as const, path: "经营周报.docx", sha256: "x" }] };
+    const filing = (patch: Record<string, unknown>) =>
+      msg({ kind: "card", card: { type: "knowledge_filing", taskId: "t1", title: "经营周报_2026年第44周", ...patch } }, "t20-filing");
+    const notice = msg({ kind: "notice", text: "任务已交付。" }, "t20");
+
+    const offered = deriveChat(session([notice, filing({ description: "第 44 周经营周报" })], { status: "closed", taskId: "t1" }), deliveredTask);
+    expect(offered.map((i) => i.kind)).toEqual(["notice", "delivered", "filing"]);
+    const card = offered[2];
+    expect(card?.kind === "filing" && [card.taskId, card.title, card.description, card.active, card.canDraft]).toEqual([
+      "t1",
+      "经营周报_2026年第44周",
+      "第 44 周经营周报",
+      true,
+      true,
+    ]);
+
+    const filed = deriveChat(session([notice, filing({ filed: "kb-1" })], { status: "closed", taskId: "t1" }), deliveredTask).at(-1);
+    expect(filed?.kind === "filing" && [filed.filed, filed.active]).toEqual(["kb-1", false]);
+
+    const legacy = deriveChat(session([notice, filing({ draftFailed: true })], { status: "closed", taskId: "t1", readOnly: true }), deliveredTask).at(-1);
+    expect(legacy?.kind === "filing" && [legacy.active, legacy.canDraft, legacy.draftFailed]).toEqual([true, false, true]);
+  });
 });

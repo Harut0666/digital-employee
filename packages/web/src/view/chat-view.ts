@@ -34,7 +34,19 @@ export type ChatItem =
   | (ItemBase & { kind: "pause"; pause?: PauseView; actions: TaskAction[]; active: boolean })
   | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
   | (ItemBase & { kind: "review"; pause?: PauseView; actions: TaskAction[]; active: boolean; comment?: string; sections?: string[] })
-  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] });
+  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
+  | (ItemBase & {
+      kind: "filing";
+      taskId: string;
+      title: string;
+      description: string;
+      draftFailed: boolean;
+      filed?: string;
+      /** 还没入库：可以改描述并确认 */
+      active: boolean;
+      /** 能请模型起草描述（只读会话不能写会话日志） */
+      canDraft: boolean;
+    });
 
 /** 会话绑定的任务现状（取自任务快照），用来在交付后给出交付物 */
 export interface ChatTask {
@@ -54,6 +66,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
   const lastConfirm = lastIndex((c) => c.type === "employee_confirm");
   const lastDraftForm = lastIndex((c) => c.type === "form" && !c.submitted);
   const writable = !session.readOnly;
+  // 入库确认卡片排在交付物之后：先能下载，再决定要不要入库
+  const filings: ChatItem[] = [];
 
   session.messages.forEach((m, index) => {
     const base = { key: m.id, ts: m.ts };
@@ -68,7 +82,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
         items.push({ ...base, kind: "notice", text: m.text ?? "" });
         break;
       case "card":
-        if (m.card) items.push(cardItem(base, m.card, index));
+        if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
+        else if (m.card) items.push(cardItem(base, m.card, index));
         break;
       default:
         // 工具留痕和模型失败只进会话日志，不进对话
@@ -79,7 +94,22 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
     const ts = session.messages.at(-1)?.ts ?? session.updatedAt;
     items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
   }
+  items.push(...filings);
   return items;
+
+  function filingItem(base: ItemBase, card: SessionCard): ChatItem {
+    return {
+      ...base,
+      kind: "filing",
+      taskId: card.taskId ?? session.taskId ?? "",
+      title: card.title ?? "",
+      description: card.description ?? "",
+      draftFailed: card.draftFailed ?? false,
+      filed: card.filed,
+      active: !card.filed,
+      canDraft: writable,
+    };
+  }
 
   function cardItem(base: ItemBase, card: SessionCard, index: number): ChatItem {
     const actions = card.actions ?? [];
@@ -112,6 +142,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
         return { ...base, kind: "qc", passed: card.passed ?? false, checks: card.checks ?? [] };
       case "review":
         return { ...base, kind: "review", pause: card.pause, actions, active: actions.length > 0, comment: card.comment, sections: card.sections };
+      case "knowledge_filing":
+        return filingItem(base, card);
     }
   }
 }

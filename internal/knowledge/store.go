@@ -68,6 +68,20 @@ func (s *Store) List() ([]Entry, error) {
 	return s.readIndex()
 }
 
+// FiledFrom 某个任务最近一次入库的条目 ID；没入库过时为空。
+func (s *Store) FiledFrom(taskID string) (string, error) {
+	entries, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].SourceTask == taskID {
+			return entries[index].ID, nil
+		}
+	}
+	return "", nil
+}
+
 // find 在索引里按 ID 找条目。
 func find(entries []Entry, id string) (int, bool) {
 	for index, entry := range entries {

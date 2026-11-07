@@ -4,7 +4,7 @@
 import {
   FORM_PARAMS,
   FORM_PARAM_NAMES,
-  FRONTDESK_READONLY_TOOLS,
+  FRONTDESK_DEFAULT_TOOLS,
   QC_TEMPLATES,
   type ConfigDiff,
   type ConfigDiffFile,
@@ -171,7 +171,7 @@ function buildContent(employee: EmployeeInfo): Content {
     },
     formSchema: clone(employee.formSchema),
     formUi: clone(employee.formUi ?? {}),
-    frontdesk: { body: `# 前台 Agent · ${employee.name}\n\n说话平实、简短。\n`, tools: FRONTDESK_READONLY_TOOLS.map((t) => t.name) },
+    frontdesk: { body: `# 前台 Agent · ${employee.name}\n\n说话平实、简短。\n`, tools: [...FRONTDESK_DEFAULT_TOOLS] },
     prompts,
     schemas,
   };

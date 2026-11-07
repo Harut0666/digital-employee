@@ -1,0 +1,28 @@
+# 知识库问答员工 · 工作步骤（Spec 0005“员工”）
+# 只有技能的员工：整个工作流只有一个判断步骤，只开放知识库的两个只读工具。没有准入校验、计算步骤和质检。
+# 输入里以 "$" 开头的值按引用解析：$form.* 表单字段。
+id: knowledge-qa
+name: 知识库问答员工
+description: 回答关于已入库成果的问题，例如以前的周报里写了什么。先查知识库索引，再读正文；知识库内容只作背景参考。
+
+limits:
+  task:
+    modelCalls: 10
+    durationSec: 300
+  toolRetry:
+    attempts: 1
+    backoffMs: [0]
+
+steps:
+  - id: answer
+    label: 查知识库并回答
+    kind: judge
+    prompt: prompts/answer.md
+    input:
+      question: $form.question
+    tools: [kb_search, kb_read]
+    outputSchema: schemas/answer.json
+    limits:
+      rounds: 8
+      durationSec: 120
+    rework: true

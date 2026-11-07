@@ -19,6 +19,7 @@ import type {
   TaskState,
   TaskSummary as ContractTaskSummary,
 } from "@de/core/contract";
+import type { KnowledgeApi } from "./knowledge";
 import type { SessionApi } from "./sessions";
 
 /** 界面上可切换的三种角色；system 只出现在事件里。 */
@@ -107,7 +108,7 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing";
 
 /** 流程卡片：内容和按钮都由后端填写，字段按 type 取用。 */
 export interface SessionCard {
@@ -132,6 +133,11 @@ export interface SessionCard {
   checks?: QcCheckResult[];
   comment?: string;
   sections?: string[];
+  // knowledge_filing：默认标题、模型起草的描述、起草是否失败、已入库的条目 ID
+  title?: string;
+  description?: string;
+  draftFailed?: boolean;
+  filed?: string;
 }
 
 export type SessionMessageKind = "user" | "assistant" | "notice" | "card" | "tool_called" | "tool_denied" | "model_failed";
@@ -183,11 +189,39 @@ export interface PreflightResult {
   settings?: SettingsEntry;
 }
 
+// ---- 知识库（Go 后端 internal/knowledge） ----
+
+/** 知识库索引里的一个条目；正文按 ID 另读 */
+export interface KnowledgeEntry {
+  id: string;
+  title: string;
+  description: string;
+  tags: string[];
+  sourceTask: string;
+  sourceEmployee: string;
+  createdAt: string;
+  fileName: string;
+}
+
+export interface KnowledgeDetail extends KnowledgeEntry {
+  text: string;
+}
+
+/** 入库：哪个已交付任务的交付物，人确认过的标题、描述和标签 */
+export interface KnowledgeFiling {
+  taskId: string;
+  title?: string;
+  description: string;
+  tags?: string[];
+}
+
+export type KnowledgeResult = { ok: true; entry: KnowledgeEntry } | { ok: false; error: string; message: string };
+
 export type SessionResult =
   | { ok: true; messages: SessionMessage[]; session: SessionSummary }
   | { ok: false; error: string; message: string; settings?: SettingsEntry };
 
-export interface WebApi extends SessionApi {
+export interface WebApi extends SessionApi, KnowledgeApi {
   listEmployees(): Promise<EmployeeInfo[]>;
   listTasks(): Promise<TaskSummary[]>;
   getTask(id: string): Promise<TaskSnapshot | undefined>;

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "知识库问答结果",
+  "description": "依据知识库正文给出的回答，以及出自哪些条目。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "sources"],
+  "properties": {
+    "answer": {
+      "type": "string",
+      "minLength": 1,
+      "description": "给发起人的回答，说明出自哪一条；查不到时如实说明。"
+    },
+    "sources": {
+      "type": "array",
+      "description": "回答依据的知识库条目；查不到时为空数组。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "kb_search 返回的条目 ID" },
+          "title": { "type": "string", "minLength": 1, "description": "条目标题" }
+        }
+      }
+    }
+  }
+}
