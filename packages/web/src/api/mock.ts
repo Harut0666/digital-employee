@@ -383,7 +383,9 @@ export function createMockApi(getRole: () => UiRole): WebApi {
   };
   const knowledge = createMockKnowledge(getRole, api);
   const { filedFrom: _filedFrom, ...knowledgeApi } = knowledge;
-  return { ...api, ...knowledgeApi, ...createMockSessions(EMPLOYEES, getRole, api, knowledge) };
+  const sessions = createMockSessions(EMPLOYEES, getRole, api, knowledge);
+  // 会话接口、侧栏要的全部会话和记录都在 sessions 里；treaty 推不出的流式订阅（T40）也在
+  return { ...api, ...knowledgeApi, ...sessions } as WebApi;
 }
 
 

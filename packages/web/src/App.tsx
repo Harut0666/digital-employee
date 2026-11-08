@@ -7,7 +7,7 @@ import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contra
 import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createWorkspaces } from "./api";
-import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useTask } from "./hooks/data";
+import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask } from "./hooks/data";
 import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { flattenSessions, Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
@@ -159,11 +159,12 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       // 还没读到登记时交服务端取唯一的工作区（单目录模式）
       const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
       const created = await api.createSession(targetWorkspace);
+      // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现
+      setSelection({ kind: "session", id: created.id });
       const res = await api.sendMessage(created.id, text);
       if (!res.ok) message.error(res.message);
       refreshSidebar();
-      setSelection({ kind: "session", id: created.id });
-      return true;
+      return res.ok;
     } catch (e) {
       fail(e, "开始对话失败");
       return false;
@@ -212,11 +213,24 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     if (!res.ok) message.error(res.message);
   };
 
+  // 正在说的一轮：说的话逐字出现、工具调用逐个列出；一轮结束时重读会话（完整消息和卡片这一刻才写下来）
+  const stream = useSessionStream(sessionId, session.reload);
+
+  /** 发一句话：接口立即受理，回复在会话事件流里出现。正在说的时候再发，排进这一轮 */
   const send = async (text: string): Promise<boolean> => {
     if (!sessionId) return false;
-    const res = await settle(api.sendMessage(sessionId, text));
+    const res = await api.sendMessage(sessionId, text).catch((e: unknown) => ({ ok: false as const, error: "internal", message: e instanceof Error ? e.message : "发送失败" }));
     if (!res.ok) message.error(res.message);
+    refreshSidebar();
     return res.ok;
+  };
+
+  const stopTurn = async (): Promise<void> => {
+    if (!sessionId) return;
+    const res = await api.stopTurn(sessionId);
+    if (!res.ok) message.error(res.message);
+    session.reload();
+    refreshSidebar();
   };
 
   // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件），
@@ -256,9 +270,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const items = useMemo(
     () =>
       detail
-        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events)
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live)
         : [],
-    [detail, task.snapshot, task.events],
+    [detail, task.snapshot, stream.live, task.events],
   );
   /** 新会话沿用的模型：设置的 lastModel（T39） */
   const [lastModel, setLastModel] = useState<ModelRef | undefined>();
@@ -330,6 +344,8 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         onSelectModel={selectModel}
         openSettings={actions.openSettings}
         onSend={send}
+        live={stream.live}
+        onStop={stopTurn}
       />
     );
   }

@@ -66,7 +66,9 @@ func (m *Manager) DraftFiling(ctx context.Context, id string, role contract.Role
 		text = string(runes[:filingTextLimit])
 	}
 
-	description, err := t.converse(ctx, filingPrompt, []agent.Message{textMessage("user", text)}, nil)
+	// 起草描述是一次性调用，不逐字推送，也不属于哪一轮
+	loop := &turnLoop{turn: t}
+	description, _, err := loop.converse(ctx, filingPrompt, []agent.Message{textMessage("user", text)}, nil)
 	if err != nil && !errors.Is(err, errModelUnavailable) {
 		return nil, err
 	}

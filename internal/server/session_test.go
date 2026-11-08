@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +40,7 @@ func (h *harness) readSession(id string) session.Detail {
 	if status != http.StatusOK {
 		h.t.Fatalf("读会话失败：%d %s", status, data)
 	}
+
 	return decode[session.Detail](h.t, data)
 }
 
@@ -51,15 +53,74 @@ func (h *harness) postJSON(path string, role contract.Role, body any) (int, []by
 	return h.send(http.MethodPost, path, role, "application/json", bytes.NewReader(raw))
 }
 
-// say 发一条消息，等完整回复。
-func (h *harness) say(sessionID string, role contract.Role, text string) session.Reply {
-	h.t.Helper()
-	status, data := h.postJSON("/api/sessions/"+sessionID+"/messages", role, map[string]any{"text": text})
-	if status != http.StatusOK {
-		h.t.Fatalf("发消息失败：%d %s", status, data)
-	}
-	return decode[session.Reply](h.t, data)
+// said 一次操作之后读到的会话：消息、会话本身，以及这一轮在事件流里的事件。
+type said struct {
+	Messages []session.Message
+	Session  session.View
+	Events   []agentEvent
 }
+
+// sayTurn 发一句话，等到这一轮结束；返回这一轮的事件。共用同一个装置时用（不需要另开事件流）。
+func (h *harness) sayTurn(id string, role contract.Role, text string) []agentEvent {
+	h.t.Helper()
+	stream := h.openStream(id)
+	defer stream.close()
+	turn := h.sayAsync(id, role, text)
+	events := h.waitTurn(stream, turn)
+	if events == nil {
+		h.t.Fatal("看不到这一轮的事件")
+	}
+	return events
+}
+
+// saidAfter 读会话，当成一次操作之后的样子。
+func (h *harness) saidAfter(id string) said {
+	detail := h.readSession(id)
+	return said{Messages: detail.Messages, Session: detail.View}
+}
+
+// messagesOf 一次操作之后会话里的全部消息（写进日志的，不含只推送的增量）。
+func messagesOf(reply said) []session.Message {
+	return reply.Messages
+}
+
+// say 发一条消息。接口立即返回 202，等这一轮在会话事件流里结束，再读最新的会话。
+func (h *harness) say(sessionID string, role contract.Role, text string) said {
+	h.t.Helper()
+	// 先开事件流再发：这一轮跑得快时也不会错过它的事件
+	stream := h.openStream(sessionID)
+	defer stream.close()
+	turn := h.sayAsync(sessionID, role, text)
+	events := h.waitTurn(stream, turn)
+	detail := h.readSession(sessionID)
+	return said{Messages: detail.Messages, Session: detail.View, Events: events}
+}
+
+// confirmed 确认员工之后读到的会话；人说过话时，接着填表的那一轮也算在这一步里。
+func (h *harness) confirmed(sessionID string, employee string) said {
+	h.t.Helper()
+	status, data := h.postJSON("/api/sessions/"+sessionID+"/employee", contract.RoleInitiator, map[string]any{"employee": employee})
+	if status != http.StatusOK {
+		h.t.Fatalf("确认员工失败：%d %s", status, data)
+	}
+	// 人说过话时接口紧接着开了填表的那一轮：等它结束（结束事件可能比会话状态早一点点可读）
+	deadline := time.Now().Add(stopTimeout)
+	for h.sessionBusy(sessionID) {
+		if time.Now().After(deadline) {
+			h.t.Fatal("等不到填表的那一轮结束")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+
+	detail := h.readSession(sessionID)
+
+	return said{Messages: detail.Messages, Session: detail.View}
+}
+
+
+
+
 
 // frontdeskScript 前台 Agent 的剧本。
 func frontdeskScript(turns ...agent.ScriptedTurn) agent.ModelScript {
@@ -103,12 +164,13 @@ func TestOneSentenceGetsAnEmployeeProposal(t *testing.T) {
 	), withScriptedModel())
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "帮我出第 44 周的周报")
+	h.sayTurn(created.ID, contract.RoleInitiator, "帮我出第 44 周的周报")
+	reply := h.saidAfter(created.ID)
 
-	if got := textOf(t, reply.Messages, session.KindAssistant); got != "这项工作适合经营周报员工，请确认。" {
+	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "这项工作适合经营周报员工，请确认。" {
 		t.Fatalf("回复 = %q", got)
 	}
-	card := cardOf(t, reply.Messages, session.CardEmployeeConfirm)
+	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
 	if card.Proposed != harnessEmployee || card.Source != session.SourceModel || card.Reason != "要出经营周报" {
 		t.Fatalf("员工确认卡片 = %+v", card)
 	}
@@ -149,9 +211,10 @@ func TestProposingAnUnknownEmployeeFallsBackToManualPick(t *testing.T) {
 	), withScriptedModel())
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "随便干点什么")
+	h.sayTurn(created.ID, contract.RoleInitiator, "随便干点什么")
+	reply := h.saidAfter(created.ID)
 
-	card := cardOf(t, reply.Messages, session.CardEmployeeConfirm)
+	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
 	if card.Proposed != "" || card.Source != session.SourceManual || len(card.Candidates) != 1 {
 		t.Fatalf("模型提议不存在的员工时应列出员工手选：%+v", card)
 	}
@@ -198,13 +261,13 @@ func TestConfirmingAnEmployeeFillsTheFormDraft(t *testing.T) {
 	created := h.createSession()
 	h.say(created.ID, contract.RoleInitiator, "出第 44 周周报，摘要先写区域情况")
 
-	reply := h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	reply := h.confirmed(created.ID, harnessEmployee)
 
-	card := cardOf(t, reply.Messages, session.CardForm)
+	card := cardOf(t, messagesOf(reply), session.CardForm)
 	if card.Employee != harnessEmployee || weekOf(t, card.Draft) != 44 || card.Draft["remark"] != "摘要先写区域情况" {
 		t.Fatalf("表单卡片 = %+v", card)
 	}
-	if got := textOf(t, reply.Messages, session.KindAssistant); got != "已经填好统计周期，请检查后提交。" {
+	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "已经填好统计周期，请检查后提交。" {
 		t.Fatalf("回复 = %q", got)
 	}
 	got := h.readSession(created.ID)
@@ -237,23 +300,27 @@ func TestModelUnavailableStillLetsThePersonPickAnEmployee(t *testing.T) {
 			h := newHarness(t, script, withScriptedModel())
 			created := h.createSession()
 
-			reply := h.say(created.ID, contract.RoleInitiator, "出周报")
+			h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
+			reply := h.saidAfter(created.ID)
 
-			if got := textOf(t, reply.Messages, session.KindNotice); !strings.Contains(got, "模型暂时不可用") {
+			if got := textOf(t, messagesOf(reply), session.KindNotice); !strings.Contains(got, "模型暂时不可用") {
 				t.Fatalf("说明 = %q", got)
 			}
-			card := cardOf(t, reply.Messages, session.CardEmployeeConfirm)
+			card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
 			if card.Proposed != "" || card.Source != session.SourceManual || len(card.Candidates) != 1 {
 				t.Fatalf("手选卡片 = %+v", card)
 			}
 
-			picked := h.confirm(created.ID, contract.RoleInitiator, card.Candidates[0].ID)
+			h.confirmed(created.ID, card.Candidates[0].ID)
 
-			form := cardOf(t, picked.Messages, session.CardForm)
+
+			// 人还没说话时没有填表那一轮：空白表单由界面照着会话现状给出，不另写一条
+			got := h.readSession(created.ID)
+			form := session.Card{Type: session.CardForm, Employee: got.Employee, Draft: got.Draft}
 			if form.Employee != harnessEmployee || len(form.Draft) != 0 {
 				t.Fatalf("手选后应给出空白表单：%+v", form)
 			}
-			if got := h.readSession(created.ID); got.Employee != harnessEmployee {
+			if got.Employee != harnessEmployee {
 				t.Fatalf("会话 = %+v", got)
 			}
 		})
@@ -266,9 +333,9 @@ func TestEmployeeCanBePickedBeforeSayingAnything(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 
-	reply := h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	reply := h.confirmed(created.ID, harnessEmployee)
 
-	if form := cardOf(t, reply.Messages, session.CardForm); form.Employee != harnessEmployee {
+	if form := cardOf(t, messagesOf(reply), session.CardForm); form.Employee != harnessEmployee {
 		t.Fatalf("表单卡片 = %+v", form)
 	}
 	if calls := len(h.provider.Requests()); calls != 0 {
@@ -287,7 +354,7 @@ func TestOnlyTheInitiatorConfirmsAnEmployeeAndOnlyOnce(t *testing.T) {
 	if status, data := h.postJSON(path, contract.RoleInitiator, map[string]any{"employee": "no-such-employee"}); status != http.StatusBadRequest {
 		t.Fatalf("确认不存在的员工：%d %s", status, data)
 	}
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.postJSON(path, contract.RoleInitiator, map[string]any{"employee": harnessEmployee}); status != http.StatusConflict {
 		t.Fatalf("重复确认员工：%d %s", status, data)
 	}
@@ -317,9 +384,10 @@ func TestDefaultEmployeeIsProposedWithoutAskingTheModel(t *testing.T) {
 	}
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "出周报")
+	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
+	reply := h.saidAfter(created.ID)
 
-	card := cardOf(t, reply.Messages, session.CardEmployeeConfirm)
+	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
 	if card.Proposed != harnessEmployee || card.Source != session.SourceDefault {
 		t.Fatalf("员工确认卡片 = %+v", card)
 	}
@@ -369,10 +437,23 @@ func TestDeletedDefaultEmployeeFallsThroughToTheModel(t *testing.T) {
 	}
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "出周报")
+	// 用事件流收：回复返回时这一轮可能刚开出来，还没结束（不能靠取消流来退出）
+	stream := h.openStream(created.ID)
+	defer stream.close()
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "出周报")
 
-	if card := cardOf(t, reply.Messages, session.CardEmployeeConfirm); card.Source != session.SourceModel {
-		t.Fatalf("默认员工已不存在时应走模型提议：%+v", card)
+	events := h.waitTurn(stream, turn)
+	if events == nil {
+		t.Fatal("看不到这一轮的事件")
+	}
+	var proposed []string
+	for _, event := range events {
+		if event.Type == session.EventMessage && event.Msg != nil && event.Msg.Card != nil {
+			proposed = append(proposed, event.Msg.Card.Source)
+		}
+	}
+	if fmt.Sprint(proposed) != "[model]" {
+		t.Fatalf("默认员工已不存在时应走模型提议：%v", proposed)
 	}
 }
 
@@ -423,7 +504,7 @@ var week44Form = map[string]any{"period": map[string]any{"year": 2026, "week": 4
 func TestSubmittingCreatesTheTaskWithTheUploadedMaterials(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.uploadTo(created.ID, []upload{sampleFile(t, "销售明细.xlsx")}); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
 	}
@@ -461,7 +542,7 @@ func TestSubmitUsesTheDraftWhenTheCardSendsNoForm(t *testing.T) {
 		modelSays("已填好。"),
 	), withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 
@@ -478,7 +559,7 @@ func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
 		modelSays("已填好。"),
 	), withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 43 周")
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 
@@ -492,7 +573,7 @@ func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
 func TestOneSessionHasAtMostOneTask(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 	first := h.submit(created.ID, week44Form)
 	h.settled(first.Session.TaskID)
@@ -514,7 +595,7 @@ func TestSubmitIsRefusedWithoutEmployeeOrForOtherRoles(t *testing.T) {
 	if status, data := h.trySubmit(created.ID, contract.RoleInitiator, week44Form); status != http.StatusConflict {
 		t.Fatalf("没确认员工就提交：%d %s", status, data)
 	}
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.trySubmit(created.ID, contract.RoleReviewer, week44Form); status != http.StatusForbidden {
 		t.Fatalf("审核人提交：%d %s", status, data)
 	}
@@ -560,7 +641,7 @@ func TestOnlyTheInitiatorUploadsMaterials(t *testing.T) {
 func TestUploadingAfterSubmitGoesThroughThePauseCard(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
 	reply := h.submit(created.ID, week44Form)
 	h.settled(reply.Session.TaskID)
@@ -576,12 +657,27 @@ func TestUploadingAfterSubmitGoesThroughThePauseCard(t *testing.T) {
 func pausedSession(h *harness) (session.Detail, contract.TaskSnapshot) {
 	h.t.Helper()
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	uploadOK(h, created.ID, sampleFile(h.t, "销售明细.xlsx"))
 	reply := h.submit(created.ID, week44Form)
 	snapshot := h.settled(reply.Session.TaskID)
 	expectState(h.t, snapshot, contract.StateAwaitingInitiator)
 	return h.readSession(created.ID), snapshot
+}
+
+// reviewSession 先走一遍样例流程拿到待审核的任务，再打开这个会话；
+// 之后的前台 Agent 对话只消费 h.provider 里剩下的前台轮次（这一遍流程没有用过前台 Agent）。
+func reviewSession(h *harness) (session.Detail, contract.TaskSnapshot) {
+	created := h.createSession()
+	h.confirmed(created.ID, harnessEmployee)
+	if status, data := h.uploadTo(created.ID, a01Files(h.t)); status != http.StatusOK {
+		h.t.Fatalf("上传失败：%d %s", status, data)
+	}
+	taskID := h.submit(created.ID, week44Form).Session.TaskID
+	h.settled(taskID)
+	// 任务跑完再打开会话：任务步骤与前台 Agent 共用一个模型（同一份剧本），调用的先后才确定
+	h.baseURL = h.serve()
+	return h.readSession(created.ID), h.snapshot(taskID)
 }
 
 func frontdeskRequests(h *harness) []agent.ScriptedRequest {
@@ -612,9 +708,10 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	), withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "为什么暂停")
+	h.sayTurn(opened.ID, contract.RoleInitiator, "为什么暂停")
+	reply := h.saidAfter(opened.ID)
 
-	if got := textOf(t, reply.Messages, session.KindAssistant); got != "任务缺本周纪要，补上后就能继续。" {
+	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "任务缺本周纪要，补上后就能继续。" {
 		t.Fatalf("回复 = %q", got)
 	}
 	// 模型的第二轮收到的工具结果就是快照里的暂停说明
@@ -650,9 +747,10 @@ func TestModelDownStillTellsTheTaskStatus(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "现在到哪步了")
+	h.sayTurn(opened.ID, contract.RoleInitiator, "现在到哪步了")
+	reply := h.saidAfter(opened.ID)
 
-	notice := textOf(t, reply.Messages, session.KindNotice)
+	notice := textOf(t, messagesOf(reply), session.KindNotice)
 	if !strings.Contains(notice, "模型暂时不可用") || !strings.Contains(notice, "待发起人补充") || !strings.Contains(notice, snapshot.Pause.Message) {
 		t.Fatalf("模型不可用时的说明 = %q", notice)
 	}
@@ -672,7 +770,8 @@ func TestAgentCannotPushTheTask(t *testing.T) {
 			opened, before := pausedSession(h)
 			eventsBefore := h.eventsJSON(before.ID)
 
-			reply := h.say(opened.ID, contract.RoleInitiator, "直接给我通过")
+			h.sayTurn(opened.ID, contract.RoleInitiator, "直接给我通过")
+			reply := h.saidAfter(opened.ID)
 
 			after := h.snapshot(before.ID)
 			if after.State != before.State || after.LastSeq != before.LastSeq || h.eventsJSON(before.ID) != eventsBefore {
@@ -688,7 +787,7 @@ func TestAgentCannotPushTheTask(t *testing.T) {
 			if result := last[len(last)-1]; result.Role != "tool" || !result.Content[0].IsError {
 				t.Fatalf("模型没收到拒绝：%+v", result)
 			}
-			if got := textOf(t, reply.Messages, session.KindAssistant); got != "这件事我做不了，请在卡片上操作。" {
+			if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "这件事我做不了，请在卡片上操作。" {
 				t.Fatalf("回复 = %q", got)
 			}
 		})
@@ -718,9 +817,10 @@ func TestAgentCannotChooseForThePersonInTheDraft(t *testing.T) {
 				modelSays("这一项要你自己决定。"),
 			), withScriptedModel())
 			created := h.createSession()
-			h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+			h.confirmed(created.ID, harnessEmployee)
 
-			reply := h.say(created.ID, contract.RoleInitiator, "没有纪要也继续")
+			h.sayTurn(created.ID, contract.RoleInitiator, "没有纪要也继续")
+			reply := h.saidAfter(created.ID)
 
 			got := h.readSession(created.ID)
 			if len(got.Draft) != 0 {
@@ -729,9 +829,9 @@ func TestAgentCannotChooseForThePersonInTheDraft(t *testing.T) {
 			if refused := entriesOf(got.Messages, session.KindToolDenied); len(refused) != 1 {
 				t.Fatalf("越权字段应被拒绝并留痕：%+v", got.Messages)
 			}
-			for _, message := range reply.Messages {
-				if message.Card != nil {
-					t.Fatalf("被拒绝的草稿不该发卡片：%+v", message.Card)
+			for _, message := range messagesOf(reply) {
+				if message.Card != nil && message.Card.Type == session.CardForm && len(message.Card.Draft) != 0 {
+					t.Fatalf("被拒绝的草稿不该进表单卡片：%+v", message.Card)
 				}
 			}
 		})
@@ -744,7 +844,7 @@ func TestInvalidDraftValueIsReturnedToTheModel(t *testing.T) {
 		modelSays("第 99 周不存在，请确认是哪一周。"),
 	), withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 
 	h.say(created.ID, contract.RoleInitiator, "第 99 周")
 
@@ -765,15 +865,16 @@ func TestToolRoundsAreCapped(t *testing.T) {
 	h := newHarness(t, frontdeskScript(turns...), withScriptedModel())
 	opened, _ := pausedSession(h)
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "一直查")
+	h.sayTurn(opened.ID, contract.RoleInitiator, "一直查")
+	reply := h.saidAfter(opened.ID)
 
-	if got := textOf(t, reply.Messages, session.KindAssistant); !strings.Contains(got, "上限") {
+	if got := textOf(t, messagesOf(reply), session.KindAssistant); !strings.Contains(got, "上限") {
 		t.Fatalf("超限时要说明：%q", got)
 	}
 	if calls := len(frontdeskRequests(h)); calls != session.MaxToolRounds+1 {
 		t.Fatalf("模型调用次数 = %d", calls)
 	}
-	if executed := len(entriesOf(reply.Messages, session.KindToolCalled)); executed != session.MaxToolRounds {
+	if executed := len(entriesOf(messagesOf(reply), session.KindToolCalled)); executed != session.MaxToolRounds {
 		t.Fatalf("工具执行次数 = %d", executed)
 	}
 }
@@ -831,9 +932,10 @@ func TestProposedCardActionsComeFromTheProgram(t *testing.T) {
 	), withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "我现在该做什么")
+	h.sayTurn(opened.ID, contract.RoleInitiator, "我现在该做什么")
+	reply := h.saidAfter(opened.ID)
 
-	proposed := cardOf(t, reply.Messages, session.CardPause)
+	proposed := cardOf(t, messagesOf(reply), session.CardPause)
 	if proposed.TaskID != snapshot.ID || fmt.Sprint(proposed.Actions) != fmt.Sprint(snapshot.Actions) {
 		t.Fatalf("回复里的卡片 = %+v", proposed)
 	}
@@ -851,10 +953,15 @@ func TestProposedCardMustMatchTheTask(t *testing.T) {
 	), withScriptedModel())
 	opened, _ := pausedSession(h)
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "退回")
+	h.sayTurn(opened.ID, contract.RoleInitiator, "退回")
+	reply := h.saidAfter(opened.ID)
 
-	for _, message := range reply.Messages {
-		if message.Card != nil {
+	// 卡片都由程序按任务快照给出：模型点名不符的类型要不到（回复里不带任务卡片；表单卡片照常按任务现状给）
+	for _, message := range messagesOf(reply) {
+		if message.Card == nil {
+			continue
+		}
+		if message.Card.Type == session.CardReview || message.Card.Type == "transfer_money" || message.Card.Comment != "" {
 			t.Fatalf("和任务状态不符的卡片不该发出：%+v", message.Card)
 		}
 	}
@@ -903,6 +1010,7 @@ func TestOldTaskIsReadableAsAReadOnlySession(t *testing.T) {
 		},
 		"提交": func() (int, []byte) { return h.trySubmit(got.ID, initiator, week44Form) },
 		"上传": func() (int, []byte) { return h.uploadTo(got.ID, []upload{{name: "a.csv", content: []byte("x")}}) },
+		"停止": func() (int, []byte) { return h.postJSON(path+"/stop", initiator, map[string]any{}) },
 	}
 	for name, write := range writes {
 		if status, data := write(); status != http.StatusConflict || !strings.Contains(string(data), session.ErrSessionReadOnly) {
@@ -936,7 +1044,7 @@ func TestSessionSurvivesARestart(t *testing.T) {
 		modelSays("已填好。"),
 	), withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
 	if status, data := h.uploadTo(created.ID, []upload{{name: "a.csv", content: []byte("x")}}); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
@@ -962,7 +1070,7 @@ func TestSessionSurvivesARestart(t *testing.T) {
 func TestTornLastLogLineIsDropped(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	path := filepath.Join(h.workspace, "sessions", created.ID, "log.jsonl")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -987,30 +1095,42 @@ func TestTornLastLogLineIsDropped(t *testing.T) {
 	}
 }
 
-func TestSecondMessageWhileReplyingIsRefused(t *testing.T) {
+func TestMessageWhileReplyingIsDeliveredBeforeTheNextStep(t *testing.T) {
 	delay := 300
 	answer := modelSays("好的。")
 	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: &delay, Then: &answer}), withScriptedModel())
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 
-	first := make(chan session.Reply, 1)
-	go func() { first <- h.say(created.ID, contract.RoleInitiator, "第一句") }()
+	stream := h.openStream(created.ID)
+	defer stream.close()
+	h.sayAsync(created.ID, contract.RoleInitiator, "第一句")
 	deadline := time.Now().Add(5 * time.Second)
 	for len(frontdeskRequests(h)) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	status, data := h.postJSON("/api/sessions/"+created.ID+"/messages", contract.RoleInitiator, map[string]any{"text": "第二句"})
-	if status != http.StatusConflict || !strings.Contains(string(data), session.ErrSessionBusy) {
-		t.Fatalf("回复期间发第二条：%d %s", status, data)
-	}
+	// 运行中照常收下，排进“下一步之前”送达
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "第二句")
 	// 上传不用等回复
 	if status, data := h.uploadTo(created.ID, []upload{{name: "a.csv", content: []byte("x")}}); status != http.StatusOK {
 		t.Fatalf("回复期间上传：%d %s", status, data)
 	}
-	if got := textOf(t, (<-first).Messages, session.KindAssistant); got != "好的。" {
-		t.Fatalf("回复 = %q", got)
+	h.waitTurn(stream, turn)
+
+	// 插话送达之后这一轮接着说，不另起一轮
+	if detail := h.readSession(created.ID); lastAssistant(detail.Messages) != "好的。" {
+		t.Fatalf("回复 = %q", lastAssistant(detail.Messages))
+	}
+	requests := frontdeskRequests(h)
+	if len(requests) != 2 {
+		t.Fatalf("模型调用次数 = %d", len(requests))
+	}
+	if said := fmt.Sprint(requests[0].Request.Messages); strings.Contains(said, "第二句") {
+		t.Fatalf("第二句不该出现在第一轮的请求里：%s", said)
+	}
+	if said := fmt.Sprint(requests[1].Request.Messages); !strings.Contains(said, "第二句") {
+		t.Fatalf("第二句应在下一轮请求里：%s", said)
 	}
 }
 
@@ -1039,53 +1159,85 @@ func chatServer(t *testing.T, replies ...func(w http.ResponseWriter)) (*httptest
 		body["authorization"] = r.Header.Get("Authorization")
 		index := len(*received)
 		*received = append(*received, body)
+		isStream, _ := body["stream"].(bool)
+		if isStream {
+			// 流式请求：正文按 SSE 交出去（回包自己写 data: 帧），最后补一个结束帧
+			w.Header().Set("Content-Type", "text/event-stream")
+		}
 		if index >= len(replies) {
 			http.Error(w, "没有更多回复", http.StatusInternalServerError)
 			return
 		}
 		replies[index](w)
+		if isStream {
+			_, _ = io.WriteString(w, "\ndata: [DONE]\n\n")
+		}
 	}))
 	t.Cleanup(server.Close)
 	return server, received
 }
 
+// localConnection 本地假模型服务的连接：后台任务步骤走它，前台 Agent 用剧本模型。
+func localConnection(baseURL, apiKey string) contract.ModelConnection {
+	retries := 0
+	return contract.ModelConnection{Name: "local", BaseURL: baseURL, APIKey: apiKey, Models: []string{"m"}, MaxRetries: &retries}
+}
+
+// withRealFrontdeskRoute 会话模型（以及前台 Agent）都指向本地假模型服务：给假连接的选项，
+// 建出来的装置里前台 Agent 用同一份设置（照 T39：前台 Agent 用会话模型）。
+func withRealFrontdeskRoute(baseURL, apiKey string) harnessOption {
+	connection := localConnection(baseURL, apiKey)
+	return func(config *harnessConfig) {
+		config.scriptedModel = true
+		config.connection = &connection
+	}
+}
+
+// withRealFrontdesk 前台 Agent 改用本地假模型服务（前台已经是真实连接时不需要它）。
 func withRealFrontdesk(t *testing.T, h *harness, baseURL, apiKey string) {
 	t.Helper()
-	retries := 0
+	connection := localConnection(baseURL, apiKey)
 	provider := agent.NewModelProvider(contract.ModelSettings{
-		Connections: []contract.ModelConnection{{
-			Name: "local", BaseURL: baseURL, APIKey: apiKey, Models: []string{"m"}, MaxRetries: &retries,
-		}},
-		Default: contract.ModelRef{Connection: "local", Model: "m"},
+		Connections: []contract.ModelConnection{connection},
+		Default:     contract.ModelRef{Connection: "local", Model: "m"},
 	})
 	h.frontdesk = provider
 	h.baseURL = h.serve()
 }
 
 func TestRealConnectionGetsSystemPromptAndOneToolMessagePerCall(t *testing.T) {
-	calls := `{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[
-		{"id":"c1","type":"function","function":{"name":"query_task","arguments":"{}"}},
-		{"id":"c2","type":"function","function":{"name":"approve","arguments":"{}"}}]}}]}`
-	final := `{"choices":[{"finish_reason":"stop","message":{"content":"还在等材料。"}}]}`
+
+	// 流式分片：先说一句，再给两个工具调用（参数拆开给），最后收尾
+	first := `{"choices":[{"delta":{"content":"还没"},"finish_reason":null}]}` + "\n\n" +
+		`{"choices":[{"delta":{"content":"到齐。"},"finish_reason":null}]}` + "\n\n" +
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"query_task","arguments":"{"}}]},"finish_reason":null}]}` + "\n\n" +
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]},"finish_reason":null}]}` + "\n\n" +
+		`{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2","type":"function","function":{"name":"approve","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}` + "\n\n"
+	second := `{"choices":[{"delta":{"content":"还在等材料。"},"finish_reason":null}]}` + "\n\n" +
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`
 	fake, received := chatServer(t,
-		func(w http.ResponseWriter) { _, _ = w.Write([]byte(calls)) },
-		func(w http.ResponseWriter) { _, _ = w.Write([]byte(final)) },
+		func(w http.ResponseWriter) { _, _ = io.WriteString(w, first) },
+		func(w http.ResponseWriter) { _, _ = io.WriteString(w, second) },
 	)
-	h := newHarness(t, nil, withScriptedModel())
-	// T39：前台 Agent 用会话模型。任务在执行中不能改会话里记的模型，改为任务当前的模型
-	// 在 local 连接上（引擎与前台 Agent 共用这一个真实提供者）。
+	// 前台 Agent 的流式解析：文字增量逐段回调，拆开的工具参数拼齐（T40）
+	// 会话模型也在 local 连接上：前台 Agent 用会话模型，请求走这个假服务（T39）
+	h := newHarness(t, nil, withScriptedModel(), withRealFrontdeskRoute(fake.URL, "local-test-key"))
 	opened, _ := pausedSession(h)
-	h.setTaskModel(opened.TaskID, "local", "m")
-	withRealFrontdesk(t, h, fake.URL, "local-test-key")
 
-	reply := h.say(opened.ID, contract.RoleInitiator, "到哪步了")
 
-	if got := textOf(t, reply.Messages, session.KindAssistant); got != "还在等材料。" {
+	h.sayTurn(opened.ID, contract.RoleInitiator, "到哪步了")
+	reply := h.saidAfter(opened.ID)
+
+
+
+
+	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "还在等材料。" {
 		t.Fatalf("回复 = %q", got)
 	}
 	if len(*received) != 2 {
 		t.Fatalf("请求次数 = %d", len(*received))
 	}
+
 	messages := (*received)[1]["messages"].([]any)
 	if role := messages[0].(map[string]any)["role"]; role != "system" {
 		t.Fatalf("第一条消息 = %+v", messages[0])
@@ -1107,14 +1259,13 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 		http.Error(w, "invalid key local-test-key", http.StatusUnauthorized)
 	})
 	// 会话模型也在 local 连接上：前台 Agent 用会话模型，请求走这个假服务（T39）
-	h := newHarness(t, nil, withScriptedModel(),
-		withModelConnection(contract.ModelConnection{Name: "local", BaseURL: fake.URL, APIKey: "local-test-key", Models: []string{"m"}}))
-	withRealFrontdesk(t, h, fake.URL, "local-test-key")
+	h := newHarness(t, nil, withScriptedModel(), withRealFrontdeskRoute(fake.URL, "local-test-key"))
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "出周报")
+	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
+	reply := h.saidAfter(created.ID)
 
-	if card := cardOf(t, reply.Messages, session.CardEmployeeConfirm); card.Source != session.SourceManual {
+	if card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm); card.Source != session.SourceManual {
 		t.Fatalf("模型失败时应手选：%+v", card)
 	}
 	_, data := h.send(http.MethodGet, "/api/sessions/"+created.ID, "", "", nil)
@@ -1128,13 +1279,13 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 
 func TestNoKeyMeansManualPickWithoutCallingTheModel(t *testing.T) {
 	fake, received := chatServer(t)
-	h := newHarness(t, nil, withScriptedModel())
-	withRealFrontdesk(t, h, fake.URL, "")
+	h := newHarness(t, nil, withScriptedModel(), withRealFrontdeskRoute(fake.URL, ""))
 	created := h.createSession()
 
-	reply := h.say(created.ID, contract.RoleInitiator, "出周报")
+	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
+	reply := h.saidAfter(created.ID)
 
-	if card := cardOf(t, reply.Messages, session.CardEmployeeConfirm); card.Source != session.SourceManual {
+	if card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm); card.Source != session.SourceManual {
 		t.Fatalf("没有 Key 时应手选：%+v", card)
 	}
 	if len(*received) != 0 {
@@ -1158,7 +1309,7 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 	h := newHarness(t, script, withScriptedModel())
 	created := h.createSession()
 	h.say(created.ID, initiator, "出第 44 周周报")
-	h.confirm(created.ID, initiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.uploadTo(created.ID, a01Files(t)); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
 	}
@@ -1168,8 +1319,9 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 	expectState(t, snapshot, contract.StateAwaitingReview)
 
 	// 审核人在对话里说，只得到一张草稿卡片，任务不动
-	reply := h.say(created.ID, reviewer, "摘要太长了，退回吧")
-	card := cardOf(t, reply.Messages, session.CardReview)
+	h.sayTurn(created.ID, reviewer, "摘要太长了，退回吧")
+	reply := h.saidAfter(created.ID)
+	card := cardOf(t, messagesOf(reply), session.CardReview)
 	if card.Comment != returnComment || fmt.Sprint(card.Sections) != "[summary]" || len(card.Actions) == 0 {
 		t.Fatalf("审核卡片 = %+v", card)
 	}

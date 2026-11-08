@@ -43,6 +43,18 @@ func (m *Manager) taskModel(current *record) contract.ModelRef {
 	return m.effectiveModel(current)
 }
 
+// currentModel 会话现在用的模型：绑定了任务时是任务的当前模型，否则是会话模型。
+func (m *Manager) currentModel(current *record) *contract.ModelRef {
+	model := m.effectiveModel(current)
+	if current.taskID != "" {
+		model = m.taskModel(current)
+	}
+	if model.Connection == "" && model.Model == "" {
+		return nil
+	}
+	return &model
+}
+
 func (m *Manager) effectiveModelSettings() contract.ModelSettings {
 	if m.deps.ModelSettings == nil {
 		return contract.ModelSettings{}

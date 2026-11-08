@@ -93,9 +93,9 @@ func TestWorkspaceListCarriesSessionSummaries(t *testing.T) {
 	other := a.createWorkspace("华南区", "")
 	inMine := a.createSessionIn(mine.ID)
 	inOther := a.createSessionIn(other.ID)
-	// 各说一句话，标题取自第一句（模拟模式的前台 Agent 不调模型）
+	// 各说一句话，标题取自第一句（模拟模式的前台 Agent 不调模型）；接口立即受理，回复走会话事件流（T40）
 	for _, id := range []string{inMine.ID, inOther.ID} {
-		if status, data := a.call(http.MethodPost, "/api/sessions/"+id+"/messages", map[string]any{"text": "帮我出第 44 周的经营周报"}); status != http.StatusOK {
+		if status, data := a.call(http.MethodPost, "/api/sessions/"+id+"/messages", map[string]any{"text": "帮我出第 44 周的经营周报"}); status != http.StatusAccepted {
 			t.Fatalf("发消息失败：%d %s", status, data)
 		}
 	}

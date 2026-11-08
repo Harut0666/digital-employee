@@ -1,7 +1,7 @@
 // 状态点与记录（Spec 0006“工作区与记录接口”）。
 //
 // 状态点由后端按读的人的角色算出，前端只画不推导。优先级：等你处理 → 运行中 → 已完成未读 → 空闲。
-// “运行中”里的“前台 Agent 正在回复”就是回复锁被占着（这时再发消息会得到 session_busy）。
+// “运行中”里的“前台 Agent 正在回复”就是这一轮还在跑（这时人的操作会得到 session_busy，发消息排进这一轮）。
 package session
 
 import (
@@ -64,15 +64,9 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 	if id == "" {
 		return StatusDotIdle
 	}
-	m.mu.Lock()
-	lock := m.turns[id]
-	m.mu.Unlock()
-	if lock != nil && !lock.TryLock() {
+	if m.runningOf(id) {
 		// 前台 Agent 正在回复
 		return StatusDotRunning
-	}
-	if lock != nil {
-		lock.Unlock()
 	}
 	current, err := m.load(id)
 	if err != nil {
@@ -83,7 +77,6 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 }
 
 // SummaryOf 一个会话的摘要（按读的人的角色算状态点）；写操作之后回给它，界面不用再读一次列表。
-// 同一会话还在回复时等它回复完再回，免得界面拿到“运行中”。
 func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 	if strings.HasPrefix(id, legacyPrefix) {
 		detail, err := m.getLegacy(id)
@@ -91,13 +84,6 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 			return nil, err
 		}
 		return &Summary{View: detail.View, StatusDot: StatusDotIdle}, nil
-	}
-	m.mu.Lock()
-	lock := m.turns[id]
-	m.mu.Unlock()
-	if lock != nil {
-		lock.Lock()
-		lock.Unlock()
 	}
 	current, err := m.load(id)
 	if err != nil {
@@ -171,20 +157,9 @@ var runningStates = map[contract.TaskState]bool{
 	contract.StateQC:        true,
 }
 
-// busy 前台 Agent 正在回复：回复锁被占着，这时再发消息会得到 session_busy。
+// busy 前台 Agent 正在回复：这时再发消息排进这一轮。
 func (m *Manager) busy(id string) bool {
-	m.mu.Lock()
-	lock := m.turns[id]
-	m.mu.Unlock()
-	if lock == nil {
-		return false
-	}
-	// 试锁一下：拿得到说明没人在回复，马上放掉
-	if !lock.TryLock() {
-		return true
-	}
-	lock.Unlock()
-	return false
+	return m.runningOf(id)
 }
 
 // Summarize 把会话投影成侧栏里的摘要。

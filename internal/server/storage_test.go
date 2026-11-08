@@ -227,7 +227,7 @@ func TestTaskCreatedRecordsTheWorkspace(t *testing.T) {
 	h.baseURL = startServer(t, w.serve(h.t, h, eng, w.workB, nil))
 
 	created := h.createSessionIn("ws-b")
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.uploadTo(created.ID, a01Files(t)); status != http.StatusOK {
 		h.t.Fatalf("上传失败：%d %s", status, data)
 	}

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
@@ -185,8 +186,36 @@ func (h *harness) askedSession() string {
 func (h *harness) draftedSession() string {
 	h.t.Helper()
 	id := h.askedSession()
-	h.confirm(id, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(id, harnessEmployee)
 	return id
+}
+
+// settledSession 走到“员工已接手、等提交”，并等确认之后的写操作都放开（这时会话不忙，可以改名、归档）。
+func (h *harness) settledSession() string {
+	h.t.Helper()
+	id := h.askedSession()
+	h.confirmed(id, harnessEmployee)
+	h.waitIdle(id)
+	return id
+}
+
+// waitIdle 等到会话这一轮结束、确认员工之后的那一轮也结束（写锁放开）。
+func (h *harness) waitIdle(id string) {
+	h.t.Helper()
+	deadline := time.Now().Add(stopTimeout)
+	for {
+		if !h.sessionBusy(id) {
+			// 再等一下：确认员工时开的下一轮紧接着才开始
+			time.Sleep(50 * time.Millisecond)
+			if !h.sessionBusy(id) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			h.t.Fatal("等不到会话空闲")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // submittedSession 开一个会话，提交任务并等它停稳。
@@ -279,12 +308,23 @@ func (p *lockedProvider) Resolve(stepID string, ref *contract.ModelRef) (*agent.
 		return resolved, err
 	}
 	stream := resolved.Stream
-	resolved.Stream = func(ctx context.Context, model agent.Model, request agent.StreamRequest, options agent.StreamOptions) (*agent.AssistantMessage, error) {
+	gate := func() {
 		p.once.Do(func() {
 			close(p.entered)
 			<-p.release
 		})
+	}
+	resolved.Stream = func(ctx context.Context, model agent.Model, request agent.StreamRequest, options agent.StreamOptions) (*agent.AssistantMessage, error) {
+		gate()
 		return stream(ctx, model, request, options)
+	}
+	// 前台 Agent 走流式调用（T40）：事件流调用的门也要拦
+	events := resolved.StreamEvent
+	if events != nil {
+		resolved.StreamEvent = func(ctx context.Context, model agent.Model, request agent.StreamRequest, options agent.EventStreamOptions) (*agent.AssistantMessage, error) {
+			gate()
+			return events(ctx, model, request, options)
+		}
 	}
 	return resolved, nil
 }
@@ -307,9 +347,8 @@ func TestStatusDotRunningWhileFrontdeskReplies(t *testing.T) {
 	if got := h.sessionSummaryOf(created.ID, contract.RoleInitiator); got.StatusDot != "running" {
 		t.Fatalf("前台 Agent 回复中的会话状态点应是运行中：%+v", got)
 	}
-	// 同一个“忙”：这时再发消息得到 session_busy
-	raw, _ := json.Marshal(map[string]string{"text": "再问一句"})
-	busy, data := h.send(http.MethodPost, "/api/sessions/"+created.ID+"/messages", contract.RoleInitiator, "application/json", bytes.NewReader(raw))
+	// 同一个“忙”：这时人的操作（改名、归档）得到 session_busy
+	busy, data := h.patch("/api/sessions/"+created.ID, map[string]any{"title": "回复中改标题"})
 	var failure struct {
 		Error string `json:"error"`
 	}
@@ -317,10 +356,16 @@ func TestStatusDotRunningWhileFrontdeskReplies(t *testing.T) {
 	if busy != http.StatusConflict || failure.Error != "session_busy" {
 		t.Fatalf("回复中的会话应报 session_busy：%d %s", busy, data)
 	}
+	// T40：回复中再发消息不再被拒，而是排进这一轮，在下一步之前送达
+	raw, _ := json.Marshal(map[string]string{"text": "再问一句"})
+	if status, data := h.send(http.MethodPost, "/api/sessions/"+created.ID+"/messages", contract.RoleInitiator, "application/json", bytes.NewReader(raw)); status != http.StatusAccepted {
+		t.Fatalf("回复中再发消息应被受理：%d %s", status, data)
+	}
 	close(gate.release)
-	if status := <-asked; status != http.StatusOK {
+	if status := <-asked; status != http.StatusAccepted {
 		t.Fatalf("回复失败：%d", status)
 	}
+	h.waitIdle(created.ID)
 	if got := h.sessionSummaryOf(created.ID, contract.RoleInitiator); got.StatusDot != "waiting" {
 		t.Fatalf("回复结束后待确认员工的会话应回到等你处理：%+v", got)
 	}
@@ -429,7 +474,7 @@ func TestOpenedSessionWritesReadToItsLog(t *testing.T) {
 
 func TestSessionRenameAndArchive(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
-	id := h.draftedSession()
+	id := h.settledSession()
 
 	renamed := h.sessionPatch(id, map[string]any{"title": "第 44 周华东周报"})
 	if session, _ := renamed["session"].(map[string]any); session["title"] != "第 44 周华东周报" {

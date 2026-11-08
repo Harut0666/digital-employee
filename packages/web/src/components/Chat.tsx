@@ -1,12 +1,14 @@
 import { Prompts, Sender, Welcome } from "@ant-design/x";
 import type { SenderRef } from "@ant-design/x/es/sender/interface";
-import { Alert, Button, Dropdown, Tag } from "antd";
+import { Alert, Button, Collapse, Dropdown, Tag, Typography } from "antd";
 import { DownOutlined, FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, CloseCircleFilled, LoadingOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { ModelConnectionOption, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
+import type { AgentToolView } from "../api/types";
 import { modelLabel, modelMenuItems, parseModelValue } from "../view/session-model";
-import type { ChatItem } from "../view/chat-view";
+import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
@@ -41,6 +43,71 @@ const SESSION_TAG: Record<string, string> = { reception: "接待中", drafting: 
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
+/** 一轮里的一次工具调用：默认折成一行，点开看参数和结果 */
+function ToolCalls({ items }: { items: AgentToolView[] }) {
+  return (
+    <Collapse
+      className="tool-calls"
+      size="small"
+      bordered={false}
+      defaultActiveKey={items.some((t) => !t.ended) ? ["tools"] : []}
+      expandIconPosition="start"
+      expandIcon={({ isActive }) => (isActive ? <CaretDownOutlined /> : <CaretRightOutlined />)}
+      items={[
+        {
+          key: "tools",
+          label: (
+            <span className="tool-calls-label">
+              <ToolOutlined /> 调用了 {items.length} 次工具{items.some((t) => !t.ended) ? "，还没结束" : ""}
+            </span>
+          ),
+          children: (
+            <ul className="tool-list">
+              {items.map((tool) => (
+                <li key={tool.id} className={`tool ${tool.ended ? (tool.isErr ? "bad" : "ok") : "busy"}`}>
+                  <div className="tool-head">
+                    {tool.ended ? tool.isErr ? <CloseCircleFilled /> : <CheckCircleFilled /> : <LoadingOutlined />}
+                    <code>{tool.tool}</code>
+                    {tool.args && Object.keys(tool.args).length > 0 && <span className="tool-args">{brief(tool.args)}</span>}
+                  </div>
+                  {tool.ended && (tool.reason || tool.result !== undefined) && (
+                    <Typography.Paragraph className="tool-result" ellipsis={{ rows: 3, expandable: true, symbol: "展开" }}>
+                      {tool.reason || brief(tool.result)}
+                    </Typography.Paragraph>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
+/** 工具参数和结果压成一行 */
+function brief(value: unknown): string {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+}
+
+/** 正在说的一段话：后到的字一段段接上，末尾闪一个光标 */
+function StreamingMessage({ text, running }: { text: string; running: boolean }) {
+  return (
+    <div className="msg-row">
+      <div className="msg-avatar">
+        <RobotOutlined />
+      </div>
+      <div className="msg-col">
+        <div className="bubble streaming">
+          {text}
+          <span className={running ? "caret" : "caret steady"} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }> }) {
   const me = item.kind === "user";
   // 不是发起人说的话，标出是谁说的（审核人、操作员也会在对话里说话）
@@ -59,7 +126,11 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }>
   );
 }
 
-/** 输入框：发送等完整回复；失败时保留原文。右下角是这一轮用的模型（T39）。@ 选目录文件（T41）：选中即视为人已确认。 */
+/**
+ * 输入框：发送立即受理，回复在事件流里逐字出现；失败时保留原文。
+ * 右下角是这一轮用的模型（T39）。@ 选目录文件（T41）：选中即视为人已确认。
+ * 正在说话时发送键变成“停止”，但输入框里的字照样能发出去——这时发的话排进这一轮，在下一步之前送达。
+ */
 /** 输入框右下角的模型下拉（T39）：显示“连接 / 模型”，点开按连接分组列出可选模型。 */
 function ModelPicker({
   options,
@@ -117,6 +188,8 @@ function ChatInput({
   folderFiles = [],
   onUseFolderFile,
   onSend,
+  streaming,
+  onStop,
 }: {
   placeholder: string;
   disabled?: boolean;
@@ -126,18 +199,23 @@ function ChatInput({
   /** 人用 @ 选中的文件：确认作为材料 */
   onUseFolderFile?: (path: string) => Promise<void>;
   onSend: (text: string) => Promise<boolean>;
+  /** 正在说话：右下角换成“停止” */
+  streaming?: boolean;
+  /** 点“停止” */
+  onStop?: () => Promise<void> | void;
 }) {
   const { ui } = useUiPreferences();
   const [value, setValue] = useState("");
   const [caret, setCaret] = useState(0);
   const [sending, setSending] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const areaRef = useRef<SenderRef>(null);
   const word = folderFiles.length > 0 && onUseFolderFile ? atQuery(value, caret) : undefined;
   const candidates = word === undefined ? [] : filterFolderPaths(folderFiles, word);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || sending || disabled) return;
+    if (!trimmed || disabled) return;
     // 通知轨迹：用户开始下一次输入（「下次输入时折叠」用它收起上一轮）
     notifyUserInput();
     setSending(true);
@@ -145,6 +223,16 @@ function ChatInput({
       if (await onSend(trimmed)) setValue("");
     } finally {
       setSending(false);
+    }
+  };
+
+  const stop = async () => {
+    if (!onStop || stopping) return;
+    setStopping(true);
+    try {
+      await onStop();
+    } finally {
+      setStopping(false);
     }
   };
 
@@ -183,8 +271,18 @@ function ChatInput({
           const element = event?.target as HTMLTextAreaElement | undefined;
           setCaret(element?.selectionStart ?? text.length);
         }}
-        placeholder={folderFiles.length > 0 ? `${placeholder}（输入 @ 选目录里的文件）` : placeholder}
+        placeholder={
+          streaming ? "接着说…（会在下一步之前送达）" : folderFiles.length > 0 ? `${placeholder}（输入 @ 选目录里的文件）` : placeholder
+        }
+        // 正在说话时发送键（右下角）是“停止”；loading 是正在发送，骨架由 Sender 自己画
         loading={sending}
+        suffix={
+          streaming ? (
+            <Button type="primary" className="stop-button" icon={<StopOutlined />} loading={stopping} onClick={() => void stop()}>
+              停止
+            </Button>
+          ) : undefined
+        }
         disabled={disabled}
         // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
         submitType="enter"
@@ -229,6 +327,8 @@ export function SessionChat({
   onSelectModel,
   openSettings,
   onSend,
+  live,
+  onStop,
 }: {
   detail: SessionDetail;
   items: ChatItem[];
@@ -254,6 +354,9 @@ export function SessionChat({
   /** 标题栏右侧的附加入口，比如窄窗口下打开右栏抽屉 */
   headerExtra?: React.ReactNode;
   onSend: (text: string) => Promise<boolean>;
+  /** 正在说的一轮（排在最后一条消息之后） */
+  live?: LiveTurn;
+  onStop?: () => Promise<void> | void;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const trajectory = useMemo(() => deriveTrajectory(events, steps), [events, steps]);
@@ -297,7 +400,17 @@ export function SessionChat({
         <TrajectoryDetails view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} attachments={attachments} artifacts={artifacts} />
       )}
       <div className="chat-body" ref={bodyRef}>
-        {items.map((item) => (item.kind === "user" || item.kind === "agent" ? <Message key={item.key} item={item} /> : renderCard(item, actions, session)))}
+        {items.map((item) =>
+        item.kind === "user" || item.kind === "agent" ? (
+          <Message key={item.key} item={item} />
+        ) : item.kind === "tools" ? (
+          <ToolCalls key={item.key} items={item.items} />
+        ) : item.kind === "streaming" ? (
+          <StreamingMessage key={item.key} text={item.text} running={live?.running ?? false} />
+        ) : (
+          renderCard(item, actions, session)
+        ),
+      )}
       </div>
       <ChatInput
         placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
@@ -308,6 +421,8 @@ export function SessionChat({
         modelPicker={
           <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />
         }
+        streaming={!detail.readOnly && Boolean(live?.running)}
+        onStop={onStop}
       />
     </>
   );

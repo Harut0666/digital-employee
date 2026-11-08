@@ -2,6 +2,9 @@
 //
 // 它和判断步骤共用模型提供者和剧本模型，但没有一次性提交：模型每轮要么调工具，要么说话，
 // 说话就结束这条回复。工具轮次有上限，对话不占任务预算。
+//
+// 说的是流式调用（Spec 0006）：文字增量边到边推给会话事件流，不落盘；一轮结束时写完整消息。
+// 收到停止时取消模型调用：已输出的部分以“已中断”保存。运行中收到的新消息在下一步之前送达。
 package session
 
 import (
@@ -100,22 +103,150 @@ func textMessage(role, text string) agent.Message {
 	return agent.Message{Role: role, Content: []agent.ContentBlock{agent.TextBlock(text)}}
 }
 
-// resolveModel 取前台 Agent 的模型；失败写入会话日志。
-func (t *turn) resolveModel() (*agent.ResolvedStepModel, error) {
-	fail := func(reason string) (*agent.ResolvedStepModel, error) {
-		if err := t.write(Message{Kind: KindModelFailed, Reason: reason}); err != nil {
-			return nil, err
+// ---------------------------------------------------------------- 一轮回复
+
+// turnLoop 一轮回复的过程：这一轮开着的时候一直拿着会话的写锁。
+type turnLoop struct {
+	job  *turnJob
+	bus  *bus
+	turn *turn
+}
+
+func newTurnLoop(job *turnJob) *turnLoop {
+	return &turnLoop{job: job, bus: job.manager.bus(job.session)}
+}
+
+// run 跑这一轮，直到说完、停止或出错。
+func (loop *turnLoop) run(ctx context.Context) (turnOutcome, error) {
+	deps := loop.job.manager
+	// 整轮占住写锁：期间人的操作被拒绝（见 begin），这一轮自己写日志是重入，不受影响
+	lock := deps.lockOf(loop.job.session)
+	lock.Lock(background)
+	defer lock.Unlock(background)
+	// 写锁与模型调用不重叠：调模型之前放掉，工具执行前后各占一次（见 lockForWrite），
+	// 人的操作（确认员工、提交）就不会被排在模型后面白等。
+	current, err := deps.load(loop.job.session)
+	if err != nil {
+		return turnOutcome{mode: turnErrored, reason: TurnError}, err
+	}
+	t := &turn{manager: deps, current: current, role: loop.job.role, tasks: deps.deps.Engine}
+	loop.turn = t
+	if current.employee == "" {
+		return loop.route(ctx), nil
+	}
+	return loop.assist(ctx), nil
+}
+
+// turnStart 这一轮登记时会话日志写到第几条。
+func (m *Manager) turnStart(job *turnJob) int64 {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	return job.floor
+}
+
+// interjections 这一轮里还要送达的插话：日志里有人说过、但还没送进过模型请求的话。
+func (loop *turnLoop) interjections() []agent.Message {
+	if loop.job == nil || loop.turn == nil || loop.turn.current == nil {
+		return nil
+	}
+	job := loop.job
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.steer <= job.included {
+		return nil
+	}
+	// 标记到“这一轮实际送出的条数”：开轮之前多记的一条（上一轮尾声才到、其实已经被带走）在这里清掉
+	messages := []agent.Message{}
+	for _, message := range loop.turn.current.messages {
+		if message.Kind == KindUser && !job.delivered[message.Seq] {
+			job.delivered[message.Seq] = true
+			messages = append(messages, textMessage("user", message.Text))
+		
 		}
+	}
+
+	if len(messages) == 0 {
+		// 没有真正要送的话，不记这次送达
+		return nil
+	}
+	job.included = job.steer
+	return messages
+}
+// write 写进会话日志并推送；一轮里的消息都带着轮次编号。
+func (loop *turnLoop) write(message Message) error {
+	// 不属于某一轮的一次性调用（比如起草入库描述）只落日志：没有轮次、没有订阅者，也就没有额外的话要说
+	if loop.job == nil || loop.bus == nil {
+
+		return loop.turn.write(message)
+	}
+	message.Turn = loop.job.id
+
+	if err := loop.turn.write(message); err != nil {
+		return err
+	}
+
+	written := loop.turn.out[len(loop.turn.out)-1]
+
+	// write 用的是回放出来的那份状态；取最新的一份记下这一条，后面读它才看得见
+	if current, err := loop.job.manager.load(loop.job.session); err == nil {
+		loop.turn.current = current
+	}
+	loop.bus.publish(AgentEvent{Turn: loop.job.id, Type: EventMessage, Msg: &written})
+	if written.Card != nil {
+		loop.bus.card(written)
+	}
+	return nil
+}
+// appendDelta 在写锁里把一段文字增量并进这一轮的那一条（单独更新一行，不经过 write）。
+func (loop *turnLoop) appendDelta(text string) error {
+	t := loop.turn
+	if len(t.current.messages) > 0 {
+		last := len(t.current.messages) - 1
+		if entry := &t.current.messages[last]; entry.Kind == KindTurnText && entry.Turn == loop.job.id {
+			updated, err := loop.job.manager.store.update(t.current.id, entry.Seq, func(message *Message) {
+				message.Text += text
+			})
+			if err == nil {
+				t.current.messages[last] = updated
+			}
+			return nil
+		}
+	}
+	return loop.write(Message{Kind: KindTurnText, Text: text})
+}
+
+// say 说一句程序写的话（模型不可用、达到上限、已中断）。
+func (loop *turnLoop) say(message Message) {
+	_ = loop.write(message)
+}
+
+// flushCards 发出排队的卡片。
+func (loop *turnLoop) flushCards() error {
+
+	for index := range loop.turn.cards {
+		if err := loop.write(Message{Kind: KindCard, Card: &loop.turn.cards[index]}); err != nil {
+			return err
+		}
+	}
+	loop.turn.cards = nil
+	return nil
+}
+
+// resolveModel 取前台 Agent 的模型；失败写入会话日志。
+func (loop *turnLoop) resolveModel() (*agent.ResolvedStepModel, error) {
+	fail := func(reason string) (*agent.ResolvedStepModel, error) {
+		loop.say(Message{Kind: KindModelFailed, Reason: reason})
 		return nil, errModelUnavailable
 	}
 	var provider agent.ModelProvider
-	if t.manager.deps.Model != nil {
-		provider = t.manager.deps.Model()
+	if loop.turn.manager.deps.Model != nil {
+		provider = loop.turn.manager.deps.Model()
 	}
 	if provider == nil {
 		return fail("没有可用的模型提供者")
 	}
 	// 前台 Agent 也用会话模型（Spec 0006）；绑定任务时是任务当前的模型
+	t := loop.turn
 	model := t.manager.taskModel(t.current)
 	if model.Connection != "" && model.Model != "" {
 		if connection, found := settings.FindConnection(t.manager.effectiveModelSettings().Connections, model.Connection); found && connection.APIKey == "" {
@@ -132,15 +263,42 @@ func (t *turn) resolveModel() (*agent.ResolvedStepModel, error) {
 	return resolved, nil
 }
 
-// converse 跑一条回复，返回模型最后说的话。
-func (t *turn) converse(ctx context.Context, system string, conversation []agent.Message, tools []tool) (string, error) {
-	resolved, err := t.resolveModel()
-	if err != nil {
-		return "", err
-	}
+// stream 一次流式模型调用；文字增量直接推送，停止之后返回的结尾由调用方处理。
+func (loop *turnLoop) stream(ctx context.Context, resolved *agent.ResolvedStepModel, messages []agent.Message, tools []agent.ToolSpec) (*agent.AssistantMessage, error) {
 	var execution *contract.ExecutionSettings
-	if t.manager.deps.Execution != nil {
-		execution = t.manager.deps.Execution()
+	if loop.turn.manager.deps.Execution != nil {
+		execution = loop.turn.manager.deps.Execution()
+	}
+	send := func(text string) {
+		if text == "" {
+			return
+		}
+		// 不属于某一轮的一次性调用（比如起草入库描述）：只交给调用方，不推送、不记账
+		if loop.job == nil || loop.bus == nil {
+			return
+		}
+		loop.bus.textDelta(text)
+		loop.bus.publish(AgentEvent{Turn: loop.job.id, Type: EventText, Text: text})
+		// 增量按轮次记一份（只更新日志里的那一行，不单独推送）。
+		// 增量不是一条对话消息：中途派生出的写入不会因此排到卡片前面
+		_ = loop.appendDelta(text)
+	}
+	return resolved.EventStream(ctx, resolved.Model, agent.StreamRequest{Messages: messages, Tools: tools}, agent.EventStreamOptions{
+		StreamOptions: agent.StreamOptions{
+			APIKey:     resolved.APIKey,
+			MaxTokens:  resolved.Model.MaxTokens,
+			MaxRetries: agent.ResolveModelMaxRetries(resolved.MaxRetries, execution),
+			TimeoutMS:  resolved.TimeoutMS,
+		},
+		OnText: send,
+	})
+}
+
+// converse 跑一条回复，返回模型最后说的话。
+func (loop *turnLoop) converse(ctx context.Context, system string, conversation []agent.Message, tools []tool) (string, string, error) {
+	resolved, err := loop.resolveModel()
+	if err != nil {
+		return "", TurnError, err
 	}
 	specs := make([]agent.ToolSpec, 0, len(tools))
 	open := map[string]tool{}
@@ -148,23 +306,42 @@ func (t *turn) converse(ctx context.Context, system string, conversation []agent
 		specs = append(specs, item.spec)
 		open[item.spec.Name] = item
 	}
-	messages := append([]agent.Message{textMessage("system", system)}, conversation...)
+	messages := append([]agent.Message{{Role: "system", Content: []agent.ContentBlock{agent.TextBlock(system)}}}, conversation...)
+	// 这一轮开始时排着的插话（比如接手后的“据此填表”）在第一步之前送达。
+	// 不属于某一轮的一次性调用（比如起草入库描述）没有插话。
+	if loop.job != nil {
+	
+		current, loadErr := loop.job.manager.load(loop.job.session)
+		if loadErr != nil {
+			return "", TurnError, loadErr
+		}
+		loop.turn.current = current
+		messages = append(messages, loop.interjections()...)
 
+	}
+	// 这一轮已经说出的部分（包括调用工具之前的那半句），停止或断流时都要保留
+	spoken := strings.Builder{}
 	for rounds := 0; ; rounds++ {
-		produced, err := resolved.Stream(ctx, resolved.Model, agent.StreamRequest{Messages: messages, Tools: specs}, agent.StreamOptions{
-			APIKey:     resolved.APIKey,
-			MaxTokens:  resolved.Model.MaxTokens,
-			MaxRetries: agent.ResolveModelMaxRetries(resolved.MaxRetries, execution),
-			TimeoutMS:  resolved.TimeoutMS,
-		})
-		if err == nil && (produced.StopReason == agent.StopError || produced.StopReason == agent.StopAborted) {
+
+		produced, err := loop.stream(ctx, resolved, messages, specs)
+		if produced != nil {
+
+			spoken.WriteString(agent.PartialText(produced))
+		}
+		if err == nil && produced.StopReason == agent.StopError {
+			// 回复中途断开：已经说出的部分照实写下来，再说明断在哪里
 			err = errors.New(produced.ErrorMessage)
 		}
+		if ctx.Err() != nil || (produced != nil && produced.StopReason == agent.StopAborted) {
+
+			return interruptedReply(spoken.String()), TurnStopped, nil
+		}
 		if err != nil {
-			if writeErr := t.write(Message{Kind: KindModelFailed, Reason: agent.RedactAPIKey(err.Error(), resolved.APIKey)}); writeErr != nil {
-				return "", writeErr
+			loop.say(Message{Kind: KindModelFailed, Reason: agent.RedactAPIKey(err.Error(), resolved.APIKey)})
+			if hint := agent.StreamErrorHint(produced); hint != "" {
+				loop.say(Message{Kind: KindNotice, Text: hint})
 			}
-			return "", errModelUnavailable
+			return "", TurnError, errModelUnavailable
 		}
 
 		text := strings.Builder{}
@@ -177,27 +354,77 @@ func (t *turn) converse(ctx context.Context, system string, conversation []agent
 				calls = append(calls, block)
 			}
 		}
+
+
 		if len(calls) == 0 {
-			return strings.TrimSpace(text.String()), nil
+			return strings.TrimSpace(text.String()), TurnCompleted, nil
 		}
 		if rounds >= MaxToolRounds {
-			return roundLimitText, nil
+			return roundLimitText, TurnRoundLimit, nil
 		}
 
 		messages = append(messages, agent.Message{Role: "assistant", Content: produced.Content})
-		for _, call := range calls {
-			result, err := t.call(open, call)
+
+		for index, call := range calls {
+			result, err := loop.call(open, call)
 			if err != nil {
-				return "", err
+				return "", TurnError, err
 			}
-			// 一条结果一条消息：OpenAI 兼容接口要求每个工具调用都有自己的 tool 消息
 			messages = append(messages, agent.Message{Role: "tool", Content: []agent.ContentBlock{result}})
+
+			if ctx.Err() != nil {
+				// 停止：还没开始的工具记“已取消”；已经说出的话保留下来（补一句“已中断”）
+
+				// 当前这一次还没有结果时也算“已取消”（它可能其实已经执行过，结果不再采用）
+				rest := append([]agent.ContentBlock{call}, calls[index+1:]...)
+				loop.cancelCalls(rest)
+				return interruptedReply(spoken.String()), TurnStopped, nil
+			}
 		}
+
+		// 下一步之前送达运行中收到的新消息
+		interj := loop.interjections()
+
+		messages = append(messages, interj...)
 	}
 }
 
+// interruptedReply 停止时返回已经说出的部分（补一句“已中断”）。
+func interruptedReply(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return text + agent.InterruptedSuffix
+}
+
+// cancelCalls 没开始的工具调用记一条“已取消”的结果：会话里与模型拿到的都是这一条。
+func (loop *turnLoop) cancelCalls(calls []agent.ContentBlock) {
+	for _, call := range calls {
+		loop.say(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Result: cancelledResult})
+	}
+}
+
+// cancelledResult 没开始的工具调用的结果。
+const cancelledResult = "已取消：这一轮被停止，工具没有执行。"
+
 // call 执行一次工具调用，写入留痕，返回交给模型的结果。
-func (t *turn) call(open map[string]tool, call agent.ContentBlock) (agent.ContentBlock, error) {
+func (loop *turnLoop) call(open map[string]tool, call agent.ContentBlock) (agent.ContentBlock, error) {
+	publish := func(event AgentEvent) {
+		event.Turn = loop.job.id
+		event.ID, event.Tool, event.Args = call.ID, call.Name, call.Arguments
+		loop.bus.publish(event)
+	}
+
+
+	publish(AgentEvent{Type: EventToolStart})
+	loop.bus.toolStarted(AgentTool{ID: call.ID, Tool: call.Name, Args: call.Arguments})
+	end := func(result any, reason string, isErr bool) {
+		loop.bus.toolEnded(call.ID, result, reason, isErr)
+		publish(AgentEvent{Type: EventToolEnd, Result: result, Reason: reason, IsErr: isErr})
+	}
+
+
 	item, ok := open[call.Name]
 	if !ok {
 		names := make([]string, 0, len(open))
@@ -205,22 +432,49 @@ func (t *turn) call(open map[string]tool, call agent.ContentBlock) (agent.Conten
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		return t.deny(call, fmt.Sprintf("工具 %s 现在没有开放给前台 Agent。现在可用的工具：%s。", call.Name, strings.Join(names, "、")))
+		reason := fmt.Sprintf("工具 %s 现在没有开放给前台 Agent。现在可用的工具：%s。", call.Name, strings.Join(names, "、"))
+		end(nil, reason, true)
+		return loop.deny(call, reason)
 	}
-	result, err := item.run(call.Arguments)
-	var refused *denial
-	if errors.As(err, &refused) {
-		return t.deny(call, refused.reason)
+	// 工具在写锁里执行、并当场写留痕：它可能改会话状态（草稿、待发的卡片），执行和留痕要看到同一份现状，
+	// 也不能和人的提交、确认交错。
+	var (
+		result   any
+		runErr   error
+		refused  *denial
+		writeErr error
+	)
+
+
+	result, runErr = item.run(call.Arguments)
+
+
+	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
+	switch {
+	case errors.As(runErr, &refused):
+		_, writeErr = loop.deny(call, refused.reason)
+	case runErr != nil:
+		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: runErr.Error()})
+	default:
+		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Result: result})
 	}
-	if err != nil {
-		if writeErr := t.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: err.Error()}); writeErr != nil {
+	switch {
+	case refused != nil:
+		end(nil, refused.reason, true)
+		if writeErr != nil {
 			return agent.ContentBlock{}, writeErr
 		}
-		return agent.ToolResultBlock(call.ID, err.Error(), true), nil
+		return agent.ToolResultBlock(call.ID, refused.reason, true), nil
+	case runErr != nil:
+		end(nil, runErr.Error(), true)
+		if writeErr != nil {
+			return agent.ContentBlock{}, writeErr
+		}
+		return agent.ToolResultBlock(call.ID, runErr.Error(), true), nil
+	case writeErr != nil:
+		return agent.ContentBlock{}, writeErr
 	}
-	if err := t.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Result: result}); err != nil {
-		return agent.ContentBlock{}, err
-	}
+	end(result, "", false)
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return agent.ContentBlock{}, err
@@ -228,11 +482,16 @@ func (t *turn) call(open map[string]tool, call agent.ContentBlock) (agent.Conten
 	return agent.ToolResultBlock(call.ID, string(raw), false), nil
 }
 
-func (t *turn) deny(call agent.ContentBlock, reason string) (agent.ContentBlock, error) {
-	if err := t.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason}); err != nil {
+func (loop *turnLoop) deny(call agent.ContentBlock, reason string) (agent.ContentBlock, error) {
+	if err := loop.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason}); err != nil {
 		return agent.ContentBlock{}, err
 	}
 	return agent.ToolResultBlock(call.ID, reason, true), nil
+}
+
+// denyLocked 在写锁里写越权留痕。
+func (loop *turnLoop) denyLocked(call agent.ContentBlock, reason string) error {
+	return loop.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason})
 }
 
 // ---------------------------------------------------------------- 接待
@@ -254,7 +513,8 @@ func receptionSystem(employees []Employee) string {
 	return receptionPrompt + strings.Join(lines, "\n") + "\n"
 }
 
-func (t *turn) proposeEmployeeTool(employees []Employee) tool {
+func (loop *turnLoop) proposeEmployeeTool(employees []Employee) tool {
+	t := loop.turn
 	ids := make([]any, 0, len(employees))
 	for _, employee := range employees {
 		ids = append(ids, employee.ID)
@@ -288,11 +548,12 @@ func (t *turn) proposeEmployeeTool(employees []Employee) tool {
 }
 
 // defaultEmployee 设置里的默认员工；没设或已不存在时返回空串。
-func (t *turn) defaultEmployee(employees []Employee) string {
-	if t.manager.deps.DefaultEmployee == nil {
+func (loop *turnLoop) defaultEmployee(employees []Employee) string {
+	deps := loop.turn.manager.deps
+	if deps.DefaultEmployee == nil {
 		return ""
 	}
-	id := t.manager.deps.DefaultEmployee()
+	id := deps.DefaultEmployee()
 	for _, employee := range employees {
 		if employee.ID == id {
 			return id
@@ -302,36 +563,47 @@ func (t *turn) defaultEmployee(employees []Employee) string {
 }
 
 // route 按“默认员工 → 模型提议 → 列出员工手选”决定谁接手。
-func (t *turn) route(ctx context.Context) error {
+func (loop *turnLoop) route(ctx context.Context) turnOutcome {
+	t := loop.turn
+	t.role = loop.job.role
 	employees, err := t.manager.deps.Employees()
 	if err != nil {
-		return err
+		loop.say(Message{Kind: KindNotice, Text: "读不到员工列表：" + err.Error()})
+		return turnOutcome{mode: turnErrored, reason: TurnError}
 	}
-	if id := t.defaultEmployee(employees); id != "" {
-		if err := t.write(Message{Kind: KindNotice, Text: "这项工作默认由下面的员工接手，请确认。"}); err != nil {
-			return err
+	if id := loop.defaultEmployee(employees); id != "" {
+		if err := loop.write(Message{Kind: KindNotice, Text: "这项工作默认由下面的员工接手，请确认。"}); err != nil {
+			return turnOutcome{mode: turnErrored, reason: TurnError}
 		}
 		t.cards = append(t.cards, confirmCard(employees, id, SourceDefault, ""))
-		return t.flushCards()
+		_ = loop.flushCards()
+		return turnOutcome{mode: turnCompleted, reason: TurnCompleted}
 	}
-	text, err := t.converse(ctx, receptionSystem(employees), t.history(), []tool{t.proposeEmployeeTool(employees)})
-	unavailable := errors.Is(err, errModelUnavailable)
-	if err != nil && !unavailable {
-		return err
-	}
-	if unavailable {
-		if err := t.write(Message{Kind: KindNotice, Text: "模型暂时不可用，我判断不了该由谁接手。请从列表里选择员工。"}); err != nil {
-			return err
+	text, reason, err := loop.converse(ctx, receptionSystem(employees), t.history(), []tool{loop.proposeEmployeeTool(employees)})
+	if reason == TurnStopped || reason == TurnError {
+		if reason == TurnStopped && text != "" {
+			loop.say(Message{Kind: KindAssistant, Text: text})
+		}
+		if reason == TurnStopped {
+			return turnOutcome{mode: turnStopped, reason: TurnStopped}
+		}
+		// 模型不可用：给出员工手选卡片，人照样能往下走
+		if err := loop.write(Message{Kind: KindNotice, Text: "模型暂时不可用，我判断不了该由谁接手。请从列表里选择员工。"}); err != nil {
+			return turnOutcome{mode: turnErrored, reason: TurnError}
 		}
 	} else if text != "" {
-		if err := t.write(Message{Kind: KindAssistant, Text: text}); err != nil {
-			return err
+		if err := loop.write(Message{Kind: KindAssistant, Text: text}); err != nil {
+			return turnOutcome{mode: turnErrored, reason: TurnError}
 		}
 	}
+	// 卡片都放在一句话之后：先说话，再给卡片
 	if !t.proposed {
 		t.cards = append(t.cards, confirmCard(employees, "", SourceManual, ""))
 	}
-	return t.flushCards()
+	if err := loop.flushCards(); err != nil {
+		return turnOutcome{mode: turnErrored, reason: TurnError}
+	}
+	return turnOutcome{mode: turnCompleted, reason: reason}
 }
 
 // ---------------------------------------------------------------- 接手之后
@@ -339,7 +611,8 @@ func (t *turn) route(ctx context.Context) error {
 const handoverNote = "（系统提示）发起人已确认由你接手。请根据此前的对话把能确定的信息填进表单草稿；信息不足时问一句，不要猜。"
 
 // assistantSystem 员工的 frontdesk.md 加上这个会话的现状。
-func (t *turn) assistantSystem(config *contract.EmployeeConfig) string {
+func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
+	t := loop.turn
 	lines := []string{
 		strings.TrimSpace(config.Frontdesk), "", "## 当前会话", "",
 		"- 正在和你说话的人：" + contract.RoleLabels[t.role],
@@ -368,7 +641,8 @@ func compactJSON(value any) string {
 }
 
 // assistantTools 这个阶段开放的工具：固定的草稿类工具，加上 frontdesk.md 勾选的只读工具。
-func (t *turn) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
+func (loop *turnLoop) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
+	t := loop.turn
 	ticked := map[string]bool{}
 	for _, name := range contract.FrontdeskTools(config.Frontdesk) {
 		ticked[name] = true
@@ -391,7 +665,8 @@ func (t *turn) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
 }
 
 // unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。
-func (t *turn) unavailableText() string {
+func (loop *turnLoop) unavailableText() string {
+	t := loop.turn
 	text := "模型暂时不可用，我现在回答不了。可以直接在卡片上操作。"
 	if t.current.taskID == "" {
 		return text
@@ -408,32 +683,59 @@ func (t *turn) unavailableText() string {
 }
 
 // assist 员工接手后的一条回复。
-func (t *turn) assist(ctx context.Context, conversation []agent.Message) error {
+func (loop *turnLoop) assist(ctx context.Context) turnOutcome {
+
+	t := loop.turn
 	config, err := t.manager.deps.LoadEmployee(t.current.employee)
 	if err != nil {
-		return err
+		loop.say(Message{Kind: KindNotice, Text: "读不到员工配置：" + err.Error()})
+		return turnOutcome{mode: turnErrored, reason: TurnError}
 	}
-	tools, err := t.assistantTools(config)
+	tools, err := loop.assistantTools(config)
 	if err != nil {
-		return err
+		loop.say(Message{Kind: KindNotice, Text: "读不到工具列表：" + err.Error()})
+		return turnOutcome{mode: turnErrored, reason: TurnError}
 	}
-	text, err := t.converse(ctx, t.assistantSystem(config), conversation, tools)
+
+	text, reason, err := loop.converse(ctx, loop.assistantSystem(config), t.history(), tools)
+
 	switch {
-	case errors.Is(err, errModelUnavailable):
-		if err := t.write(Message{Kind: KindNotice, Text: t.unavailableText()}); err != nil {
-			return err
+	case reason == TurnStopped:
+
+		if text != "" {
+			loop.say(Message{Kind: KindAssistant, Text: text})
 		}
+		return turnOutcome{mode: turnStopped, reason: TurnStopped}
+	case reason == TurnError:
+		loop.say(Message{Kind: KindNotice, Text: loop.unavailableText()})
+		return turnOutcome{mode: turnErrored, reason: TurnError}
+	case reason == TurnCompleted && text == "":
+		// 什么都没说（比如只填了草稿）：不用写空回复
 	case err != nil:
-		return err
-	case text != "":
-		if err := t.write(Message{Kind: KindAssistant, Text: text}); err != nil {
-			return err
+		return turnOutcome{mode: turnErrored, reason: TurnError}
+	default:
+		if err := loop.write(Message{Kind: KindAssistant, Text: text}); err != nil {
+			return turnOutcome{mode: turnErrored, reason: TurnError}
 		}
 	}
+
+
+	// 填过表单草稿：再给出表单卡片，人接着在卡片上操作。字段照着最新状态取（草稿要看得见）
+
+
+
 	if t.drafted {
+		if current, loadErr := loop.job.manager.load(loop.job.session); loadErr == nil {
+			t.current = current
+		}
+
 		t.cards = append(t.cards, t.formCard())
 	}
-	return nil
+
+	if err := loop.flushCards(); err != nil {
+		return turnOutcome{mode: turnErrored, reason: TurnError}
+	}
+	return turnOutcome{mode: turnCompleted, reason: reason}
 }
 
 func (t *turn) formCard() Card {
@@ -442,3 +744,4 @@ func (t *turn) formCard() Card {
 		Attachments: append([]Attachment{}, t.current.attachments...),
 	}
 }
+

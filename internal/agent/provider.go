@@ -43,9 +43,11 @@ type ResolvedStepModel struct {
 	Model Model
 	// Connection、ModelID 实际用的连接和模型名，写进“模型调用”事件（Spec 0006）。
 	// 剧本模型不知道这些，留空。
-	Connection    string
-	ModelID       string
-	Stream        StreamFunc
+	Connection string
+	ModelID    string
+	Stream     StreamFunc
+	// StreamEvent 流式调用（前台 Agent 逐字推送）；为 nil 时 EventStream 退回到 Stream
+	StreamEvent   EventStreamFunc
 	APIKey        string
 	ThinkingLevel string
 	TimeoutMS     *int

@@ -2,10 +2,13 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"digital-employee/internal/contract"
 	"digital-employee/internal/knowledge"
@@ -309,12 +312,161 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text, _ := body["text"].(string)
-	reply, err := s.sessions.Send(r.Context(), r.PathValue("id"), role, text)
+	// 立即返回 202：回复在后台流式跑，通过会话事件流推送（Spec 0006、T40）
+	accepted, err := s.sessions.Send(r.PathValue("id"), role, text)
 	if err != nil {
 		writeSessionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, reply)
+	writeJSON(w, http.StatusAccepted, accepted)
+}
+
+// handleStopTurn 停止前台 Agent 正在进行的这一轮。
+func (s *Server) handleStopTurn(w http.ResponseWriter, r *http.Request) {
+	if _, ok := roleOf(r); !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	result, err := s.sessions.Stop(r.PathValue("id"))
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleSessionActivity 会话现在有没有一轮在跑，以及这一轮已经输出的内容。
+func (s *Server) handleSessionActivity(w http.ResponseWriter, r *http.Request) {
+	activity, err := s.sessions.Activity(r.PathValue("id"))
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, activity)
+}
+
+// handleSessionStream 会话事件流：文字增量、工具调用开始和结束、写入的流程卡片、一轮结束。
+// 先推这一轮已经输出的部分（来晚的客户端也能接着看），再推新事件；心跳注释防止代理断开。
+func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, internalError("当前连接不支持流式响应"))
+		return
+	}
+	id := r.PathValue("id")
+	activity, err := s.sessions.Activity(id)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+
+	var mu sync.Mutex
+	queue := []session.AgentEvent{}
+	notify := make(chan struct{}, 1)
+	closed := false
+	wake := func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	}
+	cancel, err := s.sessions.Subscribe(id, func(events []session.AgentEvent) {
+		mu.Lock()
+		if !closed {
+			queue = append(queue, events...)
+		}
+		mu.Unlock()
+		wake()
+	})
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	defer func() {
+		mu.Lock()
+		closed = true
+		mu.Unlock()
+		cancel()
+	}()
+
+	header := w.Header()
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	header.Set("Cache-Control", "no-cache, no-transform")
+	header.Set("Connection", "keep-alive")
+	header.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	catchUp := encodeAgentEvents(sessionCatchUp(activity)...)
+
+	if _, err := w.Write([]byte(catchUp)); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-notify:
+			mu.Lock()
+			batch := queue
+			queue = nil
+			mu.Unlock()
+			if len(batch) > 0 {
+
+				if _, err := w.Write([]byte(encodeAgentEvents(batch...))); err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		case <-ticker.C:
+			if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// sessionCatchUp 新订阅者先看到的一轮现状：已经输出的文字、工具调用和卡片。
+func sessionCatchUp(activity *session.AgentActivity) []session.AgentEvent {
+	if activity == nil || activity.Turn == 0 {
+		return nil
+	}
+	events := []session.AgentEvent{{Turn: activity.Turn, Type: session.EventTurnStart}}
+	if activity.Text != "" {
+		events = append(events, session.AgentEvent{Turn: activity.Turn, Type: session.EventText, Text: activity.Text})
+	}
+	for _, tool := range activity.Tools {
+		events = append(events, session.AgentEvent{Turn: activity.Turn, Type: session.EventToolStart, ID: tool.ID, Tool: tool.Tool, Args: tool.Args})
+		if tool.Ended {
+			events = append(events, session.AgentEvent{
+				Turn: activity.Turn, Type: session.EventToolEnd, ID: tool.ID, Tool: tool.Tool, Args: tool.Args,
+				Result: tool.Result, Reason: tool.Reason, IsErr: tool.IsErr,
+			})
+		}
+	}
+	for index := range activity.Cards {
+		message := activity.Cards[index]
+		events = append(events, session.AgentEvent{Turn: activity.Turn, Type: session.EventMessage, Msg: &message})
+	}
+	return events
+}
+
+// encodeAgentEvents 会话事件 → SSE 帧（event 名就是类型）。
+func encodeAgentEvents(events ...session.AgentEvent) string {
+	frame := strings.Builder{}
+	for _, event := range events {
+		data, err := json.Marshal(event)
+		if err != nil {
+			continue
+		}
+		frame.WriteString("event: " + event.Type + "\ndata: " + string(data) + "\n\n")
+	}
+	return frame.String()
 }
 
 func (s *Server) handleConfirmEmployee(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +481,7 @@ func (s *Server) handleConfirmEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	employee, _ := body["employee"].(string)
-	reply, err := s.sessions.Confirm(r.Context(), r.PathValue("id"), role, employee)
+	reply, err := s.sessions.Confirm(r.PathValue("id"), role, employee)
 	if err != nil {
 		writeSessionError(w, err)
 		return

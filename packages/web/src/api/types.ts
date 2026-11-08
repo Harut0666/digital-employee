@@ -242,6 +242,8 @@ export interface SessionMessage {
   text?: string;
   card?: SessionCard;
   tool?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
   reason?: string;
   /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
   model?: ModelRef;
@@ -356,40 +358,55 @@ export interface KnowledgeFiling {
 
 export type KnowledgeResult = { ok: true; entry: KnowledgeEntry } | { ok: false; error: string; message: string };
 
-/** 会话：读取、新建、重命名与归档（Spec 0006）。 */
-export interface SessionApi {
-  /** ?archived=1 连归档的会话一起列（默认不列） */
-  listSessions(workspaceId?: string, options?: { archived?: boolean }): Promise<SessionSummary[]>;
-  /** 读会话；服务端同时写“已读” */
-  getSession(id: string): Promise<SessionDetail>;
-  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
-  createSession(workspaceId?: string): Promise<SessionSummary>;
-  /** 重命名会话；归档或取消归档 */
-  updateSession(id: string, patch: { title?: string } | { archived: boolean }): Promise<SessionSummary>;
-  /** 会话里可以选的模型：只列有 Key 的连接和它们列出的模型 */
-  modelOptions(): Promise<ModelConnectionOption[]>;
-  /** 选模型：会话日志里写一条选择，同时更新设置的 lastModel；任务运行中从下一个判断步骤生效 */
-  selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
-  sendMessage(id: string, text: string): Promise<SessionResult>;
-  confirmEmployee(id: string, employee: string): Promise<SessionResult>;
-  uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
-  /** @ 选择：工作区目录里的文件（递归列出文件，不列“交付”和“材料”） */
-  listFolderFiles(id: string): Promise<FolderListing>;
-  /** 确认目录里的文件（卡片上的按钮和 @ 选择都走这里）：复制进会话材料，与上传等效 */
-  useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
-  /** form 省略时用草稿 */
-  submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
-  /** 发起人在开工清单上确认跳过一项可跳过项 */
-  skipChecklistItem(id: string, item: string): Promise<SessionResult>;
-  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
-  draftFiling(id: string): Promise<SessionResult>;
-  /** 提交前检查：会话模型所在的连接有没有 Key、模型还在不在列表里；给任务 ID 时检查任务的会话模型 */
-  preflight(taskId?: string): Promise<PreflightResult>;
-}
+import type { SessionApi } from "./sessions";
+
+export type { SessionApi };
 
 export type SessionResult =
   | { ok: true; messages: SessionMessage[]; session: SessionSummary }
   | { ok: false; error: string; message: string; settings?: SettingsEntry };
+
+// ---- 会话事件流（T40：说话逐字出现、工具调用可折叠、随时可以停止） ----
+
+/** 发消息的受理结果：接口立即返回，回复在会话事件流里逐字出现 */
+export interface TurnAccepted {
+  ok: true;
+  /** 这一轮的编号；运行中再发的消息排进同一轮 */
+  turn: number;
+}
+
+/** 停止的结果：这一轮说过的部分照常保存，没开始的工具调用记“已取消” */
+export type StopResult = { ok: true; stopped: boolean; turn?: number } | { ok: false; error: string; message: string };
+
+/** 一轮怎么结束的 */
+export type TurnEndReason = "completed" | "stopped" | "error" | "round_limit";
+
+/** 一次工具调用（流里的样子） */
+export interface AgentToolView {
+  id: string;
+  tool: string;
+  args?: Record<string, unknown>;
+  ended: boolean;
+  result?: unknown;
+  reason?: string;
+  isErr?: boolean;
+}
+
+/** 会话事件流里的一件事 */
+export interface SessionAgentEvent {
+  type: "turn_start" | "text_delta" | "tool_start" | "tool_end" | "message" | "turn_end";
+  turn: number;
+  text?: string;
+  id?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  reason?: string;
+  isErr?: boolean;
+  error?: string;
+  /** message：写进会话的一条消息（卡片随它一起到） */
+  msg?: SessionMessage;
+}
 
 /** 侧栏在模拟模式下额外要的两项：全部会话和记录（真实模式没有，见 api/index.ts）。 */
 export interface MockSessionSources {

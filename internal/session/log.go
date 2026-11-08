@@ -39,6 +39,9 @@ const (
 	kindFilingDrafted = "filing_drafted"
 	// kindChecklistSkipped 发起人确认跳过一项开工清单（Item），同时写一条说明留痕
 	kindChecklistSkipped = "checklist_skipped"
+	// KindTurnText 前台 Agent 一轮里的文字增量：同一轮边到边追加进同一条。一轮结束时另写完整回复；
+	// 读取会话时把它们按轮次还回原来在对话里的位置，所以来晚的客户端也能逐字看到已经说出的部分。
+	KindTurnText = "turn_text"
 	// kindRename 人改了会话标题
 	kindRename = "rename"
 	// kindArchive 人归档或取消归档会话
@@ -82,6 +85,10 @@ type Message struct {
 	ConfirmedPath string `json:"confirmedPath,omitempty"`
 	// Item 开工清单项的 id
 	Item string `json:"item,omitempty"`
+	// Turn 前台 Agent 回复的轮次编号（T40）：一轮结束时写入的消息都带着它。
+	// 文字增量在事件流里推给前端，但会话读取按日志重画对话，所以增量也按轮次记一份，
+	// 来晚的客户端和重连之后的客户端能看到完整的那一轮。
+	Turn int64 `json:"turn,omitempty"`
 	// Model 会话模型：model_selected 选的是哪个；selected 为 true 表示会话里明确选过
 	Model    *contract.ModelRef `json:"model,omitempty"`
 	Selected bool               `json:"selected,omitempty"`
@@ -97,7 +104,7 @@ type Message struct {
 func (m Message) visible() bool {
 	switch m.Kind {
 	case kindCreated, kindModelSelected, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped,
-		kindRename, kindArchive, kindRead:
+		kindRename, kindArchive, kindRead, KindTurnText:
 		return false
 	}
 	return true
@@ -215,11 +222,54 @@ type store struct {
 	dir   string
 	now   func() time.Time
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*sessionLock
+}
+
+// sessionLock 一个会话的写锁，可重入：前台 Agent 的一轮拿着它跑整轮，期间它自己写日志（append、update）
+// 会再进来一次；人的操作用 TryLock，拿到不到就说明这一轮在跑。
+type sessionLock struct {
+	mu    sync.Mutex
+	owner int64
+	depth int
+}
+
+// TryLock 由 v 试着占住；已经由 v 占着时只加深一层。
+func (l *sessionLock) TryLock(v int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.owner == v {
+		l.depth++
+		return true
+	}
+	if l.owner != 0 {
+		return false
+	}
+	l.owner, l.depth = v, 1
+	return true
+}
+
+// Lock 由 v 占住，等着也要占到。
+func (l *sessionLock) Lock(v int64) {
+	for !l.TryLock(v) {
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// Unlock 由 v 放掉一层；不是 v 拿着时什么也不做。
+func (l *sessionLock) Unlock(v int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.owner != v {
+		return
+	}
+	l.depth--
+	if l.depth == 0 {
+		l.owner = 0
+	}
 }
 
 func newStore(dir string, now func() time.Time) *store {
-	return &store{dir: filepath.Join(dir, "sessions"), now: now, locks: map[string]*sync.Mutex{}}
+	return &store{dir: filepath.Join(dir, "sessions"), now: now, locks: map[string]*sessionLock{}}
 }
 
 func (s *store) sessionDir(id string) string { return filepath.Join(s.dir, id) }
@@ -230,22 +280,25 @@ func (s *store) attachmentPath(id, name string) string {
 
 func (s *store) logPath(id string) string { return filepath.Join(s.sessionDir(id), "log.jsonl") }
 
-func (s *store) lockOf(id string) *sync.Mutex {
+func (s *store) lockOf(id string) *sessionLock {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	lock := s.locks[id]
 	if lock == nil {
-		lock = &sync.Mutex{}
+		lock = &sessionLock{}
 		s.locks[id] = lock
 	}
 	return lock
 }
 
+// background 后台任务（Agent 的一轮）的锁身份：人的操作没有身份（0），与它们互斥。
+const background = -1
+
 // append 追加一行并落盘，返回写入的消息（带序号和时间）。
 func (s *store) append(id string, message Message) (Message, error) {
 	lock := s.lockOf(id)
-	lock.Lock()
-	defer lock.Unlock()
+	lock.Lock(background)
+	defer lock.Unlock(background)
 
 	current, err := s.read(id)
 	if err != nil {
@@ -265,10 +318,8 @@ func (s *store) append(id string, message Message) (Message, error) {
 	if err := s.dropTornTail(id); err != nil {
 		return Message{}, err
 	}
-	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(message); err != nil {
+	line, err := encodeLine(message)
+	if err != nil {
 		return Message{}, err
 	}
 	file, err := os.OpenFile(s.logPath(id), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
@@ -276,10 +327,49 @@ func (s *store) append(id string, message Message) (Message, error) {
 		return Message{}, err
 	}
 	defer file.Close()
-	if _, err := file.Write(buffer.Bytes()); err != nil {
+	if _, err := file.Write([]byte(line)); err != nil {
 		return Message{}, err
 	}
 	return message, file.Sync()
+}
+
+// update 改写一行（文字增量追加到同一轮的那一条），返回改写后的消息；序号、ID 不变，时间取现在。
+func (s *store) update(id string, seq int64, change func(*Message)) (Message, error) {
+	lock := s.lockOf(id)
+	lock.Lock(background)
+	defer lock.Unlock(background)
+
+	raw, err := os.ReadFile(s.logPath(id))
+	if err != nil {
+		return Message{}, err
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\r\n"), "\n")
+	for index, line := range lines {
+		var message Message
+		if err := json.Unmarshal([]byte(line), &message); err != nil || message.Seq != seq {
+			continue
+		}
+		change(&message)
+		message.TS = s.now().UTC().Format(time.RFC3339Nano)
+		encoded, err := encodeLine(message)
+		if err != nil {
+			return Message{}, err
+		}
+		lines[index] = strings.TrimRight(encoded, "\n")
+		return message, os.WriteFile(s.logPath(id), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	}
+	return Message{}, fmt.Errorf("会话日志里没有第 %d 条", seq)
+}
+
+// encodeLine 一条消息编成日志的一行。
+func encodeLine(message Message) (string, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(message); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
 }
 
 // dropTornTail 截掉末尾没写完的半行，后面追加的内容才不会接在半行上。

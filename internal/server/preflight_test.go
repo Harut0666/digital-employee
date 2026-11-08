@@ -89,7 +89,7 @@ func TestSessionSubmitWithoutKeyIsBlockedBeforeATaskExists(t *testing.T) {
 	// 任务用按剧本跑的引擎；提交前检查看设置里的模型连接
 	h := newHarness(t, nil, withScriptedModel())
 	view := h.createSession()
-	h.confirm(view.ID, initiator, harnessEmployee)
+	h.confirmed(view.ID, harnessEmployee)
 	if status, data := h.uploadTo(view.ID, a01Files(t)); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
 	}

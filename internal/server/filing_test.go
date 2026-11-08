@@ -15,7 +15,7 @@ import (
 func (h *harness) deliveredSession() (sessionID, taskID string) {
 	h.t.Helper()
 	created := h.createSession()
-	h.confirm(created.ID, initiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	if status, data := h.uploadTo(created.ID, a01Files(h.t)); status != http.StatusOK {
 		h.t.Fatalf("上传失败：%d %s", status, data)
 	}
@@ -100,7 +100,7 @@ func TestFilingDescriptionIsHandWrittenWhenTheModelIsDown(t *testing.T) {
 func TestOnlyTheInitiatorDraftsAfterDelivery(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"))
 	created := h.createSession()
-	h.confirm(created.ID, initiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 
 	if status, data := h.draftFiling(created.ID, initiator); status != http.StatusConflict {
 		t.Fatalf("还没交付就起草：%d %s", status, data)

@@ -3,7 +3,7 @@
 // 任务卡片上的按钮由后端在读取时配上（只配给当前暂停的卡片），前端不推算。
 
 import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
-import type { PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
+import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
 import { modelNotices, selectedModelNotice } from "./session-model";
 
 interface ItemBase {
@@ -42,6 +42,10 @@ export type ChatItem =
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
   | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
+  /** 正在说的一轮里已经调用的工具（可折叠成一行） */
+  | (ItemBase & { kind: "tools"; turn: number; items: AgentToolView[] })
+  /** 正在说的一轮里已经说出的部分（还没写成会话里的消息） */
+  | (ItemBase & { kind: "streaming"; turn: number; text: string })
   | (ItemBase & {
       kind: "filing";
       taskId: string;
@@ -61,6 +65,15 @@ export interface ChatTask {
   deliverables: DeliverableRef[];
 }
 
+/** 正在说的一轮（来自会话事件流）：说完之后它的内容会变成会话里的消息 */
+export interface LiveTurn {
+  turn: number;
+  text: string;
+  tools: AgentToolView[];
+  /** 这一轮已经开始 */
+  running?: boolean;
+}
+
 function noticeItem(notice: { key: string; ts: string; text: string }): ChatItem {
   return { key: notice.key, ts: notice.ts, kind: "notice", text: notice.text };
 }
@@ -78,8 +91,20 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
   items.splice(start, 0, item);
 }
 
-export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = []): ChatItem[] {
-  const items: ChatItem[] = [];
+export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn): ChatItem[] {
+  const items = deriveMessages(session, task, events);
+  if (!live || (!live.text && live.tools.length === 0)) return items;
+  // 还没写成消息的这一轮排在最后一条之后
+  const ts = session.updatedAt;
+  if (live.tools.length > 0) {
+    // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
+    items.push({ key: `tools-${live.turn}-${live.tools.length}`, ts, kind: "tools", turn: live.turn, items: live.tools });
+  }
+  if (live.text) items.push({ key: `streaming-${live.turn}-${live.text.length}`, ts, kind: "streaming", turn: live.turn, text: live.text });
+  return items;
+}
+
+function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[]): ChatItem[] {  const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const card = session.messages[i]?.card;

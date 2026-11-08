@@ -17,7 +17,7 @@ import (
 func draftingSession(h *harness) session.View {
 	h.t.Helper()
 	created := h.createSession()
-	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 	return created
 }
 

@@ -8,6 +8,7 @@ import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
 import type {
   EmployeeInfo,
+  SessionAgentEvent,
   ModelConnectionOption,
   ModelRef,
   RecordGroup,
@@ -21,10 +22,21 @@ import type {
   StatusDot,
   TaskSnapshot,
   TaskSummary,
+  TurnAccepted,
   UiRole,
   UploadItem,
   WebApi,
 } from "./types";
+
+/** 一句话怎么回：逐字出现的片段（确定性：按标点切成小节，再按两三个字一段） */
+function chunksOf(text: string): string[] {
+  const pieces = text.match(/[^，。；！？,;!?]+[，。；！？,;!?]?/g) ?? [text];
+  const out: string[] = [];
+  for (const piece of pieces) {
+    for (let i = 0; i < piece.length; i += 2) out.push(piece.slice(i, i + 2));
+  }
+  return out;
+}
 
 type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createTask" | "command"> & {
   /** 运行中换模型：任务写一条“模型已切换”事件（对应 Go 的 Engine.SetTaskModel） */
@@ -41,6 +53,10 @@ export interface MockSessions extends SessionApi {
 
 interface MockSession {
   id: string;
+  /** 正在说的一轮：逐字出现，说完写进消息、以 turn_end 收尾 */
+  running?: { turn: number; timer: ReturnType<typeof setTimeout> };
+  cancelled?: boolean;
+  turn: number;
   /** 会话属于哪个工作区（Spec 0006） */
   workspaceId: string;
   employee?: string;
@@ -128,7 +144,7 @@ export function createMockSessions(
   /** 模拟任务当前的会话模型（运行中切换时更新；任务事件由 mock.ts 写入） */
   const taskModels = new Map<string, ModelRef>();
 
-  const fail = (error: string, message: string): SessionResult => ({ ok: false, error, message });
+  const fail = (error: string, message: string) => ({ ok: false as const, error, message });
   const write = (s: MockSession, input: Omit<SessionMessage, "id" | "seq" | "ts">, out: SessionMessage[]) => {
     const seq = s.messages.length + 1;
     const message = { id: `s${seq}`, seq, ts: new Date().toISOString(), ...input } as SessionMessage;
@@ -250,6 +266,65 @@ export function createMockSessions(
 
   const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: out, session: await view(s) });
 
+  // ---- 正在说的一轮：和 Go 后端一样逐字出现，说完再写进消息、推 turn_end ----
+  const listeners = new Map<string, Set<(event: SessionAgentEvent) => void>>();
+  const emit = (s: MockSession, turn: number, event: Omit<SessionAgentEvent, "turn">) => {
+    for (const listener of listeners.get(s.id) ?? []) listener({ turn, ...event } as SessionAgentEvent);
+  };
+  const later = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  const pace = (ms = 8): number => (import.meta.env?.MODE === "test" ? 0 : ms);
+
+  /** 说一轮：文字逐字出现、工具一个个调用；被停止时已说的部分以“已中断”保存，没开始的工具记“已取消” */
+  async function runTurn(s: MockSession, turn: number, steps: { text: string; tools?: string[] }[]) {
+    const said: string[] = [];
+    for (const step of steps) {
+      let delta = "";
+      for (const piece of chunksOf(step.text)) {
+        if (s.cancelled) break;
+        emit(s, turn, { type: "text_delta", text: piece });
+        delta += piece;
+        await later(pace());
+      }
+      if (delta) said.push(delta);
+      if (s.cancelled) break;
+      for (const [index, name] of (step.tools ?? []).entries()) {
+        if (s.cancelled) {
+          // 没开始的工具记“已取消”
+          write(s, { kind: "tool_called", tool: name, reason: "已取消：这一轮被停止，工具没有执行。" }, []);
+          emit(s, turn, { type: "message" });
+          continue;
+        }
+        const id = `mock_call_${turn}_${name}_${index}`;
+        emit(s, turn, { type: "tool_start", id, tool: name, args: {} });
+        await later(pace(30));
+        emit(s, turn, { type: "tool_end", id, tool: name, result: { ok: true } });
+        write(s, { kind: "tool_called", tool: name, result: { ok: true } }, []);
+      }
+    }
+    const text = said.join("");
+    if (text) write(s, { kind: "assistant", text: s.cancelled ? `${text}（已中断）` : text }, []);
+    s.running = undefined;
+  }
+
+  /**
+   * 后台开始说一轮：接口立即返回，内容在事件流里出现。
+   * extra 是在这一轮里顺便落到会话里的东西（比如员工确认卡片），写完立刻推送。
+   */
+  function startTurn(s: MockSession, steps: { text: string; tools?: string[] }[], extra?: () => void): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    void runTurn(s, turn, steps).then(() => {
+      if (extra && !s.cancelled) {
+        extra();
+        emit(s, turn, { type: "message" });
+      }
+      emit(s, turn, { type: "turn_end", reason: s.cancelled ? "stopped" : "completed" });
+    });
+    return turn;
+  }
+
   function route(s: MockSession, text: string, out: SessionMessage[]) {
     const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
     if (guess) {
@@ -364,7 +439,7 @@ export function createMockSessions(
       const s = writable(id);
       if (isFailure(s)) throw new Error(!s.ok ? s.message : "操作被拒绝");
       if ("archived" in patch) {
-        s.archived = patch.archived;
+        s.archived = patch.archived === true;
         return view(s);
       }
       if (typeof patch.title !== "string" || !patch.title.trim()) throw new Error("标题不能为空");
@@ -382,6 +457,7 @@ export function createMockSessions(
         skipped: new Set(),
         files: [],
         messages: [],
+        turn: 0,
         createdAt: now,
         updatedAt: now,
       };
@@ -389,20 +465,56 @@ export function createMockSessions(
       return view(s);
     },
 
-    async sendMessage(id, text) {
-      const s = writable(id);
-      if (isFailure(s)) return s;
+    async sendMessage(id, text): Promise<TurnAccepted | { ok: false; error: string; message: string }> {
+      if (id.startsWith(LEGACY)) return fail("session_read_only", "这是由旧任务推导出的只读会话，要继续工作请开新会话");
+      const s = sessions.get(id);
+      if (!s) return fail("not_found", `会话不存在：${id}`);
       if (!text.trim()) return fail("invalid_input", "消息不能为空");
-      const out: SessionMessage[] = [];
-      write(s, { kind: "user", role: getRole(), text: text.trim() }, out);
-      if (!s.employee) route(s, text, out);
-      else if (s.taskId) write(s, { kind: "notice", text: "模拟模式不接模型。任务进展见卡片和右栏，操作请点卡片上的按钮。" }, out);
-      else {
-        draftFromWords(s);
-        write(s, { kind: "assistant", text: "已按你说的更新表单，请检查后提交。" }, out);
-        write(s, { kind: "card", card: formCard(s) }, out);
+      write(s, { kind: "user", role: getRole(), text: text.trim() }, []);
+      // 正在说：这句话排进这一轮，在下一步之前送达（模拟模式直接接在这轮的话后面说）
+      if (s.running) return { ok: true, turn: s.running.turn };
+      if (!s.employee) {
+        const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
+        const steps = guess
+          ? [
+              { text: `这项工作适合由${guess.name}接手，请确认。`, tools: ["propose_employee"] },
+            ]
+          : [{ text: "我判断不出该由谁接手，请从下面选一位员工。" }];
+        // 卡片在轮次说完之后落到会话里
+        const turn = startTurn(s, steps, () => {
+          if (s.employee) return;
+          write(s, { kind: "card", card: guess ? { type: "employee_confirm", proposed: guess.id, source: "model", reason: guess.description, candidates: roster() } : { type: "employee_confirm", source: "manual", candidates: roster() } }, []);
+        });
+        return { ok: true, turn };
       }
-      return reply(s, out);
+      if (s.taskId) {
+        const turn = startTurn(s, [{ text: "模拟模式不接模型。任务进展见卡片和右栏，操作请点卡片上的按钮。" }]);
+        return { ok: true, turn };
+      }
+      draftFromWords(s);
+      const steps = [{ text: "已按你说的更新表单，请检查后提交。" }];
+      const turn = startTurn(s, steps, () => write(s, { kind: "card", card: formCard(s) }, []));
+      return { ok: true, turn };
+    },
+
+    async stopTurn(id) {
+      if (id.startsWith(LEGACY)) return fail("session_read_only", "这是由旧任务推导出的只读会话");
+      const s = sessions.get(id);
+      if (!s) return fail("not_found", `会话不存在：${id}`);
+      const running = s.running;
+      if (!running) return { ok: true, stopped: false };
+      s.cancelled = true;
+      s.running = undefined;
+      return { ok: true, stopped: true, turn: running.turn };
+    },
+
+    subscribeSession(id, onEvent) {
+      const set = listeners.get(id) ?? new Set();
+      set.add(onEvent);
+      listeners.set(id, set);
+      return () => {
+        set.delete(onEvent);
+      };
     },
 
     async confirmEmployee(id, employee) {

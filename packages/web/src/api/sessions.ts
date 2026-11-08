@@ -2,10 +2,52 @@
 // 人的操作（发消息、确认员工、上传、提交）返回 SessionResult：业务错误也是结果，不抛异常，
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
+import type {
+  FolderListing,
+  ModelConnectionOption,
+  PreflightResult,
+  SessionAgentEvent,
+  SessionDetail,
+  SessionResult,
+  SessionSummary,
+  StopResult,
+  TurnAccepted,
+  UiRole,
+} from "./types";
 
-import type { FolderListing, ModelConnectionOption, PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
-
-export type { SessionApi };
+export interface SessionApi {
+  listSessions(workspaceId?: string, options?: { archived?: boolean }): Promise<SessionSummary[]>;
+  getSession(id: string): Promise<SessionDetail>;
+  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
+  createSession(workspaceId?: string): Promise<SessionSummary>;
+  /**
+   * 发一句话：接口立即受理（202），回复在会话事件流里逐字出现。
+   * 正在回复时再发的话排进同一轮，在下一步之前送达。
+   */
+  sendMessage(id: string, text: string): Promise<TurnAccepted | Exclude<SessionResult, { ok: true }>>;
+  /** 停止这一轮：说过的部分以“已中断”保存，没开始的工具调用记“已取消” */
+  stopTurn(id: string): Promise<StopResult>;
+  /** 订阅一个会话的事件流；返回取消订阅的函数 */
+  subscribeSession(id: string, onEvent: (event: SessionAgentEvent) => void): () => void;
+  confirmEmployee(id: string, employee: string): Promise<SessionResult>;
+  uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
+  /** 目录里的材料：列出可用的文件、请人确认之后作为材料 */
+  listFolderFiles(id: string): Promise<FolderListing>;
+  useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
+  /** form 省略时用草稿 */
+  submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
+  /** 发起人在开工清单上确认跳过一项可跳过项 */
+  skipChecklistItem(id: string, item: string): Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
+  draftFiling(id: string): Promise<SessionResult>;
+  /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
+  modelOptions(): Promise<ModelConnectionOption[]>;
+  selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
+  /** 改会话的标题、归档 */
+  updateSession(id: string, patch: { title?: string; archived?: boolean }): Promise<SessionSummary>;
+  /** 提交前检查：默认模型连接有没有可用 Key；给了任务就用任务的会话模型 */
+  preflight(taskId?: string): Promise<PreflightResult>;
+}
 
 type Json = Record<string, unknown>;
 
@@ -26,14 +68,17 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     return body as T;
   }
 
-  async function act(target: string, body: BodyInit, json = true, method = "POST"): Promise<SessionResult> {
+  /** 人的操作：业务错误也是结果（不抛异常）；发消息、停止这些另有返回形状的也走它 */
+  async function post<T>(target: string, body: BodyInit, json = true, method = "POST"): Promise<T | Exclude<SessionResult, { ok: true }>> {
     const headers: Record<string, string> = { "x-role": getRole() };
     if (json) headers["content-type"] = "application/json";
     const res = await fetchImpl(target, { method, headers, body });
     const parsed: unknown = await res.json().catch(() => undefined);
-    if (typeof parsed === "object" && parsed !== null && "ok" in parsed) return parsed as SessionResult;
+    if (typeof parsed === "object" && parsed !== null && "ok" in parsed) return parsed as T | Exclude<SessionResult, { ok: true }>;
     return { ok: false, error: "internal", message: messageOf(parsed, res.status) };
   }
+
+  const act = (target: string, body: BodyInit, json = true, method = "POST") => post<SessionResult>(target, body, json, method);
 
   return {
     listSessions: (workspaceId, options) => {
@@ -62,7 +107,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       if (!body.session) throw new Error("响应里没有会话");
       return body.session;
     },
-    sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
+    sendMessage: (id, text) => post<TurnAccepted>(session(id, "/messages"), JSON.stringify({ text })),
+    stopTurn: (id) => post<StopResult>(session(id, "/stop"), JSON.stringify({})),
     confirmEmployee: (id, employee) => act(session(id, "/employee"), JSON.stringify({ employee })),
     uploadAttachments(id, files) {
       const form = new FormData();
@@ -75,5 +121,19 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
     preflight: (taskId) => read<PreflightResult>(url(taskId ? `preflight?taskId=${encodeURIComponent(taskId)}` : "preflight")),
+    subscribeSession(id, onEvent) {
+      // 服务端每件事都带 event 名；EventSource 带不了请求头，但事件流是只读的，不依赖角色
+      const source = new EventSource(session(id, "/stream"));
+      const handle = (event: MessageEvent<string>) => {
+        try {
+          onEvent(JSON.parse(event.data) as SessionAgentEvent);
+        } catch {
+          /* 忽略不认识的帧 */
+        }
+      };
+      const types = ["turn_start", "text_delta", "tool_start", "tool_end", "message", "turn_end"];
+      for (const type of types) source.addEventListener(type, handle as EventListener);
+      return () => source.close();
+    },
   };
 }
