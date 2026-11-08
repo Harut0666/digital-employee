@@ -37,6 +37,8 @@ export type ChatItem =
   | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
   /** 送审提示：审核在右栏进行，对话里只说一句 */
   | (ItemBase & { kind: "review_notice"; pause?: PauseView; active: boolean })
+  /** 使用目录文件：前台 Agent 提议把人工作区目录里的文件当材料，人确认后才复制进会话 */
+  | (ItemBase & { kind: "use_file"; path: string; name: string; size?: number; reason?: string; confirmed: boolean; actions: TaskAction[]; active: boolean })
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
   | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
@@ -174,6 +176,19 @@ export function deriveChat(session: SessionDetail, task?: ChatTask, events: read
       }
       case "knowledge_filing":
         return filingItem(base, card);
+      case "folder_file":
+        return {
+          ...base,
+          kind: "use_file",
+          path: card.path ?? "",
+          name: card.name ?? card.path?.split("/").at(-1) ?? "",
+          size: card.size,
+          reason: card.reason,
+          confirmed: card.confirmed ?? false,
+          actions,
+          // 按钮由后端按“还没开工、文件还在、人还没确认”配好；确认过、开工后都没有
+          active: writable && session.status === "drafting" && !card.confirmed && actions.length > 0,
+        };
     }
   }
 }

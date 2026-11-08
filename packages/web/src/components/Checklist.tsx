@@ -79,7 +79,7 @@ export function ChecklistPanel({
         <span>{bar.headline}</span>
       </div>
       <CheckRows rows={bar.rows} onSkip={canSkip ? (key) => void skip(key) : undefined} busy={busy} />
-      <div className="checklist-note">由程序按上传的文件和表单勾选；文件内容是否符合要求，开工后由准入校验检查。</div>
+      <div className="checklist-note">由程序按已提供的材料和表单勾选；文件内容是否符合要求，开工后由准入校验检查。</div>
     </div>
   );
 }

@@ -1,12 +1,12 @@
 // 开工清单：员工开工前必须备齐的事项，写回 checklist.yaml。
-// 每项只判定“文件是否已上传”或“表单字段是否已填写”；内容对不对由准入校验检查。
+// 每项只判定“材料是否已提供”（上传或从工作区目录确认）或“表单字段是否已填写”；内容对不对由准入校验检查。
 import { useState } from "react";
 import { Alert, App, Button, Card, Empty, Input, Popconfirm, Select, Space, Switch, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { asArray, asRecord, type Json, type TabProps } from "./helpers";
 
 const SOURCES = [
-  { value: "upload", label: "上传了文件" },
+  { value: "material", label: "已提供材料" },
   { value: "field", label: "表单字段已填写" },
 ];
 
@@ -36,7 +36,7 @@ export function ChecklistTab({ config, drafts, setData }: TabProps) {
       message.error("id 只能用字母、数字、下划线和连字符，且不能与已有项重名");
       return;
     }
-    save([...items, { id, label: id, required: true, source: "upload", accept: [".xlsx"] }]);
+    save([...items, { id, label: id, required: true, source: "material", accept: [".xlsx"] }]);
     setNewId("");
   };
 

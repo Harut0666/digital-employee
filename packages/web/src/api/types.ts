@@ -180,7 +180,7 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file";
 
 /** 流程卡片：内容和按钮都由后端填写，字段按 type 取用。 */
 export interface SessionCard {
@@ -210,6 +210,25 @@ export interface SessionCard {
   description?: string;
   draftFailed?: boolean;
   filed?: string;
+  // folder_file：目录里的文件（path 相对工作区目录）、是否已确认（确认后材料已经进会话）
+  path?: string;
+  name?: string;
+  size?: number;
+  confirmed?: boolean;
+}
+
+/** 工作区目录里的一项（@ 选择和 Agent 的 list_files 用）；路径相对工作区目录，用 / 分隔 */
+export interface FolderEntry {
+  path: string;
+  name: string;
+  dir?: boolean;
+  size?: number;
+}
+
+/** GET /api/sessions/{id}/folder-files 的响应 */
+export interface FolderListing {
+  entries: FolderEntry[];
+  truncated: boolean;
 }
 
 export type SessionMessageKind = "user" | "assistant" | "notice" | "card" | "tool_called" | "tool_denied" | "model_failed";
@@ -354,6 +373,10 @@ export interface SessionApi {
   sendMessage(id: string, text: string): Promise<SessionResult>;
   confirmEmployee(id: string, employee: string): Promise<SessionResult>;
   uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
+  /** @ 选择：工作区目录里的文件（递归列出文件，不列“交付”和“材料”） */
+  listFolderFiles(id: string): Promise<FolderListing>;
+  /** 确认目录里的文件（卡片上的按钮和 @ 选择都走这里）：复制进会话材料，与上传等效 */
+  useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
   /** form 省略时用草稿 */
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */

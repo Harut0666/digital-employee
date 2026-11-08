@@ -2,10 +2,12 @@ import { useState } from "react";
 import { Button, Checkbox, Input, message } from "antd";
 import {
   CheckCircleFilled,
+  CheckOutlined,
   CloseCircleFilled,
   DownloadOutlined,
   ExclamationCircleFilled,
   EyeOutlined,
+  FileTextOutlined,
   FileWordOutlined,
   ReloadOutlined,
   RollbackOutlined,
@@ -48,6 +50,8 @@ export interface SessionActions {
   employees: EmployeeInfo[];
   confirmEmployee: (employee: string) => Promise<void>;
   upload: (files: File[]) => Promise<void>;
+  /** 确认（或 @ 选择）目录里的文件作为材料：复制进会话，与上传等效 */
+  useFolderFiles: (paths: string[]) => Promise<void>;
   submit: (form: Record<string, unknown>) => Promise<SessionResult>;
   /** 入库卡片：请模型起草描述 */
   draftFiling: () => Promise<void>;
@@ -334,6 +338,58 @@ export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kin
   );
 }
 
+/** 使用目录文件：Agent 在目录里找到的文件，人确认后复制进会话材料；确认过就只剩一行。 */
+export function UseFileCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "use_file" }>; actions: CardActions; session: SessionActions }) {
+  const [busy, setBusy] = useState(false);
+  if (item.confirmed) {
+    return (
+      <div className="card muted">
+        <FileTextOutlined /> 已把目录里的「{item.path}」作为材料（已确认）
+      </div>
+    );
+  }
+  const size = item.size === undefined ? "" : ` · ${formatBytes(item.size)}`;
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await session.useFolderFiles([item.path]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card">
+      <div className="card-title">
+        <FileTextOutlined style={{ color: "var(--primary)" }} /> 使用目录文件
+      </div>
+      <div className="card-body">
+        <b>{item.name}</b>
+        <span className="chat-sub">
+          {item.path !== item.name ? `（${item.path}）` : ""}
+          {size}
+        </span>
+      </div>
+      {item.reason && <div className="card-body chat-sub">{item.reason}</div>}
+      <div className="card-body chat-sub">确认后会把文件复制一份作为这次任务的材料，之后目录里再改也不影响。</div>
+      {item.active ? (
+        <div className="card-actions">
+          <Button type="primary" icon={<CheckOutlined />} loading={busy} onClick={() => void confirm()}>
+            用这个文件
+          </Button>
+        </div>
+      ) : (
+        <Handoff handoff={{ text: "等待发起人确认", switchTo: ["initiator"] }} onRole={actions.onRole} />
+      )}
+    </div>
+  );
+}
+
+function formatBytes(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
 export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, actions: CardActions, session: SessionActions) {
   switch (item.kind) {
     case "notice":
@@ -358,5 +414,7 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <DeliveredCard key={item.key} item={item} actions={actions} />;
     case "filing":
       return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
+    case "use_file":
+      return <UseFileCard key={`${item.key}-${item.confirmed}`} item={item} actions={actions} session={session} />;
   }
 }

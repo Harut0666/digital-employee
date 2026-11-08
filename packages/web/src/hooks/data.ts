@@ -59,6 +59,26 @@ export function useSession(id: string | undefined): SessionState {
   return { detail: detail?.id === id ? detail : undefined, error, reload };
 }
 
+/** 会话工作区目录里可选的文件（@ 选择）：打开输入框时读一次，员工接手后（目录里多了上传的“材料”）重读。 */
+export function useFolderFiles(id: string | undefined, enabled: boolean, status: string | undefined): string[] {
+  const api = useApi();
+  const [paths, setPaths] = useState<string[]>([]);
+  useEffect(() => {
+    if (!id || !enabled) {
+      setPaths([]);
+      return;
+    }
+    let alive = true;
+    api
+      .listFolderFiles(id)
+      .then((listing) => alive && setPaths(listing.entries.filter((e) => !e.dir).map((e) => e.path)), () => alive && setPaths([]));
+    return () => {
+      alive = false;
+    };
+  }, [api, id, enabled, status]);
+  return paths;
+}
+
 /** 提交前检查：新对话首屏用它提示配置 Key。reload 在设置保存后重查。 */
 export function usePreflight(): { preflight: PreflightResult | undefined; reload: () => void } {
   const api = useApi();

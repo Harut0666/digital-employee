@@ -229,8 +229,8 @@ func (h *workspaceHost) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeHostError(w, http.StatusBadRequest, contract.ErrInvalidInput, fmt.Sprintf("无法创建工作区目录：%v", err))
 		return
 	}
-	// 工作区目录里只放样例和“交付”文件夹；出错不影响登记
-	if _, err := PrepareWorkspaceDir(dir, h.repoRoot); err != nil {
+	// 工作区目录里只放“交付”文件夹（样例在应用目录）；出错不影响登记
+	if _, err := PrepareWorkspaceDir(dir); err != nil {
 		h.logger.Warnf("准备工作区目录 %s 失败：%v", dir, err)
 	}
 	created := h.registry.add(name, dir, h.nowTime().UTC())
@@ -348,7 +348,7 @@ func (h *workspaceHost) prepare(layout Layout, doc contract.SettingsDocument) (*
 	if err := registry.save(); err != nil {
 		return nil, fmt.Errorf("保存工作区登记失败：%w", err)
 	}
-	// 登记的目录里补样例和“交付”文件夹；目录缺失的不重建、不补东西，登记保留，界面上标“目录缺失”。
+	// 登记的目录里补“交付”文件夹（不释放样例）；目录缺失的不重建、不补东西，登记保留，界面上标“目录缺失”。
 	// 只补“我的工作区”：迁移来的其他工作区在启动时不往里面写东西（它们只是保留登记）。
 	for _, item := range registry.Workspaces {
 		if item.Name != myWorkspaceName {
@@ -361,7 +361,7 @@ func (h *workspaceHost) prepare(layout Layout, doc contract.SettingsDocument) (*
 		if h.options.SkipPrepare {
 			continue
 		}
-		if _, err := PrepareWorkspaceDir(item.Path, h.repoRoot); err != nil {
+		if _, err := PrepareWorkspaceDir(item.Path); err != nil {
 			h.logger.Warnf("准备工作区目录 %s 失败：%v", item.Path, err)
 		}
 	}

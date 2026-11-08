@@ -15,6 +15,7 @@ import (
 const FrontdeskToolsHeading = "开放给你的只读工具"
 
 // FrontdeskReadonlyTools 前台 Agent 可以勾选的只读工具。
+// 目录读取工具（list_files、read_file）对所有员工都开放，不在这里勾选。
 var FrontdeskReadonlyTools = []string{ToolQueryTask, ToolKBSearch, ToolKBRead}
 
 // FrontdeskDefaultTools 段落缺失或没有勾选任何工具时开放的只读工具。知识库要人明确勾选才开放。

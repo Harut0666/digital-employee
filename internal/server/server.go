@@ -41,7 +41,7 @@ type Options struct {
 	ListWorkspaces func() []Workspace
 	// WorkspaceWritable 登记是否可改（新建、重命名、取消登记由宿主处理，这里只如实告诉界面）；
 	// WorkspaceReadOnlyReason 只读时的原因，比如单目录模式由 DE_WORKSPACE 指定
-	WorkspaceWritable     bool
+	WorkspaceWritable       bool
 	WorkspaceReadOnlyReason string
 	// WorkspaceDir 单目录模式的工作区目录（同时是应用目录）；缺省 DE_WORKSPACE。
 	WorkspaceDir string
@@ -326,12 +326,23 @@ func (s *Server) onlyWorkspace() string {
 // singleWorkspace 单目录模式：目录同时是应用目录和唯一的工作区（Spec 0006）。
 func (s *Server) singleWorkspace() bool { return s.opts.single }
 
-// workspaceDir 工作区 ID 对应的目录（写交付文件夹用）；没有登记时找不到。
+// workspaceDir 工作区 ID 对应的目录（写交付文件夹、前台 Agent 读目录文件、上传写进“材料”用）；
+// 没有登记时找不到。单目录模式（没传登记、只有一个唯一工作区）返回 WorkspaceDir（没有时用应用目录）。
 func (s *Server) workspaceDir(id string) (string, bool) {
-	for _, item := range s.registeredWorkspaces() {
+	items := s.registeredWorkspaces()
+	for _, item := range items {
 		if item.ID == id && item.Path != "" {
 			return item.Path, true
 		}
+	}
+	if len(items) > 0 || id != SingleWorkspaceID {
+		return "", false
+	}
+	if s.opts.WorkspaceDir != "" {
+		return s.opts.WorkspaceDir, true
+	}
+	if s.opts.AppDir != "" {
+		return s.opts.AppDir, true
 	}
 	return "", false
 }
@@ -346,13 +357,11 @@ func (s *Server) workspaceRegistered(id string) bool {
 	return false
 }
 
-// workspaceSampleDir 列公开样例用哪个目录：单目录模式看工作区目录，应用目录模式看第一个登记的工作区。
+// workspaceSampleDir 公开样例放在哪里：单目录模式看工作区目录（同时是应用目录），应用目录模式看应用目录。
+// 工作区目录里不再释放样例（T41），样例和评测用例只放在应用目录。
 func (s *Server) workspaceSampleDir() string {
 	if s.opts.WorkspaceDir != "" {
 		return s.opts.WorkspaceDir
-	}
-	if dirs := s.registeredWorkspaces(); len(dirs) > 0 {
-		return dirs[0].Path
 	}
 	return s.opts.AppDir
 }
@@ -397,6 +406,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
+	m.HandleFunc("GET /api/sessions/{id}/folder-files", s.sessionRoute(s.handleListFolderFiles))
+	m.HandleFunc("POST /api/sessions/{id}/folder-files", s.sessionRoute(s.handleUseFolderFiles))
 	m.HandleFunc("POST /api/sessions/{id}/submit", s.sessionRoute(s.handleSubmitSession))
 	m.HandleFunc("POST /api/sessions/{id}/checklist/{item}/skip", s.sessionRoute(s.handleSkipChecklistItem))
 	m.HandleFunc("POST /api/sessions/{id}/filing-draft", s.sessionRoute(s.handleDraftFiling))

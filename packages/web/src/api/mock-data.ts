@@ -342,7 +342,7 @@ export const SEEDS: SeedTask[] = [
 export const CHECKLISTS: Record<string, ChecklistItemConfig[]> = {
   "weekly-report": [
     { id: "period", label: "统计周期", required: true, source: "field", field: "period" },
-    { id: "sales", label: "销售明细", required: true, source: "upload", accept: [".xlsx", ".csv"] },
-    { id: "minutes", label: "本周纪要", required: false, source: "upload", accept: [".docx"], skipField: "allowMissingMinutes", skipLabel: "无纪要继续" },
+    { id: "sales", label: "销售明细", required: true, source: "material", accept: [".xlsx", ".csv"] },
+    { id: "minutes", label: "本周纪要", required: false, source: "material", accept: [".docx"], skipField: "allowMissingMinutes", skipLabel: "无纪要继续" },
   ],
 };

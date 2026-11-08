@@ -2,7 +2,7 @@
 // 移植自 packages/app/src/{workspace,resources}.ts + packages/server/src/bootstrap.ts。
 //
 // 语义：
-//   - 员工配置与样例释放到应用目录（所有工作区共用）；工作区目录里只放样例和“交付”文件夹；
+//   - 员工配置与样例释放到应用目录（所有工作区共用）；工作区目录里只放“交付”文件夹（和上传的“材料”）；
 //   - 员工配置与样例：已有文件不覆盖（用户改过的配置要保留）；
 //   - 前端构建产物与“默认员工配置”是内部资源：跟着版本走，整体覆盖；
 //   - 首次启动写一份不含 API Key 的 settings.json（在应用目录里）。
@@ -333,13 +333,14 @@ func ResolveWorkspace(env map[string]string) string {
 	return ResolveAppDir(env)
 }
 
-// PrepareWorkspaceDir 准备一个工作区目录：用户工作目录里只放用得上的东西——公开样例，以及“交付”文件夹
-// （交付物在 T42 写进这里）。目录不存在时新建；调用方要区分“新建”和“重新打开”时自己先判断。
-func PrepareWorkspaceDir(dir, repoRoot string) (ReleaseOutcome, error) {
+// PrepareWorkspaceDir 准备一个工作区目录：用户工作目录里只放用得上的东西——“交付”文件夹
+// （交付物在 T42 写进这里）。公开样例和评测用例只放在应用目录（T41），不再往工作区目录里释放 samples/。
+// 目录不存在时新建；调用方要区分“新建”和“重新打开”时自己先判断。
+func PrepareWorkspaceDir(dir string) (ReleaseOutcome, error) {
 	if err := os.MkdirAll(filepath.Join(dir, DeliverDirName), 0o755); err != nil {
 		return ReleaseOutcome{}, err
 	}
-	return releaseSamples(dir, repoRoot)
+	return ReleaseOutcome{Written: []string{}, Skipped: []string{}}, nil
 }
 
 // releaseSamples 把公开样例释放到目录的 samples/ 下（已有文件不覆盖）。

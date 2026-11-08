@@ -79,13 +79,21 @@ type harnessConfig struct {
 	connections []contract.ModelConnection
 	// scriptedModel 剧本模式下也配一条能通过提交前检查的连接（只在主人设里用）
 	scriptedModel bool
-	env         map[string]string
+	env           map[string]string
 	wrapModel     func(agent.ModelProvider) agent.ModelProvider
 	wrapTools     func(contract.ToolClient) contract.ToolClient
 	qc            qcRunner
 	crashAtStep   string
 	// extraEmployees 经营周报员工之外，再复制进工作区的员工
 	extraEmployees []string
+	// appMode 应用目录模式：工作区是单独一个目录，应用目录在应用目录下的 app/
+	appMode bool
+}
+
+// withAppMode 应用目录模式：工作区目录只是工作区（设置、员工、会话和任务都在应用目录里），
+// 用来验证工作区目录里有什么、没有什么。
+func withAppMode() harnessOption {
+	return func(config *harnessConfig) { config.appMode = true }
 }
 
 // withEmployee 再复制一个仓库里的员工进工作区（比如知识库问答员工）。
@@ -169,8 +177,25 @@ type harness struct {
 	faults    *contract.FaultHooks
 	workspace string
 	employees string
-	// app 已经切到应用目录模式时的工作区接线：应用目录、员工副本、两个登记的工作区
+	// appDir 应用目录模式下的应用目录（单目录模式下是空串，应用目录就是工作区目录）
+	appDir string
+	// workspaces 应用目录模式下登记的工作区
+	workspaces []server.Workspace
+	// app 切到应用目录模式时的工作区接线：应用目录、员工副本、两个登记的工作区
 	app *appWire
+}
+
+// setFrontdeskScript 换一份前台 Agent 的剧本（路径要等工作区建好才定得下来的测试用）。
+func (h *harness) setFrontdeskScript(script agent.ModelScript) {
+	h.provider.SetScript(script)
+}
+
+// appDirs 应用目录。
+func (h *harness) appDirs() string {
+	if h.appDir != "" {
+		return h.appDir
+	}
+	return h.workspace
 }
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。
@@ -178,7 +203,6 @@ type harness struct {
 // 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。
 func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption) *harness {
 	t.Helper()
-	t.Parallel()
 	config := harnessConfig{
 		// 工具重试不等待，否则每次工具故障都要白等几秒
 		workflowEdits: [][2]string{{"backoffMs: [1000, 2000, 4000]", "backoffMs: [0]"}},
@@ -188,7 +212,15 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	}
 
 	workspace := t.TempDir()
-	employees := filepath.Join(workspace, "employees")
+	appDir := workspace
+	if config.appMode {
+		workspace = filepath.Join(t.TempDir(), "工作区")
+		if err := os.MkdirAll(workspace, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		appDir = filepath.Join(t.TempDir(), "app")
+	}
+	employees := filepath.Join(appDir, "employees")
 	copyEmployee(t, repoPath("employees", harnessEmployee), filepath.Join(employees, harnessEmployee))
 	editWorkflow(t, filepath.Join(employees, harnessEmployee, "workflow.yaml"), config.workflowEdits)
 	for _, id := range config.extraEmployees {
@@ -202,8 +234,12 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	// 测试不读进程里真实的 DEEPSEEK_API_KEY（沙箱里 DSH 会设一个）：服务端按注入的 Env 读，
 	// 没给就是这个空值（withEnv 注入的照样生效）
 	env["DEEPSEEK_API_KEY"] = config.env["DEEPSEEK_API_KEY"]
-	// Spec 0006：设置、员工、知识库在应用目录里。主接缝是单目录模式：工作区目录同时是应用目录。
-	env["DE_WORKSPACE"] = workspace
+	// Spec 0006：设置、员工、知识库在应用目录里。主接缝默认是单目录模式：工作区目录同时是应用目录。
+	if config.appMode {
+		env["DE_APP_DIR"] = appDir
+	} else {
+		env["DE_WORKSPACE"] = workspace
+	}
 	// 判断步骤和前台 Agent 共用一个剧本模型，前台 Agent 消费 agent.FrontdeskStepID 下的轮次
 	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	var model agent.ModelProvider = provider
@@ -211,26 +247,27 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if config.connection != nil {
 		connections = []contract.ModelConnection{*config.connection}
 	}
+	// 设置写在应用目录里（单目录模式下就是工作区目录）
 	if len(connections) > 0 {
-		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
 			doc.Connections = connections
 			doc.LastModel = &contract.ModelRef{Connection: connections[0].Name, Model: connections[0].Models[0]}
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
-		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+		model = agent.NewModelProvider(settings.LoadModelSettings(appDir, settings.Env(env)))
 	} else if config.scriptedModel && config.connection == nil {
 		// 剧本模式不走网络，但提交前检查照常检查会话模型（Spec 0006）：
 		// 给一个能通过检查的连接（指向本机、不存在的端口），否则会话里提交不了任务。
-		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{scriptedConnection}
 			doc.LastModel = &contract.ModelRef{Connection: scriptedConnection.Name, Model: scriptedConnection.Models[0]}
-				}); err != nil {
+		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
 	} else if config.scriptedModel {
 		// 指定了连接（比如没配 Key 的那个来测提交前检查）：引擎仍用剧本模型，设置按原样写
-		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{*config.connection}
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
@@ -248,7 +285,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		toolClient = config.wrapTools(toolClient)
 	}
 	eng, err := engine.NewWithOptions(engine.Deps{
-		Dir:          workspace,
+		Dir:          appDir,
 		EmployeesDir: employees,
 		ToolClient:   toolClient,
 		Model:        model,
@@ -261,16 +298,24 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil && len(config.connections) == 0, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
 	}
+	if config.appMode {
+		h.appDir = appDir
+		h.workspaces = []server.Workspace{{ID: appWorkspaceID, Path: workspace}}
+	}
 	h.baseURL = h.serve()
 	return h
 }
+
+// appWorkspaceID 应用目录模式里的工作区 ID。
+const appWorkspaceID = "ws-app"
 
 // serve 在同一个工作区上起一个服务端，返回地址。再调一次就是“重启后”的服务端。
 func (h *harness) serve() string {
 	h.t.Helper()
 	srv := server.New(server.Options{
 		Engine:       h.engine,
-		AppDir:       h.workspace,
+		AppDir:       h.appDirs(),
+		Workspaces:   h.workspaces,
 		WorkspaceDir: h.workspace,
 		EmployeesDir: h.employees,
 		ToolClient:   h.registry,

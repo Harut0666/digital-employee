@@ -69,7 +69,7 @@ export interface ChecklistItemConfig {
   id: string;
   label: string;
   required: boolean;
-  source: "upload" | "field";
+  source: "material" | "upload" | "field";
   accept?: string[];
   field?: string;
   skipField?: string;
@@ -84,7 +84,7 @@ const filled = (value: unknown): boolean => {
   return true;
 };
 
-/** 按上传的文件名和表单判定清单；只看传了没有、填了没有，内容问题留给准入校验 */
+/** 按已提供的材料（上传或从目录确认）和表单判定清单；只看给了没有、填了没有，内容问题留给准入校验 */
 export function evaluateChecklist(
   items: ChecklistItemConfig[],
   form: Record<string, unknown>,
@@ -95,7 +95,7 @@ export function evaluateChecklist(
   const out: SessionChecklist = { items: [], ready: true, missing: [] };
   for (const item of items) {
     const done =
-      item.source === "upload"
+      item.source === "material" || item.source === "upload" /* 旧写法 */
         ? files.some((f) => (item.accept ?? []).some((a) => a.toLowerCase() === ext(f.name)))
         : filled(form[item.field ?? ""]);
     const status = done ? "done" : !item.required && skipped.has(item.id) ? "skipped" : "missing";

@@ -3,7 +3,7 @@
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
 
-import type { ModelConnectionOption, PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
+import type { FolderListing, ModelConnectionOption, PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
 
 export type { SessionApi };
 
@@ -69,6 +69,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       for (const file of files) form.append("attachments", file, file.name);
       return act(session(id, "/attachments"), form, false);
     },
+    listFolderFiles: (id) => read<FolderListing>(session(id, "/folder-files"), { headers: { "x-role": getRole() } }),
+    useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
