@@ -474,7 +474,9 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 				return dir, true
 			},
 			EmployeesDir: employeesDir,
-			ToolClient:   toolClient, Faults: faults, ScriptFile: h.scriptFile,
+			// 登记的工作区：每个版本送审时把交付物写进它的“交付”文件夹（T42）；单目录模式不写
+			Workspaces: h.workspaces(),
+			ToolClient: toolClient, Faults: faults, ScriptFile: h.scriptFile,
 			ModelSettings: modelSettings,
 		})
 		if err != nil {

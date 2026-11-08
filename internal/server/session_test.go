@@ -376,7 +376,17 @@ func TestDeletedDefaultEmployeeFallsThroughToTheModel(t *testing.T) {
 // uploadTo 在会话里上传材料。
 func (h *harness) uploadTo(sessionID string, files []upload) (int, []byte) {
 	h.t.Helper()
-	contentType, body := multipartBody(h.t, nil, files)
+	return h.uploadToWorkspace(sessionID, files, "")
+}
+
+// uploadToWorkspace 在某个工作区的会话里上传材料：应用目录模式下上传初稿要带 workspaceId。
+func (h *harness) uploadToWorkspace(sessionID string, files []upload, workspaceID string) (int, []byte) {
+	h.t.Helper()
+	fields := map[string]string{}
+	if workspaceID != "" {
+		fields["workspaceId"] = workspaceID
+	}
+	contentType, body := multipartBody(h.t, fields, files)
 	return h.send(http.MethodPost, "/api/sessions/"+sessionID+"/attachments", contract.RoleInitiator, contentType, body)
 }
 

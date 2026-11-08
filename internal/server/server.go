@@ -72,6 +72,8 @@ type Options struct {
 	Scripted bool
 	// Model 取前台 Agent 当前可用的模型提供者；nil 时会话按模型不可用处理。
 	Model func() agent.ModelProvider
+	// single 由 New 推出：没有指定 Workspaces/ListWorkspaces 时的单目录模式（不值得从外面设）
+	single bool
 }
 
 // Workspace 一个登记过的工作区：ID 与目录。
@@ -97,6 +99,17 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts}
 	s.resolveDefaults()
 	s.knowledge = knowledge.Open(s.opts.AppDir)
+	// 引擎写交付文件夹时按工作区 ID 找目录：宿主提供了 ListWorkspaces 就以它为准，登记变化马上生效。
+	// 单目录模式（没有登记、只有一个目录同时是应用目录）按约定不写交付文件夹，不给引擎登记。
+	if setter, ok := s.opts.Engine.(interface {
+		SetWorkspaces(func(workspaceID string) (string, bool))
+	}); ok {
+		if s.singleWorkspace() {
+			setter.SetWorkspaces(nil)
+		} else {
+			setter.SetWorkspaces(s.workspaceDir)
+		}
+	}
 	s.sessions = s.newSessions()
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -137,6 +150,7 @@ func (s *Server) resolveDefaults() {
 	}
 	if len(s.workspaces) == 0 {
 		// 单目录模式：唯一的工作区就是这个目录
+		s.opts.single = true
 		single := s.opts.WorkspaceDir
 		if single == "" {
 			single = s.opts.AppDir
@@ -253,6 +267,19 @@ func (s *Server) onlyWorkspace() string {
 		return items[0].ID
 	}
 	return ""
+}
+
+// singleWorkspace 单目录模式：目录同时是应用目录和唯一的工作区（Spec 0006）。
+func (s *Server) singleWorkspace() bool { return s.opts.single }
+
+// workspaceDir 工作区 ID 对应的目录（写交付文件夹用）；没有登记时找不到。
+func (s *Server) workspaceDir(id string) (string, bool) {
+	for _, item := range s.registeredWorkspaces() {
+		if item.ID == id && item.Path != "" {
+			return item.Path, true
+		}
+	}
+	return "", false
 }
 
 // workspaceRegistered 工作区 ID 是否登记过。
