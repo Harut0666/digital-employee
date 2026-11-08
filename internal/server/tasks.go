@@ -38,6 +38,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 	var employee string
 	var rawForm any = "{}"
+	var workspaceID string
 	var files []*multipartFileHeader
 	if isMultipart(r) {
 		form, err := readMultipart(r)
@@ -46,6 +47,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		employee, _ = formValue(form, "employee")
+		workspaceID, _ = formValue(form, "workspaceId")
 		if value, present := formValue(form, "form"); present {
 			rawForm = value
 		}
@@ -58,6 +60,9 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		}
 		if value, ok := body["employee"].(string); ok {
 			employee = value
+		}
+		if value, ok := body["workspaceId"].(string); ok {
+			workspaceID = value
 		}
 		if value, present := body["form"]; present {
 			rawForm = value
@@ -83,6 +88,16 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 任务属于发起时所在的工作区：请求里的 workspaceId，缺省取唯一的工作区（单目录模式）
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		workspaceID = s.onlyWorkspace()
+	}
+	if !s.workspaceRegistered(workspaceID) {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "建任务要指定工作区：缺少有效的 workspaceId"))
+		return
+	}
+
 	uploads, err := saveUploads(files)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
@@ -95,6 +110,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Form:        formValueMap,
 		Attachments: uploads.attachments,
 		Actor:       role,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))

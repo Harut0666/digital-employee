@@ -16,7 +16,7 @@ func fullMode() bool { return false }
 
 // appEngineFactory 服务端模式的引擎工厂（占位）。
 func appEngineFactory(deps app.EngineDeps) (contract.Engine, error) {
-	return app.NewMockEngine(nil), nil
+	return app.NewMockEngine(nil, deps.ApplicationDir), nil
 }
 
 // appToolFactory 服务端模式的工具客户端工厂（占位）。
@@ -26,7 +26,7 @@ func appToolFactory() (contract.ToolClient, error) {
 
 // cliEngineFactory CLI 模式的引擎工厂（占位）。
 func cliEngineFactory(options cli.EngineOptions) (contract.Engine, error) {
-	return app.NewMockEngine(nil), nil
+	return app.NewMockEngine(nil, options.ApplicationDir), nil
 }
 
 // cliToolFactory CLI 模式的工具客户端工厂（占位）。

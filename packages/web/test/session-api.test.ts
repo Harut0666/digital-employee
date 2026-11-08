@@ -20,7 +20,7 @@ function fakeFetch(routes: Record<string, [number, unknown]>) {
   return { calls, impl };
 }
 
-const session = { id: "s-1", status: "drafting", readOnly: false, title: "出周报", attachments: [], createdAt: "", updatedAt: "", waitingFor: [] };
+const session = { id: "s-1", workspaceId: "ws-1", status: "drafting", readOnly: false, title: "出周报", attachments: [], createdAt: "", updatedAt: "", waitingFor: [] };
 
 describe("会话接口", () => {
   test("发消息带上当前角色，返回这次新写入的消息", async () => {
@@ -53,6 +53,25 @@ describe("会话接口", () => {
     const api = createSessionApi("http://local", () => "initiator", impl);
     expect((await api.skipChecklistItem("s-1", "minutes")).ok).toBe(true);
     expect(calls[0]?.headers["x-role"]).toBe("initiator");
+  });
+
+  test("新建会话带 workspaceId（Spec 0006）；不给时服务端取唯一的工作区", async () => {
+    const { calls, impl } = fakeFetch({ "POST /api/sessions": [201, session] });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.createSession("ws-1")).workspaceId).toBe("ws-1");
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ workspaceId: "ws-1" });
+    expect(calls[0]?.headers["x-role"]).toBe("initiator");
+    await api.createSession();
+    expect(calls[1]?.body).toBeUndefined();
+  });
+
+  test("会话列表可以按工作区过滤", async () => {
+    const { calls, impl } = fakeFetch({ "GET /api/sessions": [200, [session]] });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.listSessions("ws-1"))[0]?.workspaceId).toBe("ws-1");
+    expect(calls[0]?.url).toBe("http://local/api/sessions?workspaceId=ws-1");
+    await api.listSessions();
+    expect(calls[1]?.url).toBe("http://local/api/sessions");
   });
 
   test("提交前检查和会话读取", async () => {

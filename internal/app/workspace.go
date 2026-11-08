@@ -1,13 +1,15 @@
-// 工作区准备：把仓库里的员工配置、公开样例、前端构建产物释放到工作区。
+// 资源释放（Spec 0006）：员工配置、公开样例、前端构建产物。
 // 移植自 packages/app/src/{workspace,resources}.ts + packages/server/src/bootstrap.ts。
 //
 // 语义：
+//   - 员工配置与样例释放到应用目录（所有工作区共用）；工作区目录里只放样例和“交付”文件夹；
 //   - 员工配置与样例：已有文件不覆盖（用户改过的配置要保留）；
 //   - 前端构建产物与“默认员工配置”是内部资源：跟着版本走，整体覆盖；
-//   - 首次启动写一份不含 API Key 的 settings.json。
+//   - 首次启动写一份不含 API Key 的 settings.json（在应用目录里）。
 package app
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -36,9 +38,12 @@ type ReleaseOutcome struct {
 	Skipped []string
 }
 
-// PreparedWorkspace 准备工作区的结果。
+// PreparedWorkspace 准备应用目录与工作区目录的结果。
 type PreparedWorkspace struct {
-	WorkspaceDir        string
+	// WorkspaceDir 应用目录（单目录模式下就是工作区目录）
+	WorkspaceDir string
+	// AppDir 应用目录：员工配置、样例、前端产物、设置都在这里
+	AppDir              string
 	EmployeesDir        string
 	DefaultEmployeesDir string
 	WebDistDir          string
@@ -47,17 +52,32 @@ type PreparedWorkspace struct {
 	Samples             ReleaseOutcome
 	Web                 ReleaseOutcome
 	Defaults            ReleaseOutcome
+	WorkspaceSamples    ReleaseOutcome
 }
 
-// PrepareOptions 准备工作区的入参。
+// PrepareOptions 准备应用目录的入参。
 type PrepareOptions struct {
+	// AppDir 应用目录：员工配置、样例、前端产物和设置都放在这里（单目录模式下就是工作区目录）。
+	AppDir string
+	// WorkspaceDir 兼容旧调用：AppDir 为空时把它当作应用目录。
 	WorkspaceDir string
 	// RepoRoot 仓库根（开发时的默认资源来源）。
 	RepoRoot string
-	// EmployeesDir 已指定的员工目录（DE_EMPLOYEES_DIR）：设置时不再初始化工作区副本。
+	// EmployeesDir 已指定的员工目录（DE_EMPLOYEES_DIR）：设置时不再初始化应用目录副本。
 	EmployeesDir string
 	// WebDistDir 已指定的前端产物目录（DE_WEB_DIST）。
 	WebDistDir string
+}
+
+// PrepareAppDir 准备应用目录：释放员工配置、样例、前端产物与默认员工副本，写默认 settings.json。
+func PrepareAppDir(options PrepareOptions) (*PreparedWorkspace, error) {
+	if options.AppDir == "" {
+		options.AppDir = options.WorkspaceDir
+	}
+	if options.AppDir == "" {
+		return nil, errors.New("准备应用目录需要 AppDir")
+	}
+	return prepare(options)
 }
 
 // ReleaseFile 一个要释放的文件。
@@ -145,13 +165,13 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// PrepareWorkspace 准备工作区：释放员工配置、样例、前端产物与默认员工副本，写默认 settings.json。
-func PrepareWorkspace(options PrepareOptions) (*PreparedWorkspace, error) {
-	workspaceDir := options.WorkspaceDir
+// prepare 释放员工配置、样例、前端产物与默认员工副本，写默认 settings.json。
+func prepare(options PrepareOptions) (*PreparedWorkspace, error) {
+	workspaceDir := options.AppDir
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 		return nil, err
 	}
-	prepared := &PreparedWorkspace{WorkspaceDir: workspaceDir}
+	prepared := &PreparedWorkspace{WorkspaceDir: workspaceDir, AppDir: workspaceDir}
 	repoRoot := options.RepoRoot
 
 	// 资源来源：仓库目录优先（开发态可直接改），找不到仓库时回退到内嵌资源（单 exe 自包含）。
@@ -180,41 +200,11 @@ func PrepareWorkspace(options PrepareOptions) (*PreparedWorkspace, error) {
 	}
 
 	// 公开样例：samples/scenario-a 与 samples/cases（每个子目录独立回退到内嵌资源）
-	workspaceSamples := filepath.Join(workspaceDir, "samples")
-	sampleFiles := []ReleaseFile{}
-	sampleSources := []struct {
-		name string
-		root string
-		fsys fs.FS
-	}{
-		{"scenario-a", "samples/scenario-a", assets.ScenarioA},
-		{"cases", "samples/cases", assets.SamplesCases},
+	samples, err := releaseSamples(workspaceDir, repoRoot)
+	if err != nil {
+		return nil, err
 	}
-	for _, source := range sampleSources {
-		repoSample := ""
-		if repoRoot != "" {
-			candidate := filepath.Join(repoRoot, "samples", source.name)
-			if dirExists(candidate) {
-				repoSample = candidate
-			}
-		}
-		if repoSample != "" {
-			if err := collectDir(repoSample, source.name, &sampleFiles); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if err := collectEmbedded(source.fsys, source.root, source.name, &sampleFiles); err != nil {
-			return nil, err
-		}
-	}
-	if len(sampleFiles) > 0 {
-		outcome, err := releaseFiles(sampleFiles, workspaceSamples, false)
-		if err != nil {
-			return nil, err
-		}
-		prepared.Samples = outcome
-	}
+	prepared.Samples = samples
 
 	// 前端构建产物：内部资源，整体覆盖
 	prepared.WebDistDir = os.Getenv("DE_WEB_DIST")
@@ -338,30 +328,58 @@ func writeDefaultSettings(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// ResolveWorkspace 工作区：DE_WORKSPACE > %APPDATA%/digital-employee。
+// ResolveWorkspace 单目录模式的工作区目录：DE_WORKSPACE > DE_APP_DIR > %APPDATA%/digital-employee-app。
+// Spec 0006 之后工作区只是目录，应用级数据在 ResolveAppDir 指定的地方。
 func ResolveWorkspace(env map[string]string) string {
-	value := func(key string) string {
-		if env != nil {
-			if v, ok := env[key]; ok {
-				return v
+	return ResolveAppDir(env)
+}
+
+// PrepareWorkspaceDir 准备一个工作区目录：用户工作目录里只放用得上的东西——公开样例，以及“交付”文件夹
+// （交付物在 T42 写进这里）。目录不存在时新建；调用方要区分“新建”和“重新打开”时自己先判断。
+func PrepareWorkspaceDir(dir, repoRoot string) (ReleaseOutcome, error) {
+	if err := os.MkdirAll(filepath.Join(dir, DeliverDirName), 0o755); err != nil {
+		return ReleaseOutcome{}, err
+	}
+	return releaseSamples(dir, repoRoot)
+}
+
+// releaseSamples 把公开样例释放到目录的 samples/ 下（已有文件不覆盖）。
+func releaseSamples(dir, repoRoot string) (ReleaseOutcome, error) {
+	files := []ReleaseFile{}
+	sources := []struct {
+		name string
+		root string
+		fsys fs.FS
+	}{
+		{"scenario-a", "samples/scenario-a", assets.ScenarioA},
+		{"cases", "samples/cases", assets.SamplesCases},
+	}
+	for _, source := range sources {
+		repoSample := ""
+		if repoRoot != "" {
+			candidate := filepath.Join(repoRoot, "samples", source.name)
+			if dirExists(candidate) {
+				repoSample = candidate
 			}
 		}
-		return os.Getenv(key)
-	}
-	if dir := value("DE_WORKSPACE"); dir != "" {
-		return dir
-	}
-	appData := value("APPDATA")
-	if appData == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			appData = filepath.Join(home, "AppData", "Roaming")
+		if repoSample != "" {
+			if err := collectDir(repoSample, source.name, &files); err != nil {
+				return ReleaseOutcome{}, err
+			}
+			continue
+		}
+		if err := collectEmbedded(source.fsys, source.root, source.name, &files); err != nil {
+			return ReleaseOutcome{}, err
 		}
 	}
-	if appData == "" {
-		appData = "."
+	if len(files) == 0 {
+		return ReleaseOutcome{Written: []string{}, Skipped: []string{}}, nil
 	}
-	return filepath.Join(appData, "digital-employee")
+	return releaseFiles(files, filepath.Join(dir, "samples"), false)
 }
+
+// DeliverDirName 工作区目录里放交付物的文件夹。
+const DeliverDirName = "交付"
 
 // FindRepoRoot 仓库根：DE_REPO_ROOT > 当前目录向上找（含 employees/ 与 samples/）。
 func FindRepoRoot(start string) string {

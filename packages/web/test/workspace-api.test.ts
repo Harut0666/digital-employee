@@ -18,39 +18,39 @@ function fakeFetch(routes: Record<string, [number, unknown]>) {
 const huadong = { id: "ws-1", name: "华东区", path: "D:\\de\\华东区" };
 const huanan = { id: "ws-2", name: "华南区", path: "D:\\de\\华南区" };
 
-describe("工作区接口", () => {
-  test("新建工作区只带名称，返回新建的工作区", async () => {
+describe("工作区接口（Spec 0006：没有切换）", () => {
+  test("新建工作区带名称和目录，返回新建的工作区", async () => {
     const { calls, impl } = fakeFetch({ "POST /api/workspaces": [201, { ok: true, workspace: huanan }] });
     const api = createWorkspaceApi("http://local", impl);
-    const res = await api.create("华南区");
+    const res = await api.create("华南区", "D:\\de\\华南区");
     expect(res).toEqual({ ok: true, workspace: huanan });
-    expect(JSON.parse(String(calls[0]?.body))).toEqual({ name: "华南区" });
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ name: "华南区", path: "D:\\de\\华南区" });
   });
 
-  test("重名时新建被拒，结果里带原因而不是抛错", async () => {
-    const { impl } = fakeFetch({ "POST /api/workspaces": [409, { ok: false, error: "invalid_input", message: "已有名为“华南区”的工作区" }] });
-    const res = await createWorkspaceApi("http://local", impl).create("华南区");
-    expect(res).toEqual({ ok: false, error: "invalid_input", message: "已有名为“华南区”的工作区" });
+  test("目录已经是工作区时被拒，结果里带原因而不是抛错", async () => {
+    const { impl } = fakeFetch({ "POST /api/workspaces": [409, { ok: false, error: "invalid_input", message: "这个目录已经是工作区“华东区”" }] });
+    const res = await createWorkspaceApi("http://local", impl).create("华南区", "D:\\de\\华东区");
+    expect(res).toEqual({ ok: false, error: "invalid_input", message: "这个目录已经是工作区“华东区”" });
   });
 
-  test("有任务在跑时切换被拒，结果里带原因和任务", async () => {
-    const busy = { ok: false as const, error: "workspace_busy", message: "有任务正在准入校验、执行中或质检中", taskIds: ["t-1"] };
-    const { calls, impl } = fakeFetch({ "POST /api/workspaces/ws-2/switch": [409, busy] });
-    const res = await createWorkspaceApi("http://local", impl).switchTo("ws-2");
-    expect(res).toEqual(busy);
-    expect(calls[0]?.method).toBe("POST");
+  test("重命名和取消登记", async () => {
+    const { calls, impl } = fakeFetch({
+      "PATCH /api/workspaces/ws-2": [200, { ok: true, workspace: { ...huanan, name: "南大区" } }],
+      "DELETE /api/workspaces/ws-2": [200, { ok: true, id: "ws-2" }],
+    });
+    const api = createWorkspaceApi("http://local", impl);
+    expect(await api.rename("ws-2", "南大区")).toEqual({ ok: true, workspace: { ...huanan, name: "南大区" } });
+    expect(await api.unregister("ws-2")).toEqual({ ok: true, id: "ws-2" });
+    expect(calls[0]).toMatchObject({ method: "PATCH", body: JSON.stringify({ name: "南大区" }) });
+    expect(calls[1]?.method).toBe("DELETE");
   });
 
-  test("切换成功时要求重新加载", async () => {
-    const { impl } = fakeFetch({ "POST /api/workspaces/ws-2/switch": [200, { ok: true, current: huanan, reload: true }] });
-    const res = await createWorkspaceApi("http://local", impl).switchTo("ws-2");
-    expect(res).toEqual({ ok: true, current: huanan, reload: true });
-  });
-
-  test("读取列表失败时抛错", async () => {
-    const { impl } = fakeFetch({ "GET /api/workspaces": [500, { ok: false, error: "internal", message: "读取工作区列表失败" }] });
-    await expect(createWorkspaceApi("http://local", impl).list()).rejects.toThrow("读取工作区列表失败");
-    const ok = fakeFetch({ "GET /api/workspaces": [200, { current: "ws-1", readOnly: false, workspaces: [huadong, huanan] }] });
-    expect((await createWorkspaceApi("http://local", ok.impl).list()).workspaces).toHaveLength(2);
+  test("读取列表失败时抛错；单目录模式带只读原因", async () => {
+    const { impl } = fakeFetch({ "GET /api/workspaces": [500, { ok: false, error: "internal", message: "读取工作区登记失败" }] });
+    await expect(createWorkspaceApi("http://local", impl).list()).rejects.toThrow("读取工作区登记失败");
+    const ok = fakeFetch({ "GET /api/workspaces": [200, { readOnly: true, reason: "工作区由环境变量 DE_WORKSPACE 指定", workspaces: [huadong] }] });
+    const list = await createWorkspaceApi("http://local", ok.impl).list();
+    expect(list.readOnly).toBe(true);
+    expect(list.reason).toBe("工作区由环境变量 DE_WORKSPACE 指定");
   });
 });

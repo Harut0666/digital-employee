@@ -16,7 +16,8 @@ func legacyTask(t *testing.T, h *harness, id string, lines ...string) {
 	dir := filepath.Join(h.workspace, "tasks", id)
 	copyEmployee(t, filepath.Join(h.employees, harnessEmployee), filepath.Join(dir, "config"))
 	log := strings.Join(append([]string{
-		`{"seq":1,"ts":"2026-10-01T00:00:00.000Z","taskId":"` + id + `","type":"task_created","employee":"weekly-report","configHash":"old","form":{"period":{"year":2026,"week":44}},"attachments":[]}`,
+		// 由旧引擎直接建的任务也记下工作区（主接缝是单目录模式，唯一的工作区是 single）
+		`{"seq":1,"ts":"2026-10-01T00:00:00.000Z","taskId":"` + id + `","type":"task_created","employee":"weekly-report","configHash":"old","form":{"period":{"year":2026,"week":44}},"attachments":[],"workspaceId":"single"}`,
 	}, lines...), "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "events.jsonl"), []byte(log), 0o644); err != nil {
 		t.Fatal(err)

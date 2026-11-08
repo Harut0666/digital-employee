@@ -19,7 +19,7 @@ import (
 	"digital-employee/internal/contract"
 )
 
-// FileName 设置文件名（工作区根目录下）。
+// FileName 设置文件名（应用目录根目录下；单目录模式下就是工作区目录）。
 const FileName = "settings.json"
 
 // 默认模型连接：没有任何 settings.json 时用它。
@@ -53,8 +53,8 @@ func (e Env) get(key string) string {
 	return os.Getenv(key)
 }
 
-// Path settings.json 的完整路径。
-func Path(workspace string) string { return filepath.Join(workspace, FileName) }
+// Path settings.json 的完整路径（dir 是应用目录；单目录模式下它就是工作区目录）。
+func Path(dir string) string { return filepath.Join(dir, FileName) }
 
 func isRecord(v any) (map[string]any, bool) {
 	m, ok := v.(map[string]any)
@@ -109,8 +109,8 @@ func stringIn(v any, allowed []string) (string, bool) {
 // ---------------------------------------------------------------- 原始文件读写
 
 // ReadRawObject 读 settings.json 的原始对象；文件不存在返回空对象，损坏时报错。
-func ReadRawObject(workspace string) (map[string]any, error) {
-	file := Path(workspace)
+func ReadRawObject(dir string) (map[string]any, error) {
+	file := Path(dir)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -129,8 +129,8 @@ func ReadRawObject(workspace string) (map[string]any, error) {
 	return obj, nil
 }
 
-func writeRaw(workspace string, value map[string]any) error {
-	file := Path(workspace)
+func writeRaw(dir string, value map[string]any) error {
+	file := Path(dir)
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
@@ -427,8 +427,8 @@ func Normalize(raw map[string]any) contract.SettingsDocument {
 }
 
 // Read 读设置文档；v1 文件会在内存里补成 v2，但不写盘（迁移只发生在写入时）。
-func Read(workspace string) contract.SettingsDocument {
-	raw, err := ReadRawObject(workspace)
+func Read(dir string) contract.SettingsDocument {
+	raw, err := ReadRawObject(dir)
 	if err != nil {
 		// 读路径从不因手改坏值而失败：损坏时退回默认文档（写回时才暴露问题）
 		return Normalize(map[string]any{})
@@ -508,29 +508,29 @@ func Serialize(doc contract.SettingsDocument) map[string]any {
 }
 
 // Write 写设置文档：revision + 1 后落盘，返回写后的文档。
-func Write(workspace string, doc contract.SettingsDocument) (contract.SettingsDocument, error) {
+func Write(dir string, doc contract.SettingsDocument) (contract.SettingsDocument, error) {
 	next := doc
 	next.Version = contract.SettingsVersion
 	next.Revision = doc.Revision + 1
-	if err := writeRaw(workspace, Serialize(next)); err != nil {
+	if err := writeRaw(dir, Serialize(next)); err != nil {
 		return doc, err
 	}
 	return next, nil
 }
 
 // Update 读 → 改 → 写（唯一的日常写入入口）：每次调用 revision + 1。
-func Update(workspace string, mutate func(*contract.SettingsDocument)) (contract.SettingsDocument, error) {
-	doc := Read(workspace)
+func Update(dir string, mutate func(*contract.SettingsDocument)) (contract.SettingsDocument, error) {
+	doc := Read(dir)
 	mutate(&doc)
-	return Write(workspace, doc)
+	return Write(dir, doc)
 }
 
 // Ensure settings.json 不存在时写一份默认文档（“打开设置文件”前调用）。
-func Ensure(workspace string) (contract.SettingsDocument, error) {
-	if _, err := os.Stat(Path(workspace)); err == nil {
-		return Read(workspace), nil
+func Ensure(dir string) (contract.SettingsDocument, error) {
+	if _, err := os.Stat(Path(dir)); err == nil {
+		return Read(dir), nil
 	}
-	return Write(workspace, Normalize(map[string]any{}))
+	return Write(dir, Normalize(map[string]any{}))
 }
 
 // ---------------------------------------------------------------- 运行期视图
@@ -549,9 +549,9 @@ func ModelSettingsOf(doc contract.SettingsDocument) contract.ModelSettings {
 	}
 }
 
-// LoadModelSettings 读 <workspace>/settings.json；DEEPSEEK_API_KEY 优先于文件里的 Key。
-func LoadModelSettings(workspace string, env Env) contract.ModelSettings {
-	ms := ModelSettingsOf(Read(workspace))
+// LoadModelSettings 读应用目录里的 settings.json；DEEPSEEK_API_KEY 优先于文件里的 Key。
+func LoadModelSettings(dir string, env Env) contract.ModelSettings {
+	ms := ModelSettingsOf(Read(dir))
 	key := env.get("DEEPSEEK_API_KEY")
 	if key == "" {
 		return ms
@@ -565,11 +565,11 @@ func LoadModelSettings(workspace string, env Env) contract.ModelSettings {
 }
 
 // LoadDemo 读取演示开关。
-func LoadDemo(workspace string) contract.DemoSettings { return Read(workspace).Demo }
+func LoadDemo(dir string) contract.DemoSettings { return Read(dir).Demo }
 
 // SaveDemo 更新演示开关并写回 settings.json（revision +1），返回更新后的演示设置。
-func SaveDemo(workspace string, patch contract.DemoSettings, setTools, setCorrupt, setCrash bool) (contract.DemoSettings, error) {
-	doc, err := Update(workspace, func(doc *contract.SettingsDocument) {
+func SaveDemo(dir string, patch contract.DemoSettings, setTools, setCorrupt, setCrash bool) (contract.DemoSettings, error) {
+	doc, err := Update(dir, func(doc *contract.SettingsDocument) {
 		if setTools {
 			tools := map[string]string{}
 			for k, v := range patch.ToolFaults {

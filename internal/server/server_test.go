@@ -66,7 +66,7 @@ func (e *fakeEngine) Create(input contract.CreateTaskInput) (*contract.TaskSnaps
 	}
 	e.tasks[id] = &snapshot
 	e.order = append(e.order, id)
-	e.emitLocked(id, contract.TaskEvent{Type: contract.EventTaskCreated, Employee: input.Employee, Form: form})
+	e.emitLocked(id, contract.TaskEvent{Type: contract.EventTaskCreated, Employee: input.Employee, Form: form, WorkspaceID: input.WorkspaceID})
 	copied := e.tasks[id]
 	result := *copied
 	return &result, nil
@@ -181,6 +181,7 @@ func newTestServer(t *testing.T) *testServer {
 	engine := newFakeEngine()
 	srv := New(Options{
 		Engine:       engine,
+		AppDir:       workspace,
 		WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join("..", "..", "employees"),
 		WebDistDir:   "",
@@ -371,7 +372,7 @@ func TestStaticHostingAndFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(dist, "index.html"), []byte("<html>index</html>"), 0o644)
 	os.WriteFile(filepath.Join(dist, "assets", "app.js"), []byte("console.log(1)"), 0o644)
 	srv := New(Options{
-		Engine: newFakeEngine(), WorkspaceDir: workspace,
+		Engine: newFakeEngine(), AppDir: workspace, WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join("..", "..", "employees"), WebDistDir: dist,
 		Env: map[string]string{}, Logger: NewLogger(LevelError, func(string, string) {}),
 	})
@@ -494,7 +495,7 @@ func TestEmployeeConfigFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := New(Options{
-		Engine: newFakeEngine(), WorkspaceDir: workspace,
+		Engine: newFakeEngine(), AppDir: workspace, WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join(workspace, "employees"),
 		Env:          map[string]string{}, Logger: NewLogger(LevelError, func(string, string) {}),
 	})

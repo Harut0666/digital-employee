@@ -7,7 +7,10 @@ package app
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -17,10 +20,12 @@ import (
 
 // MockEngine 内存任务引擎。
 type MockEngine struct {
-	mu      sync.Mutex
-	logger  *server.Logger
-	tasks   map[string]*mockTask
-	order   []string
+	mu     sync.Mutex
+	logger *server.Logger
+	tasks  map[string]*mockTask
+	order  []string
+	// appDir 应用目录：内存里的任务也按它落一份最小的任务目录，重启后的列表和事件照旧可读
+	appDir  string
 	nextSub int
 }
 
@@ -29,11 +34,14 @@ type mockTask struct {
 	events    []contract.TaskEvent
 	listeners map[int]func(contract.TaskEvent)
 	updatedAt string
+	// workspaceID 任务属于哪个工作区；persisted 任务目录已经建好
+	workspaceID string
+	persisted   bool
 }
 
-// NewMockEngine 创建占位引擎。
-func NewMockEngine(logger *server.Logger) *MockEngine {
-	return &MockEngine{logger: logger, tasks: map[string]*mockTask{}, order: []string{}}
+// NewMockEngine 创建占位引擎；appDir 非空时把任务的发起事件写到 <应用目录>/tasks/<id>/events.jsonl。
+func NewMockEngine(logger *server.Logger, appDir string) *MockEngine {
+	return &MockEngine{logger: logger, tasks: map[string]*mockTask{}, order: []string{}, appDir: appDir}
 }
 
 func eventTS() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000Z") }
@@ -79,11 +87,39 @@ func (e *MockEngine) emit(task *mockTask, event contract.TaskEvent) {
 	event.Seq = task.snapshot.LastSeq
 	event.TS = eventTS()
 	event.TaskID = task.snapshot.ID
+	event.WorkspaceID = task.workspaceID
 	task.events = append(task.events, event)
 	task.updatedAt = event.TS
+	e.persist(task, event)
 	for _, listener := range task.listeners {
 		listener(event)
 	}
+}
+
+// persist 把事件追加到 <应用目录>/tasks/<id>/events.jsonl，让会话模块重启后还能看到任务。
+// 占位引擎的任务只在内存里，写失败不影响联调。
+func (e *MockEngine) persist(task *mockTask, event contract.TaskEvent) {
+	if e.appDir == "" || task.persisted {
+		return
+	}
+	dir := filepath.Join(e.appDir, "tasks", task.snapshot.ID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	// 引擎重启时按配置文件读任务：没有员工配置的任务目录会被跳过，不影响会话
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	file, err := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		return
+	}
+	task.persisted = true
 }
 
 // Create 建草稿任务。
@@ -104,12 +140,12 @@ func (e *MockEngine) Create(input contract.CreateTaskInput) (*contract.TaskSnaps
 		State: contract.StateDraft, Form: form, Attachments: attachments,
 		Steps: []contract.StepStatus{}, Deliverables: []contract.DeliverableRef{},
 	}
-	task := &mockTask{snapshot: snapshot, listeners: map[int]func(contract.TaskEvent){}}
+	task := &mockTask{snapshot: snapshot, listeners: map[int]func(contract.TaskEvent){}, workspaceID: input.WorkspaceID}
 	e.tasks[id] = task
 	e.order = append(e.order, id)
 	e.emit(task, contract.TaskEvent{
 		Type: contract.EventTaskCreated, Employee: input.Employee,
-		Form: form, Attachments: attachments,
+		Form: form, Attachments: attachments, WorkspaceID: input.WorkspaceID,
 	})
 	return task.present(), nil
 }

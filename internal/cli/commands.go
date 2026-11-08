@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"digital-employee/internal/app"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/settings"
 )
@@ -22,19 +21,27 @@ func newToolClient(deps Deps) (contract.ToolClient, error) {
 	return deps.NewToolClient()
 }
 
+// modelSettings 模型设置：单目录模式下从工作区目录读，否则从应用目录读。
 func modelSettings(deps Deps) contract.ModelSettings {
-	return settings.LoadModelSettings(app.ResolveWorkspace(deps.Env), settings.Env(deps.Env))
+	return settings.LoadModelSettings(CaseAppDir(deps.Env, ""), settings.Env(deps.Env))
 }
 
-func caseWorkspace(deps Deps, outDir, caseID string) string {
-	if value := deps.env("DE_WORKSPACE"); value != "" {
-		absolute, err := filepath.Abs(value)
-		if err != nil {
-			absolute = value
-		}
-		return filepath.Join(absolute, caseID)
+// caseModelSettings 一条用例的模型设置：先看用例自己的应用目录，没有设置文件时用全局的。
+func caseModelSettings(appDir string, deps Deps) contract.ModelSettings {
+	if _, err := os.Stat(settings.Path(appDir)); err == nil {
+		return settings.LoadModelSettings(appDir, settings.Env(deps.Env))
 	}
-	return filepath.Join(outDir, "workspace")
+	return modelSettings(deps)
+}
+
+// caseAppDir 一条用例的应用目录：设置了 DE_WORKSPACE 时是工作区目录下的用例子目录
+// （布局和以前一样：<DE_WORKSPACE>/<用例 ID>/），否则是结果目录下干净的 app/。
+func caseAppDir(deps Deps, outDir, caseID string) string {
+	appDir := CaseAppDir(deps.Env, outDir)
+	if deps.env("DE_WORKSPACE") != "" {
+		return filepath.Join(appDir, caseID)
+	}
+	return appDir
 }
 
 func runCaseCommandArgs(args []string, deps Deps) (int, error) {
@@ -61,8 +68,8 @@ func runCaseCommandArgs(args []string, deps Deps) (int, error) {
 	if err != nil {
 		outDir = parsed.values["out"]
 	}
-	workspaceDir := caseWorkspace(deps, outDir, "")
-	if err := os.MkdirAll(filepath.Join(workspaceDir, "tasks"), 0o755); err != nil {
+	appDir := caseAppDir(deps, outDir, "")
+	if err := os.MkdirAll(filepath.Join(appDir, "tasks"), 0o755); err != nil {
 		return 1, err
 	}
 	scriptFile := ""
@@ -82,12 +89,13 @@ func runCaseCommandArgs(args []string, deps Deps) (int, error) {
 		defer toolClient.Close()
 	}
 	engine, err := deps.NewEngine(EngineOptions{
-		WorkspaceDir:  workspaceDir,
-		EmployeesDir:  ResolveEmployeesDir(deps.Env, RepoRoot()),
-		ToolClient:    toolClient,
-		ScriptFile:    scriptFile,
-		ModelSettings: modelSettings(deps),
-		Env:           deps.Env,
+		ApplicationDir: appDir,
+		WorkspaceDir:   appDir,
+		EmployeesDir:   ResolveEmployeesDir(deps.Env, RepoRoot()),
+		ToolClient:     toolClient,
+		ScriptFile:     scriptFile,
+		ModelSettings:  modelSettings(deps),
+		Env:            deps.Env,
 	})
 	if err != nil {
 		return 1, err
@@ -263,8 +271,8 @@ func runOneCase(caseFile string, context *batchContext) CaseRunOutcome {
 		outcome.Error = err.Error()
 		return outcome
 	}
-	workspaceDir := caseWorkspace(context.deps, caseOutDir, def.ID)
-	if err := os.MkdirAll(filepath.Join(workspaceDir, "tasks"), 0o755); err != nil {
+	appDir := caseAppDir(context.deps, caseOutDir, def.ID)
+	if err := os.MkdirAll(filepath.Join(appDir, "tasks"), 0o755); err != nil {
 		outcome.Error = err.Error()
 		return outcome
 	}
@@ -282,11 +290,13 @@ func runOneCase(caseFile string, context *batchContext) CaseRunOutcome {
 		return outcome
 	}
 	engine, err := context.deps.NewEngine(EngineOptions{
-		WorkspaceDir:  workspaceDir,
-		EmployeesDir:  context.employeesDir,
-		ToolClient:    context.toolClient,
-		ScriptFile:    scriptFile,
-		ModelSettings: modelSettings(context.deps),
+		ApplicationDir: appDir,
+		WorkspaceDir:   appDir,
+		EmployeesDir:   context.employeesDir,
+		ToolClient:     context.toolClient,
+		ScriptFile:     scriptFile,
+		// 设置从这条用例自己的应用目录读（互不影响）；没有设置时退回全局
+		ModelSettings: caseModelSettings(appDir, context.deps),
 		Env:           context.deps.Env,
 	})
 	if err != nil {

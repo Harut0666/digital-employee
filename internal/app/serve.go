@@ -32,8 +32,13 @@ const portAttempts = 20
 
 // EngineDeps 引擎需要的依赖；由启动入口的工厂翻译成 internal/engine 的构造参数。
 type EngineDeps struct {
-	WorkspaceDir  string
-	EmployeesDir  string
+	// ApplicationDir 应用目录（单目录模式下就是工作区目录）：设置、知识库、任务都在这里
+	ApplicationDir string
+	// WorkspaceDir 启动时的工作区目录（应用目录模式下只是样例和交付物的位置，引擎按应用目录找数据）
+	WorkspaceDir string
+	EmployeesDir string
+	// ConfigFallback 任务目录里的员工配置副本读不出来时，按员工 id 找配置目录（见 engine.Deps.ConfigFallback）
+	ConfigFallback func(employeeID string) (string, bool)
 	ToolClient    contract.ToolClient
 	Faults        *contract.FaultHooks
 	ScriptFile    string
@@ -44,9 +49,11 @@ type EngineDeps struct {
 type Options struct {
 	// RepoRoot 仓库根；缺省自动向上查找（含 employees/ 与 samples/）。
 	RepoRoot string
-	// WorkspaceDir 启动时的工作区；缺省 DE_WORKSPACE / 工作区列表里的当前工作区 / %APPDATA%/digital-employee。
-	// 只有 DE_WORKSPACE 会让切换入口只读。
+	// WorkspaceDir 指定单目录模式的工作区目录（同时是应用目录）：这个目录只当唯一的工作区，
+	// 登记只读。缺省看 DE_WORKSPACE；再没有就是应用目录模式（DE_APP_DIR / %APPDATA%/digital-employee-app）。
 	WorkspaceDir string
+	// AppDir 覆盖应用目录（DE_APP_DIR）；单目录模式下以 WorkspaceDir / DE_WORKSPACE 为准。
+	AppDir string
 	// EmployeesDir 覆盖员工目录（DE_EMPLOYEES_DIR）。
 	EmployeesDir string
 	// WebDistDir 覆盖前端构建产物目录（DE_WEB_DIST）。
@@ -61,7 +68,7 @@ type Options struct {
 	ScriptFile string
 	// NoOpen 不打开浏览器（DE_NO_OPEN=1 等价）。
 	NoOpen bool
-	// SkipPrepare 跳过工作区释放（测试/已准备好的工作区）。
+	// SkipPrepare 跳过资源释放（测试/已准备好的应用目录）；工作区登记和一次性迁移照做。
 	SkipPrepare bool
 	// EngineFactory 引擎工厂；nil 时用占位引擎（联调前）。
 	EngineFactory func(EngineDeps) (contract.Engine, error)
@@ -131,40 +138,35 @@ func Start(options Options) (*Running, error) {
 	}
 	host := &workspaceHost{
 		options: options, env: env, repoRoot: repoRoot, scriptFile: scriptFile,
-		locked: envValue(env, "DE_WORKSPACE") != "",
 	}
-
-	// 启动时的工作区：参数 > DE_WORKSPACE > 工作区列表里的当前工作区 > 默认目录
-	workspaceDir := options.WorkspaceDir
-	if workspaceDir == "" && host.locked {
-		workspaceDir = envValue(env, "DE_WORKSPACE")
-	}
-	if !host.locked {
-		registry, err := loadWorkspaceRegistry(ResolveAppDir(env))
-		if err != nil {
-			return nil, err
+	host.single = envValue(env, "DE_WORKSPACE") != "" || options.WorkspaceDir != ""
+	if !host.single && options.AppDir != "" {
+		// 启动参数指定了应用目录：后面的路径解析都从注入的环境里来
+		merged := map[string]string{}
+		for key, value := range env {
+			merged[key] = value
 		}
-		host.registry = registry
-		if workspaceDir == "" {
-			workspaceDir = registry.currentPath()
+		merged["DE_APP_DIR"] = absolutePath(options.AppDir)
+		host.env = merged
+	}
+	if host.single && envValue(host.env, "DE_WORKSPACE") == "" {
+		// 启动参数指定了单目录：补进环境里，后面的路径解析都从这里来
+		merged := map[string]string{}
+		for key, value := range host.env {
+			merged[key] = value
 		}
+		merged["DE_WORKSPACE"] = absolutePath(options.WorkspaceDir)
+		host.env = merged
 	}
-	if workspaceDir == "" {
-		workspaceDir = ResolveWorkspace(env)
-	}
-	workspaceDir = absolutePath(workspaceDir)
-	if host.registry != nil {
-		host.registry.Current = host.registry.ensure(workspaceDir).ID
-		if err := host.registry.save(); err != nil {
-			return nil, fmt.Errorf("保存工作区列表失败：%w", err)
-		}
-	}
-	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+	layout := ResolveLayout(host.env)
+	host.singleID = layout.Workspace.ID
+	appDir := layout.AppDir
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
 		return nil, err
 	}
 
-	// 诊断日志级别：启动时按 settings.json 生效
-	doc := settings.Read(workspaceDir)
+	// 诊断日志级别：启动时按 settings.json 生效（设置写在应用目录里）
+	doc := settings.Read(appDir)
 	var logger *server.Logger
 	if options.Logger != nil {
 		logger = options.Logger
@@ -177,11 +179,19 @@ func Start(options Options) (*Running, error) {
 	logger.Debugf("设置文档：v%d revision %d；日志级别 %s", doc.Version, doc.Revision, doc.Diagnostics.LogLevel)
 	host.logger = logger
 
-	initial, err := host.build(workspaceDir, options.Faults)
+	// 资源、工作区登记、一次性迁移：整个进程只做一次。
+	// SkipPrepare 只跳过释放资源，登记和迁移照做（登记里的工作区 ID 是服务端校验 workspaceId 的依据）。
+	host.layout = layout
+	prepared, err := host.prepare(layout, doc)
 	if err != nil {
 		return nil, err
 	}
-	host.current.Store(initial)
+
+	initial, err := host.build(layout, prepared, options.Faults)
+	if err != nil {
+		return nil, err
+	}
+	host.runtime = initial
 	host.resume(initial)
 
 	startPort := options.Port
@@ -229,7 +239,11 @@ func Start(options Options) (*Running, error) {
 	if scriptFile != "" {
 		scriptInfo = "，剧本式模型 " + scriptFile
 	}
-	logger.Infof("digital-employee 服务已启动：%s（工作区 %s%s）", url, workspaceDir, scriptInfo)
+	if layout.Single {
+		logger.Infof("digital-employee 服务已启动：%s（单目录模式 %s%s）", url, layout.AppDir, scriptInfo)
+	} else {
+		logger.Infof("digital-employee 服务已启动：%s（应用目录 %s，%d 个工作区%s）", url, layout.AppDir, len(host.registry.Workspaces), scriptInfo)
+	}
 	logger.Debugf("监听端口 %d（首选 %d，最多尝试 %d 个）", actualPort, startPort, attempts)
 
 	if !options.NoOpen && envValue(env, "DE_NO_OPEN") != "1" {
@@ -241,7 +255,7 @@ func Start(options Options) (*Running, error) {
 	return &Running{URL: url, Port: actualPort, Server: httpServer, host: host, listener: listener}, nil
 }
 
-// Close 停止 HTTP（释放端口），再关当前工作区自己起的工具客户端；注入的客户端由调用方负责。
+// Close 停止 HTTP（释放端口），再关自己起的工具客户端；注入的客户端由调用方负责。
 func (r *Running) Close() error {
 	r.closeOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -250,7 +264,7 @@ func (r *Running) Close() error {
 		if shutdownErr != nil {
 			_ = r.Server.Close()
 		}
-		if current := r.host.current.Load(); current != nil {
+		if current := r.host.runtime; current != nil {
 			current.close()
 		}
 		r.closeError = shutdownErr

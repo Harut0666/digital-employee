@@ -38,6 +38,8 @@ type projection struct {
 	config *contract.EmployeeConfig
 
 	Employee    string
+	// WorkspaceID 任务属于哪个工作区（取自发起事件）
+	WorkspaceID string
 	ConfigHash  string
 	Form        map[string]any
 	Attachments []contract.AttachmentRef
@@ -190,6 +192,7 @@ func (p *projection) Apply(event contract.TaskEvent) {
 	switch event.Type {
 	case contract.EventTaskCreated:
 		p.Employee = event.Employee
+		p.WorkspaceID = event.WorkspaceID
 		p.ConfigHash = event.ConfigHash
 		p.Form = event.Form
 		p.Attachments = event.Attachments

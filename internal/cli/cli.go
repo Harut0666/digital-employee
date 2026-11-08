@@ -16,12 +16,16 @@ import (
 
 // EngineOptions 创建引擎的入参；由 cmd 的适配器翻译成 internal/engine 的构造参数。
 type EngineOptions struct {
-	WorkspaceDir  string
-	EmployeesDir  string
-	ToolClient    contract.ToolClient
-	ScriptFile    string
-	ModelSettings contract.ModelSettings
-	Env           map[string]string
+	// ApplicationDir 应用目录：任务、设置、知识库都在这里（Spec 0006；单目录模式下就是用例的工作区目录）
+	ApplicationDir string
+	// WorkspaceDir 用例的工作区目录（单目录模式下和应用目录相同）
+	WorkspaceDir   string
+	EmployeesDir   string
+	ToolClient     contract.ToolClient
+	ScriptFile     string
+	ModelSettings  contract.ModelSettings
+	Env            map[string]string
+	ConfigFallback func(employeeID string) (string, bool)
 }
 
 // Deps 命令行依赖。

@@ -22,8 +22,8 @@ func commandsWithRoles(actions []contract.TaskAction) []string {
 
 // 前端只看快照的 actions 和 waitingFor，占位引擎联调时也要给出来。
 func TestMockEngineReportsActionsAndWaitingFor(t *testing.T) {
-	engine := NewMockEngine(nil)
-	draft, err := engine.Create(contract.CreateTaskInput{Employee: "weekly-report"})
+	engine := NewMockEngine(nil, t.TempDir())
+	draft, err := engine.Create(contract.CreateTaskInput{Employee: "weekly-report", WorkspaceID: "ws-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ func TestMockEngineReportsActionsAndWaitingFor(t *testing.T) {
 }
 
 func TestMockEngineTerminatesWhatItOffers(t *testing.T) {
-	engine := NewMockEngine(nil)
-	draft, _ := engine.Create(contract.CreateTaskInput{Employee: "weekly-report"})
+	engine := NewMockEngine(nil, t.TempDir())
+	draft, _ := engine.Create(contract.CreateTaskInput{Employee: "weekly-report", WorkspaceID: "ws-1"})
 	result := engine.Command(draft.ID, contract.TaskCommand{Type: contract.CmdTerminate}, contract.RoleInitiator)
 	if !result.OK || result.Snapshot.State != contract.StateTerminated {
 		t.Fatalf("终止结果 = %+v", result)

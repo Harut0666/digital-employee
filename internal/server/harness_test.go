@@ -178,6 +178,8 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if env == nil {
 		env = map[string]string{}
 	}
+	// Spec 0006：设置、员工、知识库在应用目录里。主接缝是单目录模式：工作区目录同时是应用目录。
+	env["DE_WORKSPACE"] = workspace
 	// 判断步骤和前台 Agent 共用一个剧本模型，前台 Agent 消费 agent.FrontdeskStepID 下的轮次
 	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	var model agent.ModelProvider = provider
@@ -204,7 +206,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		toolClient = config.wrapTools(toolClient)
 	}
 	eng, err := engine.NewWithOptions(engine.Deps{
-		WorkspaceDir: workspace,
+		Dir:          workspace,
 		EmployeesDir: employees,
 		ToolClient:   toolClient,
 		Model:        model,
@@ -226,6 +228,7 @@ func (h *harness) serve() string {
 	h.t.Helper()
 	srv := server.New(server.Options{
 		Engine:       h.engine,
+		AppDir:       h.workspace,
 		WorkspaceDir: h.workspace,
 		EmployeesDir: h.employees,
 		ToolClient:   h.registry,

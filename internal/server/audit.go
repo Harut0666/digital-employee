@@ -1,4 +1,4 @@
-// 危险操作的审计留痕（Spec 0004、T23）：追加写 <workspace>/audit.jsonl，一行一条 JSON。
+// 危险操作的审计留痕（Spec 0004、T23）：追加写 <应用目录>/audit.jsonl，一行一条 JSON，所有工作区共用。
 //
 // 约定：字段顺序固定（time / role / action / target / result / detail）；绝不写请求里的值，
 // detail 只放服务端生成的说明且统一脱敏；审计写失败只打 warn，不让业务操作失败。
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// AuditFileName 审计文件名（工作区根目录）。
+// AuditFileName 审计文件名（应用目录根目录）。
 const AuditFileName = "audit.jsonl"
 
 var auditSecretPatterns = []struct {
@@ -45,7 +45,7 @@ type AuditEntry struct {
 }
 
 // appendAudit 追加一条审计记录；失败只打 warn。
-func appendAudit(workspace string, logger *Logger, entry AuditEntry) {
+func appendAudit(appDir string, logger *Logger, entry AuditEntry) {
 	entry.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	if entry.Detail != "" {
 		entry.Detail = RedactAuditText(entry.Detail)
@@ -55,7 +55,7 @@ func appendAudit(workspace string, logger *Logger, entry AuditEntry) {
 		logger.Warnf("审计写入失败（%s）：%v", entry.Action, err)
 		return
 	}
-	file := filepath.Join(workspace, AuditFileName)
+	file := filepath.Join(appDir, AuditFileName)
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		logger.Warnf("审计写入失败（%s）：%v", entry.Action, err)
 		return

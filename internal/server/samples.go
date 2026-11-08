@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"digital-employee/internal/contract"
 )
@@ -15,7 +16,7 @@ import (
 // PublicSampleID 公开样例 id。
 const PublicSampleID = "scenario-a"
 
-// sampleCaseFile 公开样例对应的用例文件（相对 <workspace>/samples）。
+// sampleCaseFile 公开样例对应的用例文件（相对 <工作区目录>/samples）。
 var sampleCaseFile = filepath.Join("cases", "A-01.json")
 
 type publicSample struct {
@@ -94,7 +95,7 @@ func readPublicSample(workspaceDir string) *publicSample {
 
 func (s *Server) handleListSamples(w http.ResponseWriter, r *http.Request) {
 	list := []publicSample{}
-	if sample := readPublicSample(s.opts.WorkspaceDir); sample != nil {
+	if sample := readPublicSample(s.workspaceSampleDir()); sample != nil {
 		list = append(list, *sample)
 	}
 	// 列表不带 sourcePath：浏览器只需要知道有哪些样例文件
@@ -132,10 +133,21 @@ func (s *Server) handleCreateSampleTask(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	var sample *publicSample
 	if id == PublicSampleID {
-		sample = readPublicSample(s.opts.WorkspaceDir)
+		sample = readPublicSample(s.workspaceSampleDir())
 	}
 	if sample == nil {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("工作区里没有公开样例：%s（首次启动会自动释放）", id)))
+		return
+	}
+	// 样例任务建在发起时所在的工作区：请求体的 workspaceId，缺省取唯一的工作区
+	body, _ := readBodyJSON(r)
+	workspaceID, _ := body["workspaceId"].(string)
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		workspaceID = s.onlyWorkspace()
+	}
+	if !s.workspaceRegistered(workspaceID) {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "载入样例要指定工作区：请求体缺少有效的 workspaceId"))
 		return
 	}
 	snapshot, err := s.engine().Create(contract.CreateTaskInput{
@@ -143,6 +155,7 @@ func (s *Server) handleCreateSampleTask(w http.ResponseWriter, r *http.Request) 
 		Form:        sample.Form,
 		Attachments: sample.attachments,
 		Actor:       role,
+		WorkspaceID: workspaceID,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))

@@ -54,9 +54,9 @@ func (s *Server) now() time.Time { return s.opts.Now() }
 func (s *Server) audit(action, target, result string, r *http.Request, detail string) {
 	role, ok := roleOf(r)
 	if !ok {
-		role = contract.Role(settings.Read(s.opts.WorkspaceDir).Permissions.DefaultRole)
+		role = contract.Role(settings.Read(s.opts.AppDir).Permissions.DefaultRole)
 	}
-	appendAudit(s.opts.WorkspaceDir, s.log, AuditEntry{
+	appendAudit(s.opts.AppDir, s.log, AuditEntry{
 		Role: string(role), Action: action, Target: target, Result: result, Detail: detail,
 	})
 }
@@ -66,7 +66,7 @@ func (s *Server) notifySettingsSaved() (warning string) {
 	if s.opts.OnSettingsSaved == nil {
 		return ""
 	}
-	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.WorkspaceDir, s.settingsEnv())); err != nil {
+	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -206,11 +206,11 @@ func copyDir(source, target string) error {
 
 // backupSettingsFile 导入 / 恢复前把当前 settings.json 备份到 config-versions/settings/<时间戳>.json。
 func (s *Server) backupSettingsFile() *string {
-	file := settings.Path(s.opts.WorkspaceDir)
+	file := settings.Path(s.opts.AppDir)
 	if !isFile(file) {
 		return nil
 	}
-	dir := filepath.Join(s.opts.WorkspaceDir, "config-versions", "settings")
+	dir := filepath.Join(s.opts.AppDir, "config-versions", "settings")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil
 	}
@@ -302,7 +302,7 @@ func (s *Server) recentTaskSummaries(limit, eventsPerTask int) []diagnosticsTask
 }
 
 func (s *Server) diagnosticsInfo() diagnosticsInfo {
-	doc := settings.Read(s.opts.WorkspaceDir)
+	doc := settings.Read(s.opts.AppDir)
 	info := diagnosticsInfo{
 		OK:          true,
 		GeneratedAt: s.now().UTC().Format(time.RFC3339Nano),
@@ -314,11 +314,11 @@ func (s *Server) diagnosticsInfo() diagnosticsInfo {
 			Bun: runtime.Version(), Platform: runtime.GOOS, Arch: runtime.GOARCH,
 		},
 		Workspace: diagnosticsWorkspace{
-			WorkspaceDir:       s.opts.WorkspaceDir,
+			WorkspaceDir:       s.opts.AppDir,
 			EmployeesDir:       s.opts.EmployeesDir,
-			ConfigVersionsDir:  filepath.Join(s.opts.WorkspaceDir, "config-versions"),
-			SettingsFile:       settings.Path(s.opts.WorkspaceDir),
-			SettingsFileExists: isFile(settings.Path(s.opts.WorkspaceDir)),
+			ConfigVersionsDir:  filepath.Join(s.opts.AppDir, "config-versions"),
+			SettingsFile:       settings.Path(s.opts.AppDir),
+			SettingsFileExists: isFile(settings.Path(s.opts.AppDir)),
 		},
 		Settings: settings.View(doc, s.settingsEnv()),
 		Tasks:    s.recentTaskSummaries(3, 5),
@@ -328,8 +328,10 @@ func (s *Server) diagnosticsInfo() diagnosticsInfo {
 
 // ---- 处理函数 ----
 
+// 设置、员工、知识库和配置版本都在应用目录里，所有工作区共用（Spec 0006）。
+
 func (s *Server) handleSettingsConnections(w http.ResponseWriter, r *http.Request) {
-	view := settings.View(settings.Read(s.opts.WorkspaceDir), s.settingsEnv())
+	view := settings.View(settings.Read(s.opts.AppDir), s.settingsEnv())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                true,
 		"defaultConnection": view.DefaultConnection,
@@ -361,7 +363,7 @@ func (s *Server) handleSaveConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc := settings.Read(s.opts.WorkspaceDir)
+	doc := settings.Read(s.opts.AppDir)
 	existingIndex := -1
 	for index := range doc.Connections {
 		if doc.Connections[index].Name == name {
@@ -448,7 +450,7 @@ func (s *Server) handleSaveConnection(w http.ResponseWriter, r *http.Request) {
 		next.MaxRetries = nil
 	}
 
-	updated, err := settings.Update(s.opts.WorkspaceDir, func(doc *contract.SettingsDocument) {
+	updated, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
 		if existingIndex >= 0 {
 			doc.Connections[existingIndex] = next
 		} else {
@@ -643,7 +645,7 @@ func parseModelOptions(m map[string]any) (contract.ModelOptions, string) {
 
 func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	doc := settings.Read(s.opts.WorkspaceDir)
+	doc := settings.Read(s.opts.AppDir)
 	index := -1
 	for i := range doc.Connections {
 		if doc.Connections[i].Name == name {
@@ -655,7 +657,7 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("连接不存在：%s", name)))
 		return
 	}
-	updated, err := settings.Update(s.opts.WorkspaceDir, func(doc *contract.SettingsDocument) {
+	updated, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
 		doc.Connections = append(doc.Connections[:index], doc.Connections[index+1:]...)
 		if doc.DefaultConnection == name {
 			if len(doc.Connections) > 0 {
@@ -679,7 +681,7 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	effective := settings.LoadModelSettings(s.opts.WorkspaceDir, s.settingsEnv())
+	effective := settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())
 	var connection *contract.ModelConnection
 	for index := range effective.Connections {
 		if effective.Connections[index].Name == name {
@@ -721,7 +723,7 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetAppSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, settings.View(settings.Read(s.opts.WorkspaceDir), s.settingsEnv()))
+	writeJSON(w, http.StatusOK, settings.View(settings.Read(s.opts.AppDir), s.settingsEnv()))
 }
 
 // dangerousIntentOf 请求体是否意图切到危险权限（成功/失败都留痕）。
@@ -770,14 +772,14 @@ func (s *Server) handlePatchAppSettings(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, message))
 		return
 	}
-	current := settings.Read(s.opts.WorkspaceDir)
+	current := settings.Read(s.opts.AppDir)
 	if patch.Revision != current.Revision {
 		message := "设置已被修改，请刷新后重试"
 		s.auditDangerousFailures(sandboxIntent, approvalIntent, r, message)
 		writeJSON(w, http.StatusConflict, conflictBody(current.Revision))
 		return
 	}
-	written, err := settings.Update(s.opts.WorkspaceDir, func(doc *contract.SettingsDocument) {
+	written, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
 		_ = settings.ApplyPatch(doc, patch)
 	})
 	if err != nil {
@@ -806,7 +808,7 @@ func (s *Server) handleSetRole(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "设置值不合法（role 必须是 initiator / reviewer / operator）"))
 		return
 	}
-	current := settings.Read(s.opts.WorkspaceDir)
+	current := settings.Read(s.opts.AppDir)
 	if rawRevision, present := body["revision"]; present {
 		revision, ok := jsonInt(rawRevision)
 		if !ok || revision < 0 {
@@ -818,7 +820,7 @@ func (s *Server) handleSetRole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	written, err := settings.Update(s.opts.WorkspaceDir, func(doc *contract.SettingsDocument) {
+	written, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
 		doc.Permissions.DefaultRole = role
 	})
 	if err != nil {
@@ -834,7 +836,7 @@ func (s *Server) handleExportSettings(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("includeKeys")
 	includeKeys := query == "true" || query == "1"
 	filename := fmt.Sprintf("settings%s-%s.json", map[bool]string{true: "-with-keys", false: ""}[includeKeys], compactStamp(s.now()))
-	doc := settings.Read(s.opts.WorkspaceDir)
+	doc := settings.Read(s.opts.AppDir)
 	result := map[string]any{
 		"ok":         true,
 		"redacted":   !includeKeys,
@@ -869,12 +871,12 @@ func (s *Server) handleImportSettings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "设置文件必须是 JSON 对象"))
 		return
 	}
-	current := settings.Read(s.opts.WorkspaceDir)
+	current := settings.Read(s.opts.AppDir)
 	backupPath := s.backupSettingsFile()
 	imported := settings.Normalize(raw)
 	// 导入的文档可能带着其它机器的 revision：以本机当前值 +1 继续，避免客户端旧 revision 误判
 	imported.Revision = current.Revision
-	written, err := settings.Write(s.opts.WorkspaceDir, imported)
+	written, err := settings.Write(s.opts.AppDir, imported)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
 		return
@@ -914,7 +916,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExportDiagnostics(w http.ResponseWriter, r *http.Request) {
 	info := s.diagnosticsInfo()
-	dir := filepath.Join(s.opts.WorkspaceDir, "diagnostics")
+	dir := filepath.Join(s.opts.AppDir, "diagnostics")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
 		return
@@ -933,7 +935,7 @@ func (s *Server) handleExportDiagnostics(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleOpenDiagnosticsFolder(w http.ResponseWriter, r *http.Request) {
-	dir := filepath.Join(s.opts.WorkspaceDir, "diagnostics")
+	dir := filepath.Join(s.opts.AppDir, "diagnostics")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError("打开诊断目录失败："+err.Error()))
 		return
@@ -946,11 +948,11 @@ func (s *Server) handleOpenDiagnosticsFolder(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *Server) handleOpenSettingsFile(w http.ResponseWriter, r *http.Request) {
-	if _, err := settings.Ensure(s.opts.WorkspaceDir); err != nil {
+	if _, err := settings.Ensure(s.opts.AppDir); err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
 		return
 	}
-	path := settings.Path(s.opts.WorkspaceDir)
+	path := settings.Path(s.opts.AppDir)
 	if err := s.opts.OpenFile(path); err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError("打开设置文件失败："+err.Error()))
 		return
@@ -967,7 +969,7 @@ func demoToolsView() []map[string]string {
 }
 
 func (s *Server) handleGetDemo(w http.ResponseWriter, r *http.Request) {
-	demo := settings.LoadDemo(s.opts.WorkspaceDir)
+	demo := settings.LoadDemo(s.opts.AppDir)
 	if demo.ToolFaults == nil {
 		demo.ToolFaults = map[string]string{}
 	}
@@ -1021,7 +1023,7 @@ func (s *Server) handlePutDemo(w http.ResponseWriter, r *http.Request) {
 			setCrash = true
 		}
 	}
-	demo, err := settings.SaveDemo(s.opts.WorkspaceDir, patch, setTools, setCorrupt, setCrash)
+	demo, err := settings.SaveDemo(s.opts.AppDir, patch, setTools, setCorrupt, setCrash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
 		return
@@ -1056,19 +1058,41 @@ func isFaultableTool(name string) bool {
 func (s *Server) handleGetWorkspace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                  true,
-		"workspaceDir":        s.opts.WorkspaceDir,
+		"appDir":              s.opts.AppDir,
+		"workspaceDir":        s.workspaceSampleDir(),
 		"employeesDir":        s.opts.EmployeesDir,
 		"defaultEmployeesDir": s.opts.DefaultEmployeesDir,
-		"configVersionsDir":   filepath.Join(s.opts.WorkspaceDir, "config-versions"),
+		"configVersionsDir":   filepath.Join(s.opts.AppDir, "config-versions"),
 	})
 }
 
+// handleOpenWorkspace 在资源管理器里打开目录：?dir= 指定工作区目录，缺省打开应用目录。
 func (s *Server) handleOpenWorkspace(w http.ResponseWriter, r *http.Request) {
-	if err := s.opts.OpenFolder(s.opts.WorkspaceDir); err != nil {
+	body, _ := readBodyJSON(r)
+	dir, _ := body["dir"].(string)
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = s.opts.AppDir
+	} else if !s.workspaceDirRegistered(dir) {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "只能打开登记过的工作区目录"))
+		return
+	}
+	if err := s.opts.OpenFolder(dir); err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError("打开工作区失败："+err.Error()))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": s.opts.WorkspaceDir})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": dir})
+}
+
+// workspaceDirRegistered 这个目录是不是某个登记过的工作区。
+func (s *Server) workspaceDirRegistered(dir string) bool {
+	clean := filepath.Clean(dir)
+	for _, item := range s.workspaceDirs() {
+		if sameFilePath(item.Dir, clean) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleResetEmployees(w http.ResponseWriter, r *http.Request) {
@@ -1089,7 +1113,7 @@ func (s *Server) handleResetEmployees(w http.ResponseWriter, r *http.Request) {
 	}
 	var backupPath *string
 	if _, statErr := os.Stat(destination); statErr == nil {
-		versions := filepath.Join(s.opts.WorkspaceDir, "config-versions", "employees")
+		versions := filepath.Join(s.opts.AppDir, "config-versions", "employees")
 		if err := os.MkdirAll(versions, 0o755); err != nil {
 			s.audit("reset-employees", destination, "failure", r, err.Error())
 			writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))

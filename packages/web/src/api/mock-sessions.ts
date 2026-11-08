@@ -25,6 +25,8 @@ type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createT
 
 interface MockSession {
   id: string;
+  /** 会话属于哪个工作区（Spec 0006） */
+  workspaceId: string;
   employee?: string;
   taskId?: string;
   draft?: Record<string, unknown>;
@@ -39,6 +41,8 @@ interface MockSession {
 }
 
 const LEGACY = "task-";
+/** 模拟模式只有一个工作区（和 workspaces.ts 的 ws-demo 一致） */
+const MOCK_WORKSPACE = "ws-demo";
 const PAUSED = new Set(["awaiting_initiator", "awaiting_operator", "awaiting_review"]);
 
 export function createMockSessions(
@@ -76,6 +80,7 @@ export function createMockSessions(
     const closed = summary?.state === "delivered" || summary?.state === "terminated";
     return {
       id: s.id,
+      workspaceId: s.workspaceId,
       status: s.taskId ? (closed ? "closed" : "task") : s.employee ? "drafting" : "reception",
       readOnly: false,
       title,
@@ -180,6 +185,7 @@ export function createMockSessions(
   async function legacyDetail(task: TaskSummary): Promise<SessionDetail> {
     return {
       id: `${LEGACY}${task.id}`,
+      workspaceId: task.workspaceId ?? "",
       status: task.state === "delivered" || task.state === "terminated" ? "closed" : "task",
       readOnly: true,
       title: task.title,
@@ -196,10 +202,13 @@ export function createMockSessions(
   }
 
   return {
-    async listSessions() {
-      const own = await Promise.all([...sessions.values()].map(view));
+    async listSessions(workspaceId) {
+      const own = await Promise.all([...sessions.values()].filter((s) => !workspaceId || s.workspaceId === workspaceId).map(view));
       const bound = new Set(own.map((s) => s.taskId));
-      const legacy = await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
+      // 由旧任务推导出的只读会话：发起事件里没有工作区的旧任务带不出归属，按不属于任何工作区处理
+      const legacy = workspaceId
+        ? []
+        : await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
       const all: SessionSummary[] = [...own, ...legacy.map(({ messages: _m, ...rest }) => rest)];
       return all.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     },
@@ -217,9 +226,17 @@ export function createMockSessions(
       return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
     },
 
-    async createSession() {
+    async createSession(workspaceId) {
       const now = new Date(Date.now() + ++counter).toISOString();
-      const s: MockSession = { id: `s-mock-${counter}`, skipped: new Set(), files: [], messages: [], createdAt: now, updatedAt: now };
+      const s: MockSession = {
+        id: `s-mock-${counter}`,
+        workspaceId: workspaceId ?? MOCK_WORKSPACE,
+        skipped: new Set(),
+        files: [],
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+      };
       sessions.set(s.id, s);
       return view(s);
     },

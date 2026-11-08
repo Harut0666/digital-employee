@@ -1,4 +1,4 @@
-// 工作区切换：从 HTTP 接口验证，配真实引擎、真实工具和剧本模型，工作区和应用级目录都是临时目录。
+// 应用目录、工作区登记与启动：从 HTTP 接口验证，配真实引擎、真实工具和剧本模型，应用目录和工作区目录都是临时目录。
 package app_test
 
 import (
@@ -14,34 +14,36 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/app"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/engine"
+	"digital-employee/internal/session"
 	"digital-employee/internal/tools"
 )
 
-// switchApp 一个运行中的应用。
-type switchApp struct {
+// switchingApp 一个运行中的应用。
+type switchingApp struct {
 	t       *testing.T
 	baseURL string
 	running *app.Running
-	// engines 按创建顺序记下的引擎（每次打开工作区建一个）
-	engines []contract.Engine
 }
 
-type switchAppConfig struct {
-	env  map[string]string
-	gate *toolGate
+type switchingConfig struct {
+	env map[string]string
 }
-
-type switchAppOption func(*switchAppConfig)
 
 // withAppEnv 应用看到的环境变量（DE_APP_DIR 由装置补上）。
-func withAppEnv(env map[string]string) switchAppOption {
-	return func(config *switchAppConfig) { config.env = env }
+func withAppEnv(env map[string]string) func(*switchingConfig) {
+	return func(config *switchingConfig) {
+		if config.env == nil {
+			config.env = map[string]string{}
+		}
+		for key, value := range env {
+			config.env[key] = value
+		}
+	}
 }
 
 // freePort 找一个空闲端口。
@@ -56,10 +58,10 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// startSwitchApp 在 workspace 上启动应用，应用级目录是 appDir。
-func startSwitchApp(t *testing.T, appDir, workspace string, options ...switchAppOption) *switchApp {
+// startApp 在应用目录 appDir 上启动应用；workspace 为空时由应用自己决定（首次启动建“我的工作区”）。
+func startApp(t *testing.T, appDir, workspace string, options ...func(*switchingConfig)) *switchingApp {
 	t.Helper()
-	config := switchAppConfig{}
+	config := switchingConfig{}
 	for _, option := range options {
 		option(&config)
 	}
@@ -68,7 +70,7 @@ func startSwitchApp(t *testing.T, appDir, workspace string, options ...switchApp
 		env[key] = value
 	}
 	env["DE_APP_DIR"] = appDir
-	a := &switchApp{t: t}
+	a := &switchingApp{t: t}
 	var mu sync.Mutex
 	running, err := app.Start(app.Options{
 		RepoRoot:     filepath.Join("..", ".."),
@@ -81,23 +83,30 @@ func startSwitchApp(t *testing.T, appDir, workspace string, options ...switchApp
 		LogLine:      func(string) {},
 		ScriptFile:   "scripted",
 		ToolFactory: func() (contract.ToolClient, error) {
-			var client contract.ToolClient = tools.NewRegistry()
-			if config.gate != nil {
-				client = gatedTools{ToolClient: client, gate: config.gate}
-			}
-			return client, nil
+			return tools.NewRegistry(), nil
 		},
 		EngineFactory: func(deps app.EngineDeps) (contract.Engine, error) {
+			if deps.ApplicationDir == "" {
+				return nil, &missingAppDirError{}
+			}
 			created, err := engine.New(engine.Deps{
-				WorkspaceDir: deps.WorkspaceDir,
+				Dir:          deps.ApplicationDir,
 				EmployeesDir: deps.EmployeesDir,
 				ToolClient:   deps.ToolClient,
 				Model:        agent.NewScriptedModelProvider(agent.ModelScript{}, agent.ScriptedProviderOptions{}),
 				Faults:       deps.Faults,
+				// 任务列表要读任务目录里的员工配置副本：应用目录模式下员工按应用目录的 employees/ 解析
+				// （真实引擎按员工 id 取配置，这里只是为换目录提供一个同名副本）
+				ConfigFallback: func(employeeID string) (string, bool) {
+					dir := filepath.Join(deps.EmployeesDir, employeeID)
+					if _, err := os.Stat(filepath.Join(dir, "workflow.yaml")); err != nil {
+						return "", false
+					}
+					return dir, true
+				},
 			})
 			if err == nil {
 				mu.Lock()
-				a.engines = append(a.engines, created)
 				mu.Unlock()
 			}
 			return created, err
@@ -111,8 +120,12 @@ func startSwitchApp(t *testing.T, appDir, workspace string, options ...switchApp
 	return a
 }
 
+type missingAppDirError struct{}
+
+func (*missingAppDirError) Error() string { return "引擎没有拿到应用目录" }
+
 // call 发一个 JSON 请求，返回状态码和响应体。
-func (a *switchApp) call(method, path string, body any) (int, []byte) {
+func (a *switchingApp) call(method, path string, body any) (int, []byte) {
 	a.t.Helper()
 	var reader io.Reader
 	if body != nil {
@@ -129,7 +142,7 @@ func (a *switchApp) call(method, path string, body any) (int, []byte) {
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	request.Header.Set("x-role", string(contract.RoleOperator))
+	request.Header.Set("x-role", string(contract.RoleInitiator))
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		a.t.Fatal(err)
@@ -151,22 +164,25 @@ func decodeAs[T any](t *testing.T, data []byte) T {
 	return value
 }
 
-// workspaceItem 和 workspaceList 是 /api/workspaces 的响应形状。
-type workspaceItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Path string `json:"path"`
+// registered 是 /api/workspaces 列表里的一项。
+type registered struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	CreatedAt   string `json:"createdAt"`
+	UpdatedAt   string `json:"updatedAt"`
+	Missing     bool   `json:"missing"`
+	MissingText string `json:"missingText"`
 }
 
 type workspaceList struct {
-	Current    string          `json:"current"`
-	ReadOnly   bool            `json:"readOnly"`
-	Reason     string          `json:"reason"`
-	Workspaces []workspaceItem `json:"workspaces"`
+	ReadOnly   bool         `json:"readOnly"`
+	Reason     string       `json:"reason"`
+	Workspaces []registered `json:"workspaces"`
 }
 
 // workspaces GET /api/workspaces。
-func (a *switchApp) workspaces() workspaceList {
+func (a *switchingApp) workspaces() workspaceList {
 	a.t.Helper()
 	status, data := a.call(http.MethodGet, "/api/workspaces", nil)
 	if status != http.StatusOK {
@@ -175,31 +191,68 @@ func (a *switchApp) workspaces() workspaceList {
 	return decodeAs[workspaceList](a.t, data)
 }
 
-func TestWorkspaceListShowsStartingWorkspaceAsCurrent(t *testing.T) {
-	appDir := t.TempDir()
-	workspace := filepath.Join(t.TempDir(), "华东区")
-	a := startSwitchApp(t, appDir, workspace)
-
-	list := a.workspaces()
-	if list.ReadOnly {
-		t.Fatalf("没有用环境变量指定工作区时不应只读：%+v", list)
+// byName 列表里叫这个名字的工作区。
+func (a *switchingApp) byName(name string) registered {
+	a.t.Helper()
+	for _, item := range a.workspaces().Workspaces {
+		if item.Name == name {
+			return item
+		}
 	}
-	if len(list.Workspaces) != 1 {
-		t.Fatalf("应只有启动时的工作区：%+v", list)
-	}
-	only := list.Workspaces[0]
-	if only.Name != "华东区" || only.Path != workspace || list.Current != only.ID {
-		t.Fatalf("启动时的工作区应是当前工作区，名称取目录名：%+v", list)
-	}
+	a.t.Fatalf("工作区列表里没有“%s”：%+v", name, a.workspaces())
+	return registered{}
 }
 
-// createDraftTask 发起人用公开样例建一个第 44 周的草稿任务，返回任务 ID。
-func (a *switchApp) createDraftTask() string {
+// createWorkspace POST /api/workspaces，要求成功。
+func (a *switchingApp) createWorkspace(name, path string) registered {
+	a.t.Helper()
+	status, data := a.call(http.MethodPost, "/api/workspaces", map[string]any{"name": name, "path": path})
+	if status != http.StatusCreated {
+		a.t.Fatalf("新建工作区失败：%d %s", status, data)
+	}
+	return decodeAs[struct {
+		Workspace registered `json:"workspace"`
+	}](a.t, data).Workspace
+}
+
+// createSessionIn POST /api/sessions。
+func (a *switchingApp) createSessionIn(workspaceID string) session.View {
+	a.t.Helper()
+	status, data := a.call(http.MethodPost, "/api/sessions", map[string]any{"workspaceId": workspaceID})
+	if status != http.StatusCreated {
+		a.t.Fatalf("建会话失败：%d %s", status, data)
+	}
+	return decodeAs[session.View](a.t, data)
+}
+
+// sessions GET /api/sessions（可以带过滤参数）。
+func (a *switchingApp) sessions(query string) []session.View {
+	a.t.Helper()
+	status, data := a.call(http.MethodGet, "/api/sessions"+query, nil)
+	if status != http.StatusOK {
+		a.t.Fatalf("读取会话失败：%d %s", status, data)
+	}
+	return decodeAs[[]session.View](a.t, data)
+}
+
+// sessionsWith 按工作区过滤的会话；返回 ID → 工作区。
+func (a *switchingApp) sessionsWith(workspaceID string) map[string]string {
+	a.t.Helper()
+	out := map[string]string{}
+	for _, item := range a.sessions("?workspaceId=" + workspaceID) {
+		out[item.ID] = item.WorkspaceID
+	}
+	return out
+}
+
+// createDraftTask 用公开样例建一个第 44 周的草稿任务，返回任务 ID。
+func (a *switchingApp) createDraftTask(workspaceID string) string {
 	a.t.Helper()
 	buffer := &bytes.Buffer{}
 	writer := multipart.NewWriter(buffer)
 	_ = writer.WriteField("employee", "weekly-report")
 	_ = writer.WriteField("form", `{"period":{"year":2026,"week":44}}`)
+	_ = writer.WriteField("workspaceId", workspaceID)
 	for _, name := range []string{"销售明细.xlsx", "周会纪要_2026W44.docx"} {
 		content, err := os.ReadFile(filepath.Join("..", "..", "samples", "scenario-a", name))
 		if err != nil {
@@ -233,7 +286,7 @@ func (a *switchApp) createDraftTask() string {
 }
 
 // taskIDs GET /api/tasks 里的任务 ID。
-func (a *switchApp) taskIDs() []string {
+func (a *switchingApp) taskIDs() []string {
 	a.t.Helper()
 	status, data := a.call(http.MethodGet, "/api/tasks", nil)
 	if status != http.StatusOK {
@@ -246,8 +299,24 @@ func (a *switchApp) taskIDs() []string {
 	return ids
 }
 
+// knowledgeTitles GET /api/knowledge 里的条目标题。
+func (a *switchingApp) knowledgeTitles() []string {
+	a.t.Helper()
+	status, data := a.call(http.MethodGet, "/api/knowledge", nil)
+	if status != http.StatusOK {
+		a.t.Fatalf("读取知识库失败：%d %s", status, data)
+	}
+	titles := []string{}
+	for _, item := range decodeAs[[]struct {
+		Title string `json:"title"`
+	}](a.t, data) {
+		titles = append(titles, item.Title)
+	}
+	return titles
+}
+
 // employeeNames GET /api/employees 里的员工名称。
-func (a *switchApp) employeeNames() []string {
+func (a *switchingApp) employeeNames() []string {
 	a.t.Helper()
 	status, data := a.call(http.MethodGet, "/api/employees", nil)
 	if status != http.StatusOK {
@@ -263,7 +332,7 @@ func (a *switchApp) employeeNames() []string {
 }
 
 // connectionNames GET /api/settings 里的模型连接名。
-func (a *switchApp) connectionNames() []string {
+func (a *switchingApp) connectionNames() []string {
 	a.t.Helper()
 	status, data := a.call(http.MethodGet, "/api/settings", nil)
 	if status != http.StatusOK {
@@ -271,7 +340,8 @@ func (a *switchApp) connectionNames() []string {
 	}
 	view := decodeAs[struct {
 		Connections []struct {
-			Name string `json:"name"`
+			Name   string `json:"name"`
+			HasKey bool   `json:"hasKey"`
 		} `json:"connections"`
 	}](a.t, data)
 	names := []string{}
@@ -281,292 +351,260 @@ func (a *switchApp) connectionNames() []string {
 	return names
 }
 
-// createWorkspace POST /api/workspaces，要求成功。
-func (a *switchApp) createWorkspace(name string) workspaceItem {
+// hasKey GET /api/settings 里某个连接有没有 Key。
+func (a *switchingApp) hasKey(name string) bool {
 	a.t.Helper()
-	status, data := a.call(http.MethodPost, "/api/workspaces", map[string]any{"name": name})
-	if status != http.StatusCreated {
-		a.t.Fatalf("新建工作区失败：%d %s", status, data)
+	status, data := a.call(http.MethodGet, "/api/settings", nil)
+	if status != http.StatusOK {
+		a.t.Fatalf("读取设置失败：%d %s", status, data)
+	}
+	view := decodeAs[struct {
+		Connections []struct {
+			Name   string `json:"name"`
+			HasKey bool   `json:"hasKey"`
+		} `json:"connections"`
+	}](a.t, data)
+	for _, item := range view.Connections {
+		if item.Name == name {
+			return item.HasKey
+		}
+	}
+	return false
+}
+
+// preflight GET /api/preflight 是否通过。
+func (a *switchingApp) preflight() bool {
+	a.t.Helper()
+	status, data := a.call(http.MethodGet, "/api/preflight", nil)
+	if status != http.StatusOK {
+		a.t.Fatalf("提交前检查失败：%d %s", status, data)
 	}
 	return decodeAs[struct {
-		Workspace workspaceItem `json:"workspace"`
-	}](a.t, data).Workspace
+		OK bool `json:"ok"`
+	}](a.t, data).OK
 }
 
-// switchReply 切换接口的响应。
-type switchReply struct {
-	status  int
-	OK      bool     `json:"ok"`
-	Error   string   `json:"error"`
-	Message string   `json:"message"`
-	Reload  bool     `json:"reload"`
-	TaskIDs []string `json:"taskIds"`
+// hasFile 文件是否存在。
+func hasFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
-// trySwitch POST /api/workspaces/{id}/switch，不判断结果。
-func (a *switchApp) trySwitch(id string) switchReply {
-	a.t.Helper()
-	status, data := a.call(http.MethodPost, "/api/workspaces/"+id+"/switch", map[string]any{})
-	reply := decodeAs[switchReply](a.t, data)
-	reply.status = status
-	return reply
-}
-
-// switchTo 切换工作区，要求成功并通知前端重新加载。
-func (a *switchApp) switchTo(id string) {
-	a.t.Helper()
-	reply := a.trySwitch(id)
-	if reply.status != http.StatusOK || !reply.OK || !reply.Reload {
-		a.t.Fatalf("切换工作区失败：%+v", reply)
-	}
-}
-
-func TestSwitchingMovesSettingsEmployeesAndTasksToTheChosenWorkspace(t *testing.T) {
+func TestFirstStartCreatesMyWorkspaceInDocuments(t *testing.T) {
 	appDir := t.TempDir()
-	first := filepath.Join(t.TempDir(), "华东区")
-	a := startSwitchApp(t, appDir, first)
-	original := a.list0()
+	home := t.TempDir()
+	a := startApp(t, appDir, "", withAppEnv(map[string]string{"USERPROFILE": home}))
 
-	// 旧工作区：一个草稿任务、一条自己的模型连接、改过名字的员工
-	taskID := a.createDraftTask()
-	status, data := a.call(http.MethodPut, "/api/settings/connections/华东专线", map[string]any{
-		"baseUrl": "http://127.0.0.1:9/v1", "models": []string{"m1"},
-	})
-	if status != http.StatusOK {
-		t.Fatalf("保存连接失败：%d %s", status, data)
+	list := a.workspaces()
+	if list.ReadOnly {
+		t.Fatalf("没有用环境变量指定工作区时不是只读：%+v", list)
 	}
-	workflow := filepath.Join(first, "employees", "weekly-report", "workflow.yaml")
-	raw, err := os.ReadFile(workflow)
+	if len(list.Workspaces) != 1 {
+		t.Fatalf("首次启动应建一个工作区：%+v", list)
+	}
+	only := list.Workspaces[0]
+	want := filepath.Join(home, "Documents", "数字员工")
+	if only.Name != "我的工作区" || !sameDir(only.Path, want) {
+		t.Fatalf("首次启动的工作区 = %+v，目录应为 %s", only, want)
+	}
+	if !isDir(want) {
+		t.Fatalf("工作区目录应已创建：%s", want)
+	}
+	if only.ID == "" || only.CreatedAt == "" || only.UpdatedAt == "" {
+		t.Fatalf("登记项应有 ID、创建时间和更新时间：%+v", only)
+	}
+	// 全局内容放在应用目录：设置、员工、工作区列表；任务和会话也在这里
+	for _, name := range []string{"settings.json", "employees", "workspaces.json", "tasks", "sessions"} {
+		if _, err := os.Stat(filepath.Join(appDir, name)); err != nil {
+			t.Fatalf("应用目录里应有 %s：%v", name, err)
+		}
+	}
+	// 工作目录里只放用得上的东西：样例和“交付”文件夹，没有应用数据
+	entries, err := os.ReadDir(want)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(workflow, []byte(strings.Replace(string(raw), "name: 经营周报员工", "name: 华东周报员工", 1)), 0o644); err != nil {
-		t.Fatal(err)
+	names := []string{}
+	for _, entry := range entries {
+		names = append(names, entry.Name())
 	}
+	if !slices.Equal(names, []string{"samples", "交付"}) {
+		t.Fatalf("工作目录里只应有样例和“交付”文件夹：%v", names)
+	}
+}
 
-	created := a.createWorkspace("华南区")
-	a.switchTo(created.ID)
+func sameDir(a, b string) bool {
+	left, errLeft := filepath.Abs(a)
+	right, errRight := filepath.Abs(b)
+	if errLeft != nil || errRight != nil {
+		return a == b
+	}
+	return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+}
 
-	if list := a.workspaces(); list.Current != created.ID || len(list.Workspaces) != 2 {
-		t.Fatalf("切换后当前工作区应是新建的：%+v", list)
-	}
-	if ids := a.taskIDs(); len(ids) != 0 {
-		t.Fatalf("新工作区不应有任务：%v", ids)
-	}
-	if names := a.connectionNames(); slices.Contains(names, "华东专线") {
-		t.Fatalf("新工作区的设置不应有旧工作区的连接：%v", names)
-	}
-	// 新工作区释放的是默认员工配置，不带旧工作区里改过的名字
-	if names := a.employeeNames(); !slices.Contains(names, "经营周报员工") || slices.Contains(names, "华东周报员工") {
-		t.Fatalf("新工作区的员工应是默认配置：%v", names)
-	}
-
-	a.switchTo(original.ID)
-	if ids := a.taskIDs(); !slices.Equal(ids, []string{taskID}) {
-		t.Fatalf("切回来旧任务应还在：%v", ids)
-	}
-	if names := a.connectionNames(); !slices.Contains(names, "华东专线") {
-		t.Fatalf("切回来旧连接应还在：%v", names)
-	}
-	if names := a.employeeNames(); !slices.Contains(names, "华东周报员工") || slices.Contains(names, "经营周报员工") {
-		t.Fatalf("切回来改过的员工应还在：%v", names)
-	}
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func TestWorkspaceListOutlivesTheProcess(t *testing.T) {
 	appDir := t.TempDir()
-	a := startSwitchApp(t, appDir, filepath.Join(t.TempDir(), "华东区"))
-	created := a.createWorkspace("华南区")
-	a.switchTo(created.ID)
-	if err := a.running.Close(); err != nil {
+	home := t.TempDir()
+	env := withAppEnv(map[string]string{"USERPROFILE": home})
+	first := startApp(t, appDir, "", env)
+	created := first.createWorkspace("华南区", filepath.Join(home, "华南区"))
+	if err := first.running.Close(); err != nil {
 		t.Fatal(err)
 	}
 
-	// 重启时不指定工作区：从应用级的工作区列表里接着用上次的
-	restarted := startSwitchApp(t, appDir, "")
+	// 重启后接着用登记过的工作区，不重建“我的工作区”
+	restarted := startApp(t, appDir, "", env)
 	list := restarted.workspaces()
-	if list.Current != created.ID || len(list.Workspaces) != 2 {
-		t.Fatalf("重启后应接着用上次切到的工作区：%+v", list)
+	if len(list.Workspaces) != 2 {
+		t.Fatalf("重启后应还是两个工作区：%+v", list)
 	}
-	for _, item := range list.Workspaces {
-		if strings.HasPrefix(appDir, item.Path) {
-			t.Fatalf("工作区列表文件不应落在任何工作区里：%s 在 %s 下", appDir, item.Path)
-		}
+	if got := restarted.byName("华南区"); got.ID != created.ID {
+		t.Fatalf("登记项应原样保留：%+v", got)
 	}
 }
 
-// list0 当前列表里的第一个工作区。
-func (a *switchApp) list0() workspaceItem {
-	a.t.Helper()
-	return a.workspaces().Workspaces[0]
-}
+func TestWorkspacesShareSettingsAndSessionsStayInTheirWorkspace(t *testing.T) {
+	// 没有剧本：前台 Agent 走真实模型提供者，只读设置，不发请求
+	appDir := t.TempDir()
+	home := t.TempDir()
+	env := withAppEnv(map[string]string{"USERPROFILE": home})
+	a := startApp(t, appDir, "", env)
+	mine := a.workspaces().Workspaces[0]
+	other := a.createWorkspace("华南区", "")
 
-// toolGate 让某个工具的第一次调用停住，直到放行。
-type toolGate struct {
-	tool    string
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
+	inMine := a.createSessionIn(mine.ID)
+	inOther := a.createSessionIn(other.ID)
 
-func newToolGate(tool string) *toolGate {
-	return &toolGate{tool: tool, entered: make(chan struct{}), release: make(chan struct{})}
-}
-
-type gatedTools struct {
-	contract.ToolClient
-	gate *toolGate
-}
-
-func (g gatedTools) Call(name string, args any) (contract.ToolCallResult, error) {
-	if name == g.gate.tool {
-		first := false
-		g.gate.once.Do(func() { first = true })
-		if first {
-			close(g.gate.entered)
-			<-g.gate.release
-		}
+	// 在 A 保存的连接就在应用目录的 settings.json 里，B 的提交前检查读同一份
+	if status, data := a.call(http.MethodPut, "/api/settings/connections/华东专线", map[string]any{
+		"baseUrl": "http://127.0.0.1:9/v1", "apiKey": "sk-t36-file", "models": []string{"m1"},
+	}); status != http.StatusOK {
+		t.Fatalf("保存连接失败：%d %s", status, data)
 	}
-	return g.ToolClient.Call(name, args)
+	if !a.hasKey("华东专线") || !a.preflight() {
+		t.Fatal("两个工作区应共用应用目录里的一份设置：任何一边的提交前检查都读到它")
+	}
+	if !hasFile(filepath.Join(appDir, "settings.json")) {
+		t.Fatal("设置应在应用目录里")
+	}
+
+	onlyOther := a.sessions("?workspaceId=" + other.ID)
+	if len(onlyOther) != 1 || onlyOther[0].ID != inOther.ID {
+		t.Fatalf("B 下只应有 B 的会话：%+v", onlyOther)
+	}
+	ids := []string{}
+	for _, item := range a.sessions("") {
+		ids = append(ids, item.ID)
+	}
+	if !slices.Contains(ids, inMine.ID) || !slices.Contains(ids, inOther.ID) {
+		t.Fatalf("不带过滤时应列出两个工作区的会话：%v", ids)
+	}
 }
 
-// withToolGate 每个工作区的工具都经过这道闸。
-func withToolGate(gate *toolGate) switchAppOption {
-	return func(config *switchAppConfig) { config.gate = gate }
-}
-
-// submitTask 发起人提交任务。
-func (a *switchApp) submitTask(taskID string) {
-	a.t.Helper()
-	request, err := http.NewRequest(http.MethodPost, a.baseURL+"/api/tasks/"+taskID+"/commands", strings.NewReader(`{"type":"submit"}`))
+func TestUnregisterKeepsSessionsTasksAndFiles(t *testing.T) {
+	appDir := t.TempDir()
+	home := t.TempDir()
+	a := startApp(t, appDir, "", withAppEnv(map[string]string{"USERPROFILE": home}))
+	mine := a.byName("我的工作区")
+	other := a.createWorkspace("华南区", "")
+	created := a.createSessionIn(mine.ID)
+	taskID := a.createDraftTask(mine.ID)
+	files, err := os.ReadDir(other.Path)
 	if err != nil {
-		a.t.Fatal(err)
+		t.Fatal(err)
 	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("x-role", string(contract.RoleInitiator))
-	response, err := http.DefaultClient.Do(request)
+	before := []string{}
+	for _, file := range files {
+		before = append(before, file.Name())
+	}
+
+	status, data := a.call(http.MethodDelete, "/api/workspaces/"+other.ID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("取消登记失败：%d %s", status, data)
+	}
+	if list := a.workspaces().Workspaces; slices.ContainsFunc(list, func(item registered) bool { return item.ID == other.ID }) {
+		t.Fatalf("取消登记后不应再列出这个工作区：%+v", list)
+	}
+	// 会话、任务和目录里的文件都还在
+	found := false
+	for _, item := range a.sessions("") {
+		if item.ID == created.ID {
+			found = true
+			if item.WorkspaceID != mine.ID {
+				t.Fatalf("会话仍应记着原工作区：%+v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("取消登记后会话应还在")
+	}
+	if !slices.Contains(a.taskIDs(), taskID) {
+		t.Fatalf("取消登记后任务应还在：%v", a.taskIDs())
+	}
+	after, err := os.ReadDir(other.Path)
 	if err != nil {
-		a.t.Fatal(err)
+		t.Fatalf("工作区目录应还在：%v", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(response.Body)
-		a.t.Fatalf("提交任务失败：%d %s", response.StatusCode, data)
+	names := []string{}
+	for _, file := range after {
+		names = append(names, file.Name())
 	}
-}
-
-// taskState GET /api/tasks/{id} 的状态。
-func (a *switchApp) taskState(taskID string) contract.TaskState {
-	a.t.Helper()
-	status, data := a.call(http.MethodGet, "/api/tasks/"+taskID, nil)
-	if status != http.StatusOK {
-		a.t.Fatalf("读取任务失败：%d %s", status, data)
-	}
-	return decodeAs[contract.TaskSnapshot](a.t, data).State
-}
-
-// waitUntilIdle 等任务离开准入校验、执行中和质检中。
-func (a *switchApp) waitUntilIdle(taskID string) contract.TaskState {
-	a.t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for {
-		state := a.taskState(taskID)
-		if state != contract.StateAdmission && state != contract.StateRunning && state != contract.StateQC {
-			return state
-		}
-		if time.Now().After(deadline) {
-			a.t.Fatalf("任务一直停在 %s", state)
-		}
-		time.Sleep(50 * time.Millisecond)
+	if !slices.Equal(before, names) {
+		t.Fatalf("取消登记不应删目录里的文件：前 %v 后 %v", before, names)
 	}
 }
 
-func TestSwitchIsRefusedWhileATaskIsRunning(t *testing.T) {
-	gate := newToolGate("validate_submission")
-	a := startSwitchApp(t, t.TempDir(), filepath.Join(t.TempDir(), "华东区"), withToolGate(gate))
-	original := a.list0()
-	created := a.createWorkspace("华南区")
-
-	taskID := a.createDraftTask()
-	a.submitTask(taskID)
-	<-gate.entered // 任务停在准入校验的工具调用里
-
-	reply := a.trySwitch(created.ID)
-	if reply.status != http.StatusConflict || reply.Error != "workspace_busy" || !slices.Equal(reply.TaskIDs, []string{taskID}) {
-		t.Fatalf("有任务在准入校验时应拒绝切换并指出是哪个任务：%+v", reply)
+func TestMissingDirectoryIsReportedButRegistrationStays(t *testing.T) {
+	appDir := t.TempDir()
+	home := t.TempDir()
+	a := startApp(t, appDir, "", withAppEnv(map[string]string{"USERPROFILE": home}))
+	gone := filepath.Join(home, "已删除")
+	created := a.createWorkspace("已删除", gone)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(reply.Message, "任务") {
-		t.Fatalf("拒绝时应说明原因：%q", reply.Message)
+	// 登记保留，状态是“目录缺失”
+	item := a.byName("已删除")
+	if item.ID != created.ID || item.Path != created.Path {
+		t.Fatalf("登记应保留：%+v", item)
 	}
-	if list := a.workspaces(); list.Current != original.ID {
-		t.Fatalf("被拒绝后仍应留在原工作区：%+v", list)
+	if !item.Missing || item.MissingText != "目录缺失" {
+		t.Fatalf("目录不存在时状态应是“目录缺失”：%+v", item)
 	}
-
-	close(gate.release)
-	a.waitUntilIdle(taskID)
-	// 原工作区的任务照常推进，没有被切换打断
-	if ids := a.taskIDs(); !slices.Equal(ids, []string{taskID}) {
-		t.Fatalf("原工作区的任务应还在：%v", ids)
+	// 目录缺失时不重建目录
+	if err := a.running.Close(); err != nil {
+		t.Fatal(err)
 	}
-	a.switchTo(created.ID)
-}
-
-func TestOldEngineStopsWritingAfterSwitch(t *testing.T) {
-	a := startSwitchApp(t, t.TempDir(), filepath.Join(t.TempDir(), "华东区"))
-	original := a.list0()
-	taskID := a.createDraftTask()
-	eventsBefore := a.eventCount(taskID)
-	oldEngine := a.engines[len(a.engines)-1]
-
-	a.switchTo(a.createWorkspace("华南区").ID)
-
-	// 还拿着旧引擎的调用方（比如切换前发出的请求）不能再写旧工作区
-	if result := oldEngine.Command(taskID, contract.TaskCommand{Type: contract.CmdSubmit}, contract.RoleInitiator); result.OK {
-		t.Fatalf("切换后旧引擎不应再接受命令：%+v", result)
+	restarted := startApp(t, appDir, "", withAppEnv(map[string]string{"USERPROFILE": home}))
+	if item := restarted.byName("已删除"); !item.Missing || item.ID != created.ID {
+		t.Fatalf("重启后登记应保留并标出目录缺失：%+v", item)
 	}
-	if _, err := oldEngine.Create(contract.CreateTaskInput{Employee: "weekly-report", Actor: contract.RoleInitiator}); err == nil {
-		t.Fatal("切换后旧引擎不应再建任务")
-	}
-
-	a.switchTo(original.ID)
-	if state := a.taskState(taskID); state != contract.StateDraft {
-		t.Fatalf("旧任务应仍是草稿：%s", state)
-	}
-	if after := a.eventCount(taskID); after != eventsBefore {
-		t.Fatalf("旧引擎不应再写事件：切换前 %d 条，切回来 %d 条", eventsBefore, after)
-	}
-	if ids := a.taskIDs(); !slices.Equal(ids, []string{taskID}) {
-		t.Fatalf("旧工作区不应多出任务：%v", ids)
+	if isDir(gone) {
+		t.Fatalf("目录缺失时启动不应重建目录：%s", gone)
 	}
 }
 
-// eventCount GET /api/tasks/{id}/events 的事件数。
-func (a *switchApp) eventCount(taskID string) int {
-	a.t.Helper()
-	status, data := a.call(http.MethodGet, "/api/tasks/"+taskID+"/events", nil)
-	if status != http.StatusOK {
-		a.t.Fatalf("读取事件失败：%d %s", status, data)
-	}
-	return len(decodeAs[[]json.RawMessage](a.t, data))
-}
-
-func TestWorkspaceFromEnvironmentMakesSwitchingReadOnly(t *testing.T) {
+func TestEnvironmentWorkspaceIsReadOnly(t *testing.T) {
 	pinned := filepath.Join(t.TempDir(), "演示")
-	a := startSwitchApp(t, t.TempDir(), "", withAppEnv(map[string]string{"DE_WORKSPACE": pinned}))
+	a := startApp(t, t.TempDir(), "", withAppEnv(map[string]string{"DE_WORKSPACE": pinned}))
 
 	list := a.workspaces()
 	if !list.ReadOnly || list.Reason == "" {
-		t.Fatalf("环境变量指定工作区时切换入口应只读并说明原因：%+v", list)
+		t.Fatalf("环境变量指定工作区时应只读并说明原因：%+v", list)
 	}
-	if len(list.Workspaces) != 1 || list.Workspaces[0].Path != pinned || list.Workspaces[0].ID != list.Current {
+	if len(list.Workspaces) != 1 || !sameDir(list.Workspaces[0].Path, pinned) {
 		t.Fatalf("只读时只列出环境变量指定的工作区：%+v", list)
 	}
-
-	status, data := a.call(http.MethodPost, "/api/workspaces", map[string]any{"name": "华南区"})
-	if status != http.StatusConflict || decodeAs[switchReply](t, data).Error != "workspace_read_only" {
-		t.Fatalf("只读时不能新建工作区：%d %s", status, data)
+	if status, _ := a.call(http.MethodPost, "/api/workspaces", map[string]any{"name": "华南区", "path": pinned}); status != http.StatusConflict {
+		t.Fatalf("只读时不能新建工作区：%d", status)
 	}
-	if reply := a.trySwitch(list.Current); reply.status != http.StatusConflict || reply.Error != "workspace_read_only" {
-		t.Fatalf("只读时不能切换工作区：%+v", reply)
+	// 不传 workspaceId 时取唯一的工作区
+	if created := a.createSessionIn(""); created.WorkspaceID == "" {
+		t.Fatalf("单目录模式的会话要记下工作区：%+v", created)
 	}
 }

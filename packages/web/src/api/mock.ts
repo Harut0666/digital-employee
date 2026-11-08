@@ -15,6 +15,8 @@ import type { CommandResult, CreateTaskInput, DeliverableKind, DeliverableVersio
 
 interface MockTask {
   id: string;
+  /** 任务属于哪个工作区（Spec 0006） */
+  workspaceId?: string;
   employee: string;
   title: string;
   form: Record<string, unknown>;
@@ -157,6 +159,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     const pause = deriveSessionView(t.events).pause;
     return {
       id: t.id,
+      workspaceId: t.workspaceId,
       employee: t.employee,
       title: t.title,
       state,
@@ -212,6 +215,8 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       const period = input.form.period as { week?: number } | undefined;
       const t: MockTask = {
         id: `mock-n${++counter}`,
+        // 真实后端从会话所属工作区建任务；模拟模式只有一个工作区
+        workspaceId: "ws-demo",
         employee: input.employee,
         title: period?.week ? `第 ${period.week} 周周报` : `${employee?.name ?? "任务"} ${counter}`,
         form: input.form,
@@ -291,6 +296,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       // 模拟公开样例：第 44 周的销售明细与周会纪要（真实后端读工作区 samples/ 里的文件）
       const t: MockTask = {
         id: `mock-sample-${++counter}`,
+        workspaceId: "ws-demo",
         employee: "weekly-report",
         title: "第 44 周周报（公开样例）",
         form: { period: { year: 2026, week: 44 } },

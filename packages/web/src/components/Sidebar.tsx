@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Segmented, Select, Tooltip } from "antd";
 import { BookOutlined, DownOutlined, PlusOutlined, RightOutlined, SettingOutlined, ToolOutlined, UserOutlined } from "@ant-design/icons";
 import { Button } from "antd";
-import { WorkspacePicker } from "./WorkspacePicker";
 import type { SessionSummary, UiRole } from "../api";
 import { ROLE_LABELS } from "../view/permissions";
 import { groupSessions, groupTodos } from "../view/session-groups";
@@ -27,29 +26,26 @@ export function Sidebar({
   onRole,
   selection,
   onSelect,
-  workspaceDir,
 }: {
   sessions: SessionSummary[];
   role: UiRole;
   onRole: (r: UiRole) => void;
   selection: Selection;
   onSelect: (s: Selection) => void;
-  /** 当前工作区目录：工作区列表读到之前先显示它 */
-  workspaceDir?: string;
 }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [listView, setListView] = useState<"sessions" | "todos">("sessions");
   const groups = listView === "todos" ? groupTodos(sessions) : groupSessions(sessions, role);
   return (
     <div className="col surface sidebar">
+      {/* Spec 0006：左上角只有设置入口（工作区下拉已去掉；“工作区 | 记录”两个 tab 是 T38） */}
       <div className="side-top">
-        <WorkspacePicker workspaceDir={workspaceDir} />
         <Tooltip title="设置">
           <Button
             aria-label="设置"
             icon={<SettingOutlined />}
-            type={selection.kind === "page" && selection.page === "settings" ? "primary" : "default"}
             onClick={() => onSelect({ kind: "page", page: "settings" })}
+            type={selection.kind === "page" && selection.page === "settings" ? "primary" : "default"}
           />
         </Tooltip>
       </div>

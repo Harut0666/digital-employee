@@ -55,8 +55,11 @@ type Employee struct {
 
 // Deps 会话模块的依赖。
 type Deps struct {
-	WorkspaceDir string
-	Engine       contract.Engine
+	// Dir 应用目录：会话日志在它的 sessions/ 下
+	Dir    string
+	Engine contract.Engine
+	// Workspace 工作区 ID 是否已登记（登记项被取消后会话仍可查看）
+	Workspace func(id string) bool
 	// Model 取当前模型提供者（设置保存后会换）；nil 或返回 nil 都算模型不可用
 	Model func() agent.ModelProvider
 	// Employees 列出可接手的员工
@@ -89,12 +92,16 @@ func New(deps Deps) *Manager {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Manager{deps: deps, store: newStore(deps.WorkspaceDir, deps.Now), turns: map[string]*sync.Mutex{}}
+	return &Manager{deps: deps, store: newStore(deps.Dir, deps.Now), turns: map[string]*sync.Mutex{}}
 }
+
+// ErrWorkspaceUnknown 会话所属的工作区没有登记过，也查不到它的目录。
+const ErrWorkspaceUnknown = "workspace_not_found"
 
 // View 读取时返回的会话。
 type View struct {
 	ID          string         `json:"id"`
+	WorkspaceID string         `json:"workspaceId"`
 	Status      string         `json:"status"`
 	ReadOnly    bool           `json:"readOnly"`
 	Title       string         `json:"title"`
@@ -126,10 +133,13 @@ func newID(now time.Time) string {
 	return fmt.Sprintf("s-%s-%x", now.UTC().Format("20060102150405"), buffer)
 }
 
-// Create 开一个新会话。
-func (m *Manager) Create() (*View, error) {
+// Create 在 workspaceID 工作区里开一个新会话；工作区必须登记过。
+func (m *Manager) Create(workspaceID string) (*View, error) {
+	if m.deps.Workspace == nil || !m.deps.Workspace(workspaceID) {
+		return nil, failure(ErrWorkspaceUnknown, "工作区不存在：%s", workspaceID)
+	}
 	id := newID(m.deps.Now())
-	if _, err := m.store.append(id, Message{Kind: kindCreated}); err != nil {
+	if _, err := m.store.append(id, Message{Kind: kindCreated, WorkspaceID: workspaceID}); err != nil {
 		return nil, err
 	}
 	current, err := m.load(id)
@@ -368,6 +378,7 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 	}
 	snapshot, err := m.deps.Engine.Create(contract.CreateTaskInput{
 		Employee: t.current.employee, Form: applySkips(t.current.draft, checklist, items), Attachments: inputs, Actor: role,
+		WorkspaceID: t.current.workspaceID,
 	})
 	if err != nil {
 		return nil, err
@@ -408,7 +419,8 @@ func (m *Manager) load(id string) (*record, error) {
 // legacyView 没有会话的旧任务：由事件推导出只读会话。
 func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 	view := &View{
-		ID: legacyPrefix + summary.ID, Status: StatusTask, ReadOnly: true, Title: summary.Title,
+		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
+		Status: StatusTask, ReadOnly: true, Title: summary.Title,
 		Employee: summary.Employee, TaskID: summary.ID, Attachments: []Attachment{},
 		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{},
 	}
@@ -433,7 +445,8 @@ func (m *Manager) getLegacy(id string) (*Detail, error) {
 }
 
 // List 列出全部会话，最新的在前；已归属会话的任务不再单独列出。
-func (m *Manager) List() ([]*View, error) {
+// workspaceID 非空时只列这个工作区的会话（空串表示所有工作区）。
+func (m *Manager) List(workspaceID string) ([]*View, error) {
 	out := []*View{}
 	bound := map[string]bool{}
 	for _, id := range m.store.ids() {
@@ -445,12 +458,20 @@ func (m *Manager) List() ([]*View, error) {
 			continue
 		}
 		bound[current.taskID] = true
+		if workspaceID != "" && current.workspaceID != workspaceID {
+			continue
+		}
 		out = append(out, m.view(current))
 	}
+	// 由旧任务推导出的只读会话；发起事件里没有工作区的旧任务（Spec 0006 之前）算作未归属，不带过滤时也列
 	for _, summary := range m.deps.Engine.List() {
-		if !bound[summary.ID] {
-			out = append(out, m.legacyView(summary))
+		if bound[summary.ID] {
+			continue
 		}
+		if workspaceID != "" && summary.WorkspaceID != workspaceID {
+			continue
+		}
+		out = append(out, m.legacyView(summary))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil
@@ -462,7 +483,7 @@ func notFound(id string) error {
 
 func (m *Manager) view(current *record) *View {
 	view := &View{
-		ID: current.id, Status: StatusReception, Title: titleOf(current),
+		ID: current.id, WorkspaceID: current.workspaceID, Status: StatusReception, Title: titleOf(current),
 		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,

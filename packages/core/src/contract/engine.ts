@@ -68,6 +68,8 @@ export interface TaskSummary {
   updatedAt: string;
   /** 事件日志损坏时给出的错误说明（任务仍以最后已知状态出现在列表里）；正常任务没有该字段 */
   error?: string;
+  /** 任务属于哪个工作区（取自发起事件；Spec 0006 之前的旧任务没有该字段） */
+  workspaceId?: string;
 }
 
 export interface TaskEngine {

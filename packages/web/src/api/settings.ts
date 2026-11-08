@@ -82,6 +82,9 @@ export interface DemoSaveResult {
 
 export interface WorkspaceView {
   ok: true;
+  /** 应用目录：设置、员工、知识库、会话和任务都在这里（Spec 0006） */
+  appDir: string;
+  /** 工作区目录（单目录模式下就是应用目录） */
   workspaceDir: string;
   employeesDir: string;
   defaultEmployeesDir: string;
@@ -251,6 +254,10 @@ interface MockConnection extends SettingsConnectionView {
   apiKey: string;
 }
 
+// Spec 0006：应用目录放全局内容（设置、员工、知识库），工作区是用户的普通目录
+const workspace = "C:\\Users\\demo\\Documents\\数字员工";
+const appDir = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee-app";
+
 function createMockSettingsApi(): SettingsApi {
   let connections: MockConnection[] = [
     {
@@ -307,8 +314,6 @@ function createMockSettingsApi(): SettingsApi {
     }
     return out;
   };
-  const workspace = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee";
-
   // ---- 设置文档 v2 的内存模拟（T19 起的接口）
   const isRecord = (value: unknown): value is Record<string, any> => typeof value === "object" && value !== null && !Array.isArray(value);
   let revision = 0;
@@ -400,14 +405,15 @@ function createMockSettingsApi(): SettingsApi {
     getWorkspace: () =>
       later({
         ok: true as const,
+        appDir,
         workspaceDir: workspace,
-        employeesDir: `${workspace}\\employees`,
-        defaultEmployeesDir: `${workspace}\\employees`,
-        configVersionsDir: `${workspace}\\config-versions`,
+        employeesDir: `${appDir}\\employees`,
+        defaultEmployeesDir: `${appDir}\\employees`,
+        configVersionsDir: `${appDir}\\config-versions`,
       }),
     openWorkspace: () => later({ ok: true as const, path: workspace }),
     resetEmployees: () =>
-      later({ ok: true as const, backupPath: `${workspace}\\config-versions\\employees\\20261029`, employees: ["weekly-report"] }, 300),
+      later({ ok: true as const, backupPath: `${appDir}\\config-versions\\employees\\20261029`, employees: ["weekly-report"] }, 300),
     // ---- 设置文档 v2（T19）
     getAppSettings: () => later(currentAppView()),
     patchAppSettings: (patch) =>
@@ -446,7 +452,7 @@ function createMockSettingsApi(): SettingsApi {
         return {
           ok: true as const,
           revision,
-          backupPath: `${workspace}\\config-versions\\settings\\20261105120000.json`,
+          backupPath: `${appDir}\\config-versions\\settings\\20261105120000.json`,
           migrated: raw.version !== SETTINGS_VERSION,
         };
       }),
@@ -457,10 +463,10 @@ function createMockSettingsApi(): SettingsApi {
         app: { version: "0.0.0-mock", settingsVersion: SETTINGS_VERSION },
         runtime: { bun: "1.4.2", platform: "win32", arch: "x64" },
         workspace: {
-          workspaceDir: workspace,
-          employeesDir: `${workspace}\\employees`,
-          configVersionsDir: `${workspace}\\config-versions`,
-          settingsFile: `${workspace}\\settings.json`,
+          workspaceDir: appDir,
+          employeesDir: `${appDir}\\employees`,
+          configVersionsDir: `${appDir}\\config-versions`,
+          settingsFile: `${appDir}\\settings.json`,
           settingsFileExists: true,
         },
         settings: currentAppView(),
@@ -469,11 +475,11 @@ function createMockSettingsApi(): SettingsApi {
     exportDiagnostics: () =>
       later<DiagnosticsExportResult>({
         ok: true,
-        path: `${workspace}\\diagnostics\\diagnostic-20261105120000.json`,
+        path: `${appDir}\\diagnostics\\diagnostic-20261105120000.json`,
         generatedAt: new Date().toISOString(),
       }),
-    openDiagnosticsFolder: () => later({ ok: true as const, path: `${workspace}\\diagnostics` }),
-    openSettingsFile: () => later({ ok: true as const, path: `${workspace}\\settings.json` }),
+    openDiagnosticsFolder: () => later({ ok: true as const, path: `${appDir}\\diagnostics` }),
+    openSettingsFile: () => later({ ok: true as const, path: `${appDir}\\settings.json` }),
   };
 }
 

@@ -5,9 +5,10 @@
 import type { PreflightResult, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
 
 export interface SessionApi {
-  listSessions(): Promise<SessionSummary[]>;
+  listSessions(workspaceId?: string): Promise<SessionSummary[]>;
   getSession(id: string): Promise<SessionDetail>;
-  createSession(): Promise<SessionSummary>;
+  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
+  createSession(workspaceId?: string): Promise<SessionSummary>;
   sendMessage(id: string, text: string): Promise<SessionResult>;
   confirmEmployee(id: string, employee: string): Promise<SessionResult>;
   uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
@@ -50,9 +51,15 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
   }
 
   return {
-    listSessions: () => read<SessionSummary[]>(url("sessions")),
+    listSessions: (workspaceId) =>
+      read<SessionSummary[]>(url(workspaceId ? `sessions?workspaceId=${encodeURIComponent(workspaceId)}` : "sessions")),
     getSession: (id) => read<SessionDetail>(session(id)),
-    createSession: () => read<SessionSummary>(url("sessions"), { method: "POST", headers: { "x-role": getRole() } }),
+    createSession: (workspaceId) =>
+      read<SessionSummary>(url("sessions"), {
+        method: "POST",
+        headers: { "x-role": getRole(), ...(workspaceId ? { "content-type": "application/json" } : {}) },
+        ...(workspaceId ? { body: JSON.stringify({ workspaceId }) } : {}),
+      }),
     sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
     confirmEmployee: (id, employee) => act(session(id, "/employee"), JSON.stringify({ employee })),
     uploadAttachments(id, files) {
