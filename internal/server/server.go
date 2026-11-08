@@ -46,6 +46,8 @@ type Options struct {
 	LoadEmployee func(dir string) (*contract.EmployeeConfig, error)
 	// ProbeConnection “测试连接”实现；缺省发真实 HTTP 请求。
 	ProbeConnection func(conn contract.ModelConnection, model string) contract.ModelConnectionTest
+	// ModelListTimeout “拉取模型”的超时；缺省 15 秒（测试里调小，避免等满）。
+	ModelListTimeout time.Duration
 	// OpenFolder 打开文件夹；缺省按平台调用 explorer/open/xdg-open。
 	OpenFolder func(dir string) error
 	// OpenFile 用系统编辑器打开文件；缺省按平台调用 notepad/open/xdg-open。
@@ -234,6 +236,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/settings/connections/{name}", s.handleSaveConnection)
 	m.HandleFunc("DELETE /api/settings/connections/{name}", s.handleDeleteConnection)
 	m.HandleFunc("POST /api/settings/connections/{name}/test", s.handleTestConnection)
+	m.HandleFunc("POST /api/settings/connections/{name}/models", s.handleFetchModels)
 	m.HandleFunc("GET /api/settings/app", s.handleGetAppSettings)
 	m.HandleFunc("PATCH /api/settings/app", s.handlePatchAppSettings)
 	m.HandleFunc("PUT /api/settings/role", s.handleSetRole)
