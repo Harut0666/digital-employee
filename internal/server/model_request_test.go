@@ -3,6 +3,8 @@ package server_test
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -31,6 +33,35 @@ func firstTextLine(t *testing.T, path string) string {
 	}
 	t.Fatalf("%s 是空文件", path)
 	return ""
+}
+
+// 人在设置里把连接的模型换掉以后，任务要用新模型；“测试连接”能通过的模型，任务也必须能用。
+func TestRunUsesTheModelTheConnectionNowLists(t *testing.T) {
+	service := newFakeModelService(t, caseScript(t, "A-01"), 0, 0)
+	h := newHarness(t, nil, withModelConnection(connectionTo(service.server.URL, 0)))
+
+	payload := fmt.Sprintf(`{"baseUrl":%q,"models":["model-v2"]}`, service.server.URL)
+	status, data := h.send(http.MethodPut, "/api/settings/connections/fake", operator, "application/json", strings.NewReader(payload))
+	if status != http.StatusOK {
+		t.Fatalf("保存连接失败：%d %s", status, data)
+	}
+	task := h.createTask(a01Files(t))
+	expectState(t, h.command(task.ID, initiator, cmd(contract.CmdSubmit)), contract.StateAwaitingReview)
+
+	if len(service.bodies) == 0 {
+		t.Fatal("任务没有调用模型")
+	}
+	for index, body := range service.bodies {
+		var request struct {
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil {
+			t.Fatalf("第 %d 个请求不是合法 JSON：%v", index, err)
+		}
+		if request.Model != "model-v2" {
+			t.Fatalf("第 %d 个请求用的模型是 %q，应该是连接里现在列出的 model-v2", index, request.Model)
+		}
+	}
 }
 
 func TestJudgmentRequestCarriesSkillAndStepPrompt(t *testing.T) {

@@ -237,6 +237,15 @@ func (h *harness) serve() string {
 			}
 			return h.model
 		},
+		// 和生产一样：保存模型设置后重建真实模型提供者并交给引擎；剧本模式不换
+		OnSettingsSaved: func(saved contract.ModelSettings) error {
+			if h.scripted {
+				return nil
+			}
+			h.model = agent.NewModelProvider(saved)
+			h.engine.SetModelProvider(h.model)
+			return nil
+		},
 		Env:    h.env,
 		Logger: server.NewLogger(server.LevelError, func(string, string) {}),
 	})

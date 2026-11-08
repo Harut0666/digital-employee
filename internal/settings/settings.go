@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"digital-employee/internal/contract"
@@ -351,6 +352,30 @@ func normalizeDemo(v any) contract.DemoSettings {
 	return demo
 }
 
+// reconcileDefaults 让默认连接和默认模型始终指向真实存在的配置：
+// 默认连接不在列表里时取第一个连接；默认模型不在默认连接的模型列表里时取列表第一个。
+// 否则人改了连接的模型后，“测试连接”用的是新模型，任务却还用旧的默认模型。
+func reconcileDefaults(doc *contract.SettingsDocument) {
+	var current *contract.ModelConnection
+	for index := range doc.Connections {
+		if doc.Connections[index].Name == doc.DefaultConnection {
+			current = &doc.Connections[index]
+			break
+		}
+	}
+	if current == nil {
+		if len(doc.Connections) == 0 {
+			return
+		}
+		current = &doc.Connections[0]
+		doc.DefaultConnection = current.Name
+	}
+	if len(current.Models) == 0 || slices.Contains(current.Models, doc.DefaultModel) {
+		return
+	}
+	doc.DefaultModel = current.Models[0]
+}
+
 // Normalize 把任意形状的 settings.json 归一化成 v2 文档（v1 → v2 的迁移也在这里）。
 func Normalize(raw map[string]any) contract.SettingsDocument {
 	doc := contract.SettingsDocument{}
@@ -386,6 +411,7 @@ func Normalize(raw map[string]any) contract.SettingsDocument {
 	} else {
 		doc.DefaultModel = DefaultDefaultModel
 	}
+	reconcileDefaults(&doc)
 	if s, ok := raw["defaultEmployee"].(string); ok {
 		doc.DefaultEmployee = s
 	}
