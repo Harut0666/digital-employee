@@ -2,25 +2,11 @@
 // 人的操作（发消息、确认员工、上传、提交）返回 SessionResult：业务错误也是结果，不抛异常，
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
-import type { PreflightResult, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
 
-export interface SessionApi {
-  listSessions(workspaceId?: string): Promise<SessionSummary[]>;
-  getSession(id: string): Promise<SessionDetail>;
-  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
-  createSession(workspaceId?: string): Promise<SessionSummary>;
-  sendMessage(id: string, text: string): Promise<SessionResult>;
-  confirmEmployee(id: string, employee: string): Promise<SessionResult>;
-  uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
-  /** form 省略时用草稿 */
-  submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
-  /** 发起人在开工清单上确认跳过一项可跳过项 */
-  skipChecklistItem(id: string, item: string): Promise<SessionResult>;
-  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
-  draftFiling(id: string): Promise<SessionResult>;
-  /** 提交前检查：默认模型连接有没有可用 Key */
-  preflight(): Promise<PreflightResult>;
-}
+
+import type { PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
+
+export type { SessionApi };
 
 type Json = Record<string, unknown>;
 
@@ -51,8 +37,13 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
   }
 
   return {
-    listSessions: (workspaceId) =>
-      read<SessionSummary[]>(url(workspaceId ? `sessions?workspaceId=${encodeURIComponent(workspaceId)}` : "sessions")),
+    listSessions: (workspaceId, options) => {
+      const query = new URLSearchParams();
+      if (workspaceId) query.set("workspaceId", workspaceId);
+      if (options?.archived) query.set("archived", "1");
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      return read<SessionSummary[]>(url(`sessions${suffix}`));
+    },
     getSession: (id) => read<SessionDetail>(session(id)),
     createSession: (workspaceId) =>
       read<SessionSummary>(url("sessions"), {
@@ -60,7 +51,16 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
         headers: { "x-role": getRole(), ...(workspaceId ? { "content-type": "application/json" } : {}) },
         ...(workspaceId ? { body: JSON.stringify({ workspaceId }) } : {}),
       }),
-    sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
+    async updateSession(id, patch) {
+      // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
+      const body = await read<{ session?: SessionSummary }>(session(id), {
+        method: "PATCH",
+        headers: { "content-type": "application/json", "x-role": getRole() },
+        body: JSON.stringify(patch),
+      });
+      if (!body.session) throw new Error("响应里没有会话");
+      return body.session;
+    },    sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
     confirmEmployee: (id, employee) => act(session(id, "/employee"), JSON.stringify({ employee })),
     uploadAttachments(id, files) {
       const form = new FormData();

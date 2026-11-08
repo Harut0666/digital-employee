@@ -90,19 +90,128 @@ func (s *Server) sessionRoute(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleListSessions 列出会话；?workspaceId= 只列这个工作区的会话（不带时列全部工作区）。
+// handleListSessions 列出会话；?workspaceId= 只列这个工作区的会话（不带时列全部工作区）；
+// ?archived=1 连归档的会话一起列（默认不列）。
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspaceId"))
+	query := r.URL.Query()
+	workspaceID := strings.TrimSpace(query.Get("workspaceId"))
 	if workspaceID != "" && !s.workspaceRegistered(workspaceID) {
 		writeSessionError(w, &session.Error{Code: session.ErrWorkspaceUnknown, Message: "工作区不存在：" + workspaceID})
 		return
 	}
-	views, err := s.sessions.List(workspaceID)
+	views, err := s.sessions.List(workspaceID, truthy(query.Get("archived")))
 	if err != nil {
 		writeSessionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, views)
+}
+
+// handlePatchSession 人改会话：重命名（title）、归档或取消归档（archived）。
+func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	id := r.PathValue("id")
+	var changed bool
+	if raw, present := body["title"]; present {
+		title, ok := raw.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "title 必须是字符串"))
+			return
+		}
+		if _, err := s.sessions.Rename(id, role, title); err != nil {
+			writeSessionError(w, err)
+			return
+		}
+		changed = true
+	}
+	if raw, present := body["archived"]; present {
+		archived, ok := raw.(bool)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "archived 必须是 true 或 false"))
+			return
+		}
+		if _, err := s.sessions.Archive(id, role, archived); err != nil {
+			writeSessionError(w, err)
+			return
+		}
+		changed = true
+	}
+	if !changed {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "没有要改的内容：可以改 title 或 archived"))
+		return
+	}
+	summary, err := s.sessions.SummaryOf(id, role)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": summary, "statusDot": summary.StatusDot})
+}
+
+// handleRecords 侧栏“记录”tab：所有工作区里已开工的任务，按状态分组（每组都列出来，空的也列）。
+func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	// 状态点按读的人的角色现算（记录本身缓存的是任务和会话，不带角色）
+	records := s.sessions.Records()
+	for index := range records {
+		if records[index].SessionID != "" {
+			records[index].StatusDot = s.sessions.DotFor(records[index].SessionID, role)
+		}
+	}
+	writeJSON(w, http.StatusOK, s.recordsView(records))
+}
+
+// handleListWorkspaces GET /api/workspaces：每个工作区连同它的会话摘要，末尾是“未归属”分组。
+// ?archived=1 连归档的会话一起列。
+func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.workspaceView(role, truthy(r.URL.Query().Get("archived")), true))
+}
+
+// handleOpenWorkspaceFolder POST /api/workspaces/{id}/open：在资源管理器里打开工作区目录。
+func (s *Server) handleOpenWorkspaceFolder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.workspaceMu.Lock()
+	s.workspaceMu.RLock()
+	dir, found := s.workspaces.dirs[id]
+	s.workspaceMu.RUnlock()
+	if !found {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, "工作区不存在："+id))
+		return
+	}
+	if err := s.opts.OpenFolder(dir); err != nil {
+		writeJSON(w, http.StatusInternalServerError, internalError("打开工作区失败："+err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": dir})
+}
+
+// sessionSummaryOf 会话详情 → 侧栏里的摘要；同时返回按发起人算的状态点。
+// 写操作之后回一份最新摘要，界面不用再读一次工作区列表。
+// truthy 查询参数里表示“是”的写法。
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // handleCreateSession 在某个工作区里开新会话：请求体必须带 workspaceId（单目录模式可以省略）。
