@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/app"
@@ -239,10 +240,38 @@ func (a *switchingApp) sessions(query string) []session.View {
 func (a *switchingApp) sessionsWith(workspaceID string) map[string]string {
 	a.t.Helper()
 	out := map[string]string{}
-	for _, item := range a.sessions("?workspaceId=" + workspaceID) {
-		out[item.ID] = item.WorkspaceID
+	// 会话目录隔一会儿才重新读（T38 起列表带状态点）：新建的会话马上读不到，等一下
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out = map[string]string{}
+		listed := a.sessions("?workspaceId=" + workspaceID)
+		for _, item := range listed {
+			out[item.ID] = item.WorkspaceID
+		}
+		if time.Now().After(deadline) {
+			return out
+		}
+		if len(out) > 0 {
+			return out
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return out
+}
+
+// waitSessions 等到会话列表满足条件，最多等这么久（T38 起会话目录隔一会儿才重新读）。
+func (a *switchingApp) waitSessions(query string, ok func([]session.View) bool) []session.View {
+	a.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		list := a.sessions(query)
+		if ok(list) {
+			return list
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // createDraftTask 用公开样例建一个第 44 周的草稿任务，返回任务 ID。
@@ -574,15 +603,23 @@ func TestWorkspacesShareSettingsAndSessionsStayInTheirWorkspace(t *testing.T) {
 		t.Fatal("设置应在应用目录里")
 	}
 
-	onlyOther := a.sessions("?workspaceId=" + other.ID)
-	if len(onlyOther) != 1 || onlyOther[0].ID != inOther.ID {
-		t.Fatalf("B 下只应有 B 的会话：%+v", onlyOther)
+	// 会话目录隔一会儿才重新读（T38 起列表带状态点）：刚建的会话等一下才看得到
+	onlyOther := a.waitSessions("?workspaceId="+other.ID, func(list []session.View) bool { return len(list) == 1 && list[0].ID == inOther.ID })
+	if onlyOther == nil {
+		t.Fatalf("B 下只应有 B 的会话：%+v", a.sessions("?workspaceId="+other.ID))
 	}
-	ids := []string{}
-	for _, item := range a.sessions("") {
-		ids = append(ids, item.ID)
-	}
-	if !slices.Contains(ids, inMine.ID) || !slices.Contains(ids, inOther.ID) {
+	both := a.waitSessions("", func(list []session.View) bool {
+		ids := []string{}
+		for _, item := range list {
+			ids = append(ids, item.ID)
+		}
+		return slices.Contains(ids, inMine.ID) && slices.Contains(ids, inOther.ID)
+	})
+	if both == nil {
+		ids := []string{}
+		for _, item := range a.sessions("") {
+			ids = append(ids, item.ID)
+		}
 		t.Fatalf("不带过滤时应列出两个工作区的会话：%v", ids)
 	}
 }
@@ -613,7 +650,7 @@ func TestUnregisterKeepsSessionsTasksAndFiles(t *testing.T) {
 	}
 	// 会话、任务和目录里的文件都还在
 	found := false
-	for _, item := range a.sessions("") {
+	for _, item := range a.waitSessions("", func(list []session.View) bool { return slices.ContainsFunc(list, func(s session.View) bool { return s.ID == created.ID }) }) {
 		if item.ID == created.ID {
 			found = true
 			if item.WorkspaceID != mine.ID {

@@ -22,7 +22,7 @@ func draftingSession(h *harness) session.View {
 }
 
 func TestMissingRequiredItemsRefuseToStart(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	opened := draftingSession(h)
 
 	status, data := h.trySubmit(opened.ID, contract.RoleInitiator, week44Form)
@@ -55,7 +55,7 @@ func TestOnlyTheProgramTicksTheChecklist(t *testing.T) {
 		modelCalls("fill_form_draft", map[string]any{"salesFile": "销售明细.xlsx"}),
 		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
 		modelSays("统计周期已填好，还缺销售明细。"),
-	))
+	), withScriptedModel())
 	opened := draftingSession(h)
 	if got := itemStatus(t, h.readSession(opened.ID).Checklist); got != "period=missing sales=missing minutes=missing" {
 		t.Fatalf("接手时的清单：%s", got)
@@ -88,7 +88,7 @@ func (h *harness) skipItem(sessionID string, role contract.Role, item string) (i
 }
 
 func TestSkippedItemIsConfirmedByThePersonAndLeavesATrace(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	opened := draftingSession(h)
 	uploadOK(h, opened.ID, sampleFile(t, "销售明细.xlsx"))
 
@@ -130,7 +130,7 @@ func TestSkippedItemIsConfirmedByThePersonAndLeavesATrace(t *testing.T) {
 }
 
 func TestWrongWeekMinutesStartAndAdmissionPausesForASupplement(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	opened := draftingSession(h)
 
 	// 清单只看文件传了没有：第 43 周的纪要也算“本周纪要”已上传
@@ -187,7 +187,7 @@ func (h *harness) saveChecklist(items []map[string]any) (int, []byte) {
 }
 
 func TestChecklistIsEditedOnTheEmployeeConfigPage(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 
 	// 配置页能读到清单文件
 	status, data := h.send(http.MethodGet, "/api/employees/"+harnessEmployee+"/config", "", "", nil)

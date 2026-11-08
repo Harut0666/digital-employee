@@ -2,8 +2,9 @@
 // 消息和卡片都来自后端的会话接口，这里只决定显示成什么、哪张卡片还能操作。
 // 任务卡片上的按钮由后端在读取时配上（只配给当前暂停的卡片），前端不推算。
 
-import type { DeliverableRef, QcCheckResult, TaskState } from "@de/core/contract";
+import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
 import type { PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
+import { modelNotices, selectedModelNotice } from "./session-model";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -14,6 +15,7 @@ interface ItemBase {
 export type ChatItem =
   | (ItemBase & { kind: "user"; text: string; role?: UiRole })
   | (ItemBase & { kind: "agent"; text: string })
+  // 模型切换说明（T39）不用单独的 kind：是程序说明，按 kind: "notice" 显示
   | (ItemBase & { kind: "notice"; text: string })
   | (ItemBase & {
       kind: "employee_confirm";
@@ -59,7 +61,24 @@ export interface ChatTask {
   deliverables: DeliverableRef[];
 }
 
-export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] {
+function noticeItem(notice: { key: string; ts: string; text: string }): ChatItem {
+  return { key: notice.key, ts: notice.ts, kind: "notice", text: notice.text };
+}
+
+/** 一条说明按时间插进前面：同一时间点的插在已有消息之后。 */
+function insertByTime(items: ChatItem[], item: ChatItem): void {
+  const at = Date.parse(item.ts);
+  let start = 0;
+  let end = items.length;
+  while (start < end) {
+    const middle = (start + end) >> 1;
+    if (Date.parse(items[middle]?.ts ?? "") <= at) start = middle + 1;
+    else end = middle;
+  }
+  items.splice(start, 0, item);
+}
+
+export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = []): ChatItem[] {
   const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -100,6 +119,11 @@ export function deriveChat(session: SessionDetail, task?: ChatTask): ChatItem[] 
     items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
   }
   items.push(...filings);
+
+  // 模型切换说明（T39）：会话里选的模型、任务运行中的切换，按时间插进对话
+  const selected = selectedModelNotice(session);
+  if (selected) items.push(noticeItem(selected));
+  for (const notice of modelNotices(events)) insertByTime(items, noticeItem(notice));
   return items;
 
   function filingItem(base: ItemBase, card: SessionCard): ChatItem {

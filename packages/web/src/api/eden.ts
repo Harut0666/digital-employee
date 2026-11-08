@@ -14,6 +14,7 @@ import type { CommandResult, CreateTaskInput, DeliverableKind, EmployeeInfo, Pub
 /** 全部事件类型；用 Record 保证契约新增事件类型时这里编译报错而不是悄悄漏订阅。 */
 const EVENT_TYPE_SET: Record<TaskEventType, true> = {
   task_created: true,
+  model_switched: true,
   form_updated: true,
   state_changed: true,
   transition_rejected: true,

@@ -139,7 +139,8 @@ func TestListFilesSkipsHiddenFilesAndSubdirectory(t *testing.T) {
 		t.Fatalf("list_files 调用了 %d 次", len(results))
 	}
 	root := listingPaths(t, results[0])
-	want := []string{"交付/", "资料/", "a.txt"}
+	// 工作区目录里只有人自己的文件：“交付”由程序在开工写交付物时建（T42），测试装置不预先建
+	want := []string{"资料/", "a.txt"}
 	if fmt.Sprint(root) != fmt.Sprint(want) {
 		t.Fatalf("工作区目录的列表 = %v，want %v（隐藏文件和“材料”不列）", root, want)
 	}
@@ -297,7 +298,7 @@ func TestUsingAFolderFileNeedsConfirmation(t *testing.T) {
 
 // 确认后材料是副本：原文件改了不影响已开工的任务。
 func TestConfirmedFolderFileIsACopy(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	original := h.writeWorkspaceFile(t, "资料/销售明细.xlsx", sampleFile(t, "销售明细.xlsx").content)
 	h.writeWorkspaceFile(t, "资料/周会纪要_2026W44.docx", sampleFile(t, "周会纪要_2026W44.docx").content)
 	created := h.folderSession()
@@ -364,7 +365,7 @@ func TestConfirmingFolderFilesIsValidated(t *testing.T) {
 
 // 清单的“已提供材料”：从目录确认的材料和上传的一样算。
 func TestFolderFileCountsAsProvidedMaterial(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	h.writeWorkspaceFile(t, "资料/销售明细.xlsx", sampleFile(t, "销售明细.xlsx").content)
 	h.writeWorkspaceFile(t, "资料/周会纪要_2026W44.docx", sampleFile(t, "周会纪要_2026W44.docx").content)
 	created := h.folderSession()
@@ -395,7 +396,7 @@ func TestFolderFileCountsAsProvidedMaterial(t *testing.T) {
 
 // 清单判定改名“已提供材料”：旧的 source: upload 和新写法 material 都能用，上传和目录确认都算。
 func TestMaterialSourceCountsBoth(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	editWorkflow(t, filepath.Join(h.employees, harnessEmployee, "checklist.yaml"), [][2]string{
 		{"source: upload", "source: material"},
 	})
@@ -484,7 +485,7 @@ func TestFolderFileCardAction(t *testing.T) {
 }
 
 func TestFolderFileRefusedAfterSubmit(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	h.writeWorkspaceFile(t, "资料/销售明细.xlsx", sampleFile(t, "销售明细.xlsx").content)
 	h.writeWorkspaceFile(t, "资料/周会纪要_2026W44.docx", sampleFile(t, "周会纪要_2026W44.docx").content)
 	created := h.folderSession()
@@ -496,5 +497,70 @@ func TestFolderFileRefusedAfterSubmit(t *testing.T) {
 
 	if status, data := h.useFolderFile(created.ID, contract.RoleInitiator, "资料/销售明细.xlsx"); status != http.StatusConflict {
 		t.Fatalf("开工后再确认目录文件应被拒绝：%d %s", status, data)
+	}
+}
+
+// @ 选择用的文件列表：递归列出工作区目录里的文件（子目录里的也算），
+// 不列“交付”“材料”和隐藏文件/文件夹，只列文件、不列目录项。
+func TestFolderFilesListing(t *testing.T) {
+	h := newHarness(t, nil, withAppMode())
+	h.writeWorkspaceFile(t, "a.txt", []byte("甲"))
+	h.writeWorkspaceFile(t, "资料/汇总.xlsx", []byte("x"))
+	h.writeWorkspaceFile(t, "资料/子目录/明细.csv", []byte("y"))
+	h.writeWorkspaceFile(t, ".secret", []byte("隐藏"))
+	h.writeWorkspaceFile(t, ".hidden/内部.txt", []byte("隐藏文件夹"))
+	h.writeWorkspaceFile(t, "交付/周报_v1.docx", []byte("x"))
+	h.writeWorkspaceFile(t, "材料/销售明细.xlsx", []byte("x"))
+	created := h.folderSession()
+
+	status, data := h.send(http.MethodGet, "/api/sessions/"+created.ID+"/folder-files", contract.RoleInitiator, "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("列目录文件失败：%d %s", status, data)
+	}
+	listed := decode[session.FolderListing](t, data)
+	paths := make([]string, 0, len(listed.Entries))
+	for _, entry := range listed.Entries {
+		paths = append(paths, entry.Path)
+	}
+	// 递归、只要文件、按路径排序；交付/材料/隐藏都不出现
+	want := "[a.txt 资料/子目录/明细.csv 资料/汇总.xlsx]"
+	if fmt.Sprint(paths) != want {
+		t.Fatalf("可选的目录文件 = %v，want %s（工作区目录：%s）", paths, want, h.workspace)
+	}
+	if listed.Truncated {
+		t.Fatal("文件不多，不应截断")
+	}
+	for _, entry := range listed.Entries {
+		if entry.Name == "" || entry.Size <= 0 {
+			t.Fatalf("文件项应带名字和大小：%+v", entry)
+		}
+	}
+	// 只读列表谁都能看；没带角色不行。确认（POST）只有发起人能做
+	if status, _ := h.send(http.MethodGet, "/api/sessions/"+created.ID+"/folder-files", contract.RoleReviewer, "", nil); status != http.StatusOK {
+		t.Fatalf("只读列表对任何角色都开放：%d", status)
+	}
+	if status, _ := h.send(http.MethodGet, "/api/sessions/"+created.ID+"/folder-files", "", "", nil); status != http.StatusForbidden {
+		t.Fatalf("没带角色不能看：%d", status)
+	}
+}
+
+// 递归也要有上限：最多 200 项，超出标 Truncated。
+func TestFolderFilesListingLimit(t *testing.T) {
+	h := newHarness(t, nil, withAppMode())
+	for index := 0; index < 60; index++ {
+		h.writeWorkspaceFile(t, fmt.Sprintf("资料/%02d/%03d.txt", index%6, index), []byte("x"))
+	}
+	for index := 0; index < 150; index++ {
+		h.writeWorkspaceFile(t, fmt.Sprintf("更多/%03d.txt", index), []byte("x"))
+	}
+	created := h.folderSession()
+
+	status, data := h.send(http.MethodGet, "/api/sessions/"+created.ID+"/folder-files", contract.RoleInitiator, "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("列目录文件失败：%d %s", status, data)
+	}
+	listed := decode[session.FolderListing](t, data)
+	if len(listed.Entries) != 200 || !listed.Truncated {
+		t.Fatalf("共 210 个文件：应列 200 项并标截断，实际 %d 项，truncated=%v", len(listed.Entries), listed.Truncated)
 	}
 }

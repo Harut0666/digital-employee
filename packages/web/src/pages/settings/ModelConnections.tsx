@@ -1,12 +1,14 @@
 // 模型连接子页：多连接编辑、测试连接、API Key 打码与环境变量来源。
 // T20：每张连接卡片增加“高级”折叠区——每模型上下文窗口 / 输出上限 / 推理档位，连接级超时与重试。
+// T37：增加“拉取模型”——请求 {baseUrl}/models，结果以勾选框列出，点“保存”才写入连接的模型列表。
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Collapse, Input, InputNumber, Popconfirm, Select, Space, Tag, Tooltip, Typography } from "antd";
+import { App as AntApp, Button, Checkbox, Collapse, Input, InputNumber, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { THINKING_LEVELS, type ModelOptions, type ThinkingLevel } from "@de/core/contract";
 import {
   ApiOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
+  CloudDownloadOutlined,
   DeleteOutlined,
   DownOutlined,
   InfoCircleOutlined,
@@ -17,6 +19,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import type { ConnectionTestResult, SettingsApi, SettingsConnectionView } from "../../api/settings";
+import { mergeFetchedModels, modelCheckOptions, selectedModels, toggleModelSelection, type ModelOption } from "./model-picker";
 
 const { Text } = Typography;
 
@@ -121,6 +124,34 @@ function ModelTags({ value, onChange }: { value: string[]; onChange: (models: st
   );
 }
 
+/** 拉取模型的状态：拉取中 / 列出勾选结果 / 拉取失败（原因已脱敏）。 */
+type FetchState = { phase: "loading" } | { phase: "list"; rows: ModelOption[] } | { phase: "error"; error: string };
+
+/** 请求 /models 时的入参：带当前草稿里还没保存的 Base URL 与 Key，空串交给服务端用已保存的值。 */
+function fetchInputOf(draft: DraftState) {
+  return { baseUrl: draft.baseUrl.trim() || undefined, apiKey: draft.apiKey.trim() || undefined };
+}
+
+/** 拉取结果的勾选列表：已在列表的默认勾上；点“保存”才写入连接的模型列表。 */
+function ModelChecklist({ rows, onChange }: { rows: ModelOption[]; onChange: (rows: ModelOption[]) => void }) {
+  return (
+    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+      <Checkbox.Group
+        style={{ display: "flex", flexDirection: "column", gap: 6 }}
+        value={rows.filter((row) => row.checked).map((row) => row.id)}
+        options={modelCheckOptions(rows)}
+        onChange={(ids) => {
+          const chosen = new Set((ids as string[]).map(String));
+          onChange(rows.map((row) => ({ ...row, checked: chosen.has(row.id) })));
+        }}
+      />
+      <Text type="secondary" style={{ fontSize: 12 }}>
+        已在列表的默认勾上；没勾的这次拉到的模型保存后不写入，原列表里这次没拉到的模型默认保留。
+      </Text>
+    </Space>
+  );
+}
+
 function ConnectionCard({
   api,
   connection,
@@ -134,6 +165,7 @@ function ConnectionCard({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<DraftState>(draftOf(connection));
   const [test, setTest] = useState<TestState>();
+  const [fetch, setFetch] = useState<FetchState>();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -158,12 +190,17 @@ function ConnectionCard({
   const save = async () => {
     if (!draft.baseUrl.trim()) return message.warning("请填写 Base URL");
     if (draft.models.length === 0) return message.warning("请至少添加一个模型");
+    return persist(draft.models);
+  };
+
+  /** 写回连接：模型列表由调用方给出（手动编辑的结果，或勾选框的结果）。 */
+  const persist = async (models: string[]) => {
     setSaving(true);
     try {
       const res = await api.saveConnection(connection.name, {
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim() === "" ? undefined : draft.apiKey.trim(),
-        models: draft.models,
+        models,
         // 没有配置任何每模型参数时传 null，避免在 settings.json 里留下空对象
         modelOptions: Object.keys(draft.modelOptions).length > 0 ? draft.modelOptions : null,
         // undefined 表示没设置：传 null 让服务端清掉（老配置可能带着旧值）
@@ -172,13 +209,40 @@ function ConnectionCard({
       });
       if (res.warning) message.warning(`已保存，但重建模型提供者失败：${res.warning}`);
       else message.success("已保存，对新的判断步骤生效");
-      setDraft((d) => ({ ...d, apiKey: "" }));
+      setDraft((d) => ({ ...d, apiKey: "", models }));
+      setFetch(undefined);
       onChanged();
     } catch (e) {
       message.error(e instanceof Error ? e.message : "保存失败");
     } finally {
       setSaving(false);
     }
+  };
+
+  /** 拉取 {baseUrl}/models：只列结果，不写设置。 */
+  const runFetch = async () => {
+    if (!draft.baseUrl.trim()) return message.warning("请填写 Base URL");
+    setFetch({ phase: "loading" });
+    let retired: string[] = [];
+    if (fetch?.phase === "list") retired = fetch.rows.filter((row) => row.retired).map((row) => row.id);
+    try {
+      const res = await api.fetchModels(connection.name, fetchInputOf(draft));
+      if (!res.ok) {
+        setFetch({ phase: "error", error: res.error });
+        return;
+      }
+      setFetch({ phase: "list", rows: mergeFetchedModels(res.models, draft.models, retired) });
+    } catch (e) {
+      setFetch({ phase: "error", error: e instanceof Error ? e.message : "拉取失败" });
+    }
+  };
+
+  /** 勾选框 → 连接的模型列表。 */
+  const applyChecked = async () => {
+    if (fetch?.phase !== "list") return;
+    const models = selectedModels(fetch.rows);
+    if (models.length === 0) return message.warning("请至少勾选一个模型");
+    await persist(models);
   };
 
   const runTest = async () => {
@@ -188,6 +252,11 @@ function ConnectionCard({
     } catch (e) {
       setTest({ ok: false, latencyMs: 0, model: draft.models[0] ?? "", error: e instanceof Error ? e.message : "测试失败" });
     }
+  };
+
+  const editModels = (models: string[]) => {
+    setFetch(undefined);
+    setDraft((d) => ({ ...d, models }));
   };
 
   return (
@@ -245,7 +314,41 @@ function ConnectionCard({
           </div>
           <div style={row}>
             <div style={labelStyle}>模型</div>
-            <ModelTags value={draft.models} onChange={(models) => setDraft((d) => ({ ...d, models }))} />
+            <ModelTags value={draft.models} onChange={editModels} />
+          </div>
+          <div style={{ ...row, alignItems: "flex-start" }}>
+            <div style={labelStyle}>拉取模型</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Space size={8} wrap>
+                <Button size="small" icon={<CloudDownloadOutlined />} loading={fetch?.phase === "loading"} onClick={runFetch}>
+                  拉取模型
+                </Button>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  请求 {draft.baseUrl.trim() || "Base URL"} 的 /models，结果勾选后再写入，保存前不改设置。
+                </Text>
+              </Space>
+              {fetch?.phase === "error" && (
+                <div style={{ color: "var(--danger)", fontSize: 12, marginTop: 6 }}>拉取失败：{fetch.error}</div>
+              )}
+              {fetch?.phase === "list" && (
+                <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+                  <Spin spinning={saving}>
+                    <ModelChecklist rows={fetch.rows} onChange={(rows) => setFetch({ phase: "list", rows })} />
+                    <Space size={8} style={{ marginTop: 10 }}>
+                      <Button size="small" type="primary" icon={<SaveOutlined />} loading={saving} onClick={applyChecked}>
+                        保存勾选为模型列表
+                      </Button>
+                      <Button size="small" onClick={() => setFetch(undefined)}>
+                        取消
+                      </Button>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        共 {fetch.rows.length} 个，已勾选 {fetch.rows.filter((row) => row.checked).length} 个
+                      </Text>
+                    </Space>
+                  </Spin>
+                </div>
+              )}
+            </div>
           </div>
           <div style={{ ...row, marginBottom: 8 }}>
             <div style={labelStyle}>高级</div>
@@ -420,6 +523,32 @@ function NewConnectionCard({ api, onCreated, onCancel }: { api: SettingsApi; onC
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [fetch, setFetch] = useState<FetchState>();
+
+  /** 新建连接还没保存：把表单里填的 Base URL 与 Key 一起带给服务端拉取。 */
+  const runFetch = async () => {
+    if (!name.trim()) return message.warning("请填写连接名称");
+    if (!baseUrl.trim()) return message.warning("请填写 Base URL");
+    setFetch({ phase: "loading" });
+    try {
+      const res = await api.fetchModels(name.trim(), { baseUrl: baseUrl.trim(), apiKey: apiKey.trim() || undefined });
+      if (!res.ok) {
+        setFetch({ phase: "error", error: res.error });
+        return;
+      }
+      setFetch({ phase: "list", rows: mergeFetchedModels(res.models, models) });
+    } catch (e) {
+      setFetch({ phase: "error", error: e instanceof Error ? e.message : "拉取失败" });
+    }
+  };
+
+  const applyChecked = () => {
+    if (fetch?.phase !== "list") return;
+    const chosen = selectedModels(fetch.rows);
+    if (chosen.length === 0) return message.warning("请至少勾选一个模型");
+    setModels(chosen);
+    setFetch(undefined);
+  };
 
   const save = async () => {
     if (!name.trim()) return message.warning("请填写连接名称");
@@ -467,7 +596,42 @@ function NewConnectionCard({ api, onCreated, onCancel }: { api: SettingsApi; onC
         </div>
         <div style={row}>
           <div style={labelStyle}>模型</div>
-          <ModelTags value={models} onChange={setModels} />
+          <ModelTags
+            value={models}
+            onChange={(next) => {
+              setFetch(undefined);
+              setModels(next);
+            }}
+          />
+        </div>
+        <div style={{ ...row, alignItems: "flex-start" }}>
+          <div style={labelStyle}>拉取模型</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Space size={8} wrap>
+              <Button size="small" icon={<CloudDownloadOutlined />} loading={fetch?.phase === "loading"} onClick={runFetch}>
+                拉取模型
+              </Button>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                用上面填的 Base URL 和 Key 请求 /models，勾选后填入模型列表。
+              </Text>
+            </Space>
+            {fetch?.phase === "error" && (
+              <div style={{ color: "var(--danger)", fontSize: 12, marginTop: 6 }}>拉取失败：{fetch.error}</div>
+            )}
+            {fetch?.phase === "list" && (
+              <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "10px 12px", marginTop: 8 }}>
+                <ModelChecklist rows={fetch.rows} onChange={(rows) => setFetch({ phase: "list", rows })} />
+                <Space size={8} style={{ marginTop: 10 }}>
+                  <Button size="small" icon={<SaveOutlined />} onClick={applyChecked}>
+                    填入模型列表
+                  </Button>
+                  <Button size="small" onClick={() => setFetch(undefined)}>
+                    取消
+                  </Button>
+                </Space>
+              </div>
+            )}
+          </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", paddingBottom: 8 }}>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>

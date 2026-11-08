@@ -168,7 +168,7 @@ func stepRequests(h *harness, stepID string) []agent.ScriptedRequest {
 func TestWeeklyReportJudgeStepsCannotUseTheKnowledgeBase(t *testing.T) {
 	script := caseScript(t, "A-01")
 	script["match_causes"] = append([]agent.ScriptedTurn{kbCall(contract.ToolKBSearch, map[string]any{"query": "周报"})}, script["match_causes"]...)
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 
 	task := h.reviewedTask(week44FormJSON)
 
@@ -249,7 +249,7 @@ func TestWeeklyReportFrontdeskCannotUseTheKnowledgeBase(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls(contract.ToolKBSearch, map[string]any{"query": "周报"}),
 		modelSays("我查不了知识库。"),
-	))
+	), withScriptedModel())
 	opened, _ := pausedSession(h)
 
 	h.say(opened.ID, initiator, "上周的周报怎么说")
@@ -278,7 +278,7 @@ func (h *harness) tickFrontdeskTools(tools ...string) {
 
 func TestTickedFrontdeskSearchesThenReadsTheKnowledgeBase(t *testing.T) {
 	script := caseScript(t, "A-01")
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。"})
 	h.tickFrontdeskTools(contract.ToolQueryTask, contract.ToolKBSearch, contract.ToolKBRead)
 	// 条目 ID 入库后才知道：前台 Agent 的剧本这时再写（剧本模型按调用时的剧本取轮次）

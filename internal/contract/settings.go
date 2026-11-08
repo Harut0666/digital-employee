@@ -96,9 +96,10 @@ type AppSettings struct {
 // SettingsDocument 完整设置文档。
 type SettingsDocument struct {
 	AppSettings
-	Connections       []ModelConnection `json:"connections"`
-	DefaultConnection string            `json:"defaultConnection"`
-	DefaultModel      string            `json:"defaultModel"`
+	Connections []ModelConnection `json:"connections"`
+	// LastModel 最近一次在会话里选的模型（Spec 0006「会话模型」）；nil 表示还没选过。
+	// 取代了旧文档里的 defaultModel：新会话沿用这个模型。
+	LastModel *ModelRef `json:"lastModel,omitempty"`
 	// DefaultEmployee 新会话优先提议的员工；空串表示没设。
 	DefaultEmployee string       `json:"defaultEmployee,omitempty"`
 	Demo            DemoSettings `json:"demo"`

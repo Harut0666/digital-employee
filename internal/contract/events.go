@@ -19,6 +19,10 @@ type TaskEvent struct {
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
 	// WorkspaceID 任务属于哪个工作区（Spec 0006）；旧日志里没有这个字段
 	WorkspaceID string `json:"workspaceId,omitempty"`
+	// Model 任务的会话模型（task_created / model_switched 的切换后模型，Spec 0006“会话模型”）
+	Model *ModelRef `json:"model,omitempty"`
+	// FromModel model_switched 的切换前模型
+	FromModel *ModelRef `json:"fromModel,omitempty"`
 
 	// form_updated / review_decision 之外的角色
 	Actor Role `json:"actor,omitempty"`
@@ -46,11 +50,13 @@ type TaskEvent struct {
 	// ResultSHA256 只在 tool_result.ok=true 时出现
 	ResultSHA256 string `json:"resultSha256,omitempty"`
 
-	// model_called
+	// model_called：Connection、ModelName 是这次调用用的连接和模型名（剧本模式为空）
 	Turn       *int        `json:"turn,omitempty"`
 	Response   any         `json:"response,omitempty"`
 	Usage      *EventUsage `json:"usage,omitempty"`
 	DurationMS *int64      `json:"durationMs,omitempty"`
+	Connection string      `json:"connection,omitempty"`
+	ModelName  string      `json:"modelName,omitempty"`
 
 	// qc_result
 	Passed *bool           `json:"passed,omitempty"`
@@ -69,6 +75,13 @@ type TaskEvent struct {
 	// fault_injected
 	Target string `json:"target,omitempty"`
 	Mode   string `json:"mode,omitempty"`
+
+	// deliverable_filed
+	// FiledPath 交付文件夹里的文件（写不进去时为空），FiledReason 给业务人员看的说明，
+	// FiledError 写不进去时的原因
+	FiledPath   string `json:"filedPath,omitempty"`
+	FiledReason string `json:"filedReason,omitempty"`
+	FiledError  string `json:"filedError,omitempty"`
 }
 
 // EventUsage 模型 token 用量。
@@ -80,7 +93,9 @@ type EventUsage struct {
 // 事件类型常量（前端 EVENT_TYPE_SET 里逐条订阅，名字必须一致）。
 const (
 	EventTaskCreated        = "task_created"
-	EventFormUpdated        = "form_updated"
+	// EventModelSwitched 运行中换了模型：从下一个判断步骤开始生效（Spec 0006“会话模型”）
+	EventModelSwitched = "model_switched"
+	EventFormUpdated   = "form_updated"
 	EventStateChanged       = "state_changed"
 	EventTransitionRejected = "transition_rejected"
 	EventStepStarted        = "step_started"
@@ -94,14 +109,16 @@ const (
 	EventReviewDecision     = "review_decision"
 	EventDeliverableCreated = "deliverable_created"
 	EventFaultInjected      = "fault_injected"
+	// EventDeliverableFiled 交付物写进工作区“交付”文件夹的说明（写不进去也记一条）
+	EventDeliverableFiled = "deliverable_filed"
 )
 
 // EventTypes 全部事件类型，SSE 为每条事件写具名 event:。
 var EventTypes = []string{
-	EventTaskCreated, EventFormUpdated, EventStateChanged, EventTransitionRejected,
+	EventTaskCreated, EventModelSwitched, EventFormUpdated, EventStateChanged, EventTransitionRejected,
 	EventStepStarted, EventStepCompleted, EventStepFailed, EventToolCalled,
 	EventToolResult, EventToolDenied, EventModelCalled, EventQCResult,
-	EventReviewDecision, EventDeliverableCreated, EventFaultInjected,
+	EventReviewDecision, EventDeliverableCreated, EventFaultInjected, EventDeliverableFiled,
 }
 
 func IntPtr(v int) *int          { return &v }

@@ -22,7 +22,6 @@ import type {
   TaskSummary as ContractTaskSummary,
 } from "@de/core/contract";
 import type { KnowledgeApi } from "./knowledge";
-import type { SessionApi } from "./sessions";
 
 /** 界面上可切换的三种角色；system 只出现在事件里。 */
 export type UiRole = Exclude<Role, "system">;
@@ -70,6 +69,8 @@ export interface DeliverableVersion {
 export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause" | "steps"> {
   pause?: PauseView;
   steps: StepStatusView[];
+  /** 任务当前的会话模型（发起事件给出，随“模型已切换”更新；旧任务为空） */
+  model?: ModelRef;
   actions: TaskAction[];
   waitingFor: UiRole[];
   /** 历次送审的交付物，旧到新 */
@@ -109,6 +110,8 @@ export interface CreateTaskInput {
   employee: string;
   form: Record<string, unknown>;
   uploads: UploadItem[];
+  /** 任务的会话模型（T39）：会话里发起时记下，写进“发起”事件 */
+  model?: ModelRef;
 }
 
 export type DeliverableKind = "docx" | "md" | "qc_record";
@@ -123,6 +126,45 @@ export interface PublicSampleInfo {
 }
 
 // ---- 会话（Go 后端 internal/session，TS 后端没有对应接口） ----
+
+/** 侧栏会话行的状态点，优先级和后端一致 */
+export type StatusDot = "waiting" | "running" | "done" | "idle";
+
+/** 侧栏“工作区”tab 里的工作区（含会话摘要） */
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  path: string;
+  createdAt?: string;
+  updatedAt?: string;
+  /** 目录不存在：登记保留，会话仍可查看 */
+  missing?: boolean;
+  missingText?: string;
+  /** 默认已收起或展开由界面决定；后端给的是不带归档的会话 */
+  sessions?: SessionSummary[];
+}
+
+/** 记录 tab 的分组键 */
+export type RecordGroup = "running" | "supplement" | "review" | "returned" | "delivered" | "terminated";
+
+/** 记录 tab 的一条：所有工作区里已开工的任务 */
+export interface RecordItem {
+  taskId: string;
+  group: RecordGroup;
+  title: string;
+  employee: string;
+  state: TaskState;
+  statusText: string;
+  statusDot: StatusDot;
+  /** 任务所在的会话；直接从任务接口建的任务没有 */
+  sessionId?: string;
+  workspaceId: string;
+  workspaceName: string;
+  updatedAt: string;
+}
+
+/** 侧栏打开方式：某个工作区下开新对话（不带时服务端取唯一的工作区） */
+export type NewConversationIn = { workspaceId?: string };
 
 /** 接待中 → 员工已接手 → 任务进行中 → 已结束 */
 export type SessionStatus = "reception" | "drafting" | "task" | "closed";
@@ -201,6 +243,8 @@ export interface SessionMessage {
   card?: SessionCard;
   tool?: string;
   reason?: string;
+  /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
+  model?: ModelRef;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
@@ -221,6 +265,18 @@ export interface SessionChecklist {
   missing: string[];
 }
 
+/** 会话模型（Spec 0006）：设置里的连接名 + 连接列出的模型 ID */
+export interface ModelRef {
+  connection: string;
+  model: string;
+}
+
+/** 会话里可以选的模型：一个有 Key 的连接和它列出的模型（GET /api/settings/models） */
+export interface ModelConnectionOption {
+  name: string;
+  models: string[];
+}
+
 export interface SessionSummary {
   id: string;
   /** 会话属于哪个工作区（Spec 0006；侧栏按它分组是 T38） */
@@ -239,6 +295,18 @@ export interface SessionSummary {
   taskState?: TaskState;
   statusText?: string;
   waitingFor: UiRole[];
+  /** 会话模型：会话里最后一次选的；没选过时是设置的 lastModel（也可能为空） */
+  model?: ModelRef;
+  /** 会话里明确选过模型 */
+  modelSelected?: boolean;
+  /** 状态点（后端按读的人的角色算）：等你处理 / 运行中 / 已完成未读 / 空闲 */
+  statusDot: StatusDot;
+  /** 任务交付或终止之后还没打开过 */
+  unread: boolean;
+  /** 归档的会话默认不在侧栏里 */
+  archived: boolean;
+  /** 会话所属工作区的名字；工作区已取消登记时是原来的名字，还没有工作区的旧任务为空 */
+  workspaceName?: string;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -288,9 +356,46 @@ export interface KnowledgeFiling {
 
 export type KnowledgeResult = { ok: true; entry: KnowledgeEntry } | { ok: false; error: string; message: string };
 
+/** 会话：读取、新建、重命名与归档（Spec 0006）。 */
+export interface SessionApi {
+  /** ?archived=1 连归档的会话一起列（默认不列） */
+  listSessions(workspaceId?: string, options?: { archived?: boolean }): Promise<SessionSummary[]>;
+  /** 读会话；服务端同时写“已读” */
+  getSession(id: string): Promise<SessionDetail>;
+  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
+  createSession(workspaceId?: string): Promise<SessionSummary>;
+  /** 重命名会话；归档或取消归档 */
+  updateSession(id: string, patch: { title?: string } | { archived: boolean }): Promise<SessionSummary>;
+  /** 会话里可以选的模型：只列有 Key 的连接和它们列出的模型 */
+  modelOptions(): Promise<ModelConnectionOption[]>;
+  /** 选模型：会话日志里写一条选择，同时更新设置的 lastModel；任务运行中从下一个判断步骤生效 */
+  selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
+  sendMessage(id: string, text: string): Promise<SessionResult>;
+  confirmEmployee(id: string, employee: string): Promise<SessionResult>;
+  uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
+  /** @ 选择：工作区目录里的文件（递归列出文件，不列“交付”和“材料”） */
+  listFolderFiles(id: string): Promise<FolderListing>;
+  /** 确认目录里的文件（卡片上的按钮和 @ 选择都走这里）：复制进会话材料，与上传等效 */
+  useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
+  /** form 省略时用草稿 */
+  submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
+  /** 发起人在开工清单上确认跳过一项可跳过项 */
+  skipChecklistItem(id: string, item: string): Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
+  draftFiling(id: string): Promise<SessionResult>;
+  /** 提交前检查：会话模型所在的连接有没有 Key、模型还在不在列表里；给任务 ID 时检查任务的会话模型 */
+  preflight(taskId?: string): Promise<PreflightResult>;
+}
+
 export type SessionResult =
   | { ok: true; messages: SessionMessage[]; session: SessionSummary }
   | { ok: false; error: string; message: string; settings?: SettingsEntry };
+
+/** 侧栏在模拟模式下额外要的两项：全部会话和记录（真实模式没有，见 api/index.ts）。 */
+export interface MockSessionSources {
+  all(): Promise<SessionSummary[]>;
+  records(role: UiRole): Promise<RecordItem[]>;
+}
 
 export interface WebApi extends SessionApi, KnowledgeApi {
   listEmployees(): Promise<EmployeeInfo[]>;
@@ -316,3 +421,6 @@ export interface WebApi extends SessionApi, KnowledgeApi {
   diffConfigVersion(id: string, versionId: string): Promise<ConfigDiff>;
   restoreConfigVersion(id: string, versionId: string): Promise<RestoreConfigResponse>;
 }
+
+/** 模拟模式的 WebApi：会话接口外带侧栏列表和记录（createMockWorkspaceApi 用）。 */
+export type MockWebApi = WebApi & MockSessionSources;

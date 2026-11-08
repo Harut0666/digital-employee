@@ -1,6 +1,6 @@
 // 模拟数据模式的会话：internal/session 的手写简化版，建在模拟任务之上。
 // 路由不调模型：按员工名称和描述里的字粗略匹配，匹配不到就列出员工手选。
-// 任务卡片和 Go 一样读取时从任务事件投影，按钮取自快照。
+// 任务卡片和 Go 一样读取时从任务事件投影，按钮取自快照。状态点照 internal/session/status.go 的规则后算。
 
 import type { TaskEvent } from "@de/core/contract";
 import { CHECKLISTS } from "./mock-data";
@@ -8,12 +8,17 @@ import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
 import type {
   EmployeeInfo,
+  ModelConnectionOption,
+  ModelRef,
+  RecordGroup,
+  RecordItem,
   SessionAttachment,
   SessionCard,
   SessionDetail,
   SessionMessage,
   SessionResult,
   SessionSummary,
+  StatusDot,
   TaskSnapshot,
   TaskSummary,
   UiRole,
@@ -21,7 +26,18 @@ import type {
   WebApi,
 } from "./types";
 
-type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createTask" | "command">;
+type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createTask" | "command"> & {
+  /** 运行中换模型：任务写一条“模型已切换”事件（对应 Go 的 Engine.SetTaskModel） */
+  switchModel?(taskId: string, model: ModelRef): void;
+};
+
+/** 模拟模式的会话：会话接口，外带侧栏要用的全部会话和记录。 */
+export interface MockSessions extends SessionApi {
+  /** 全部会话（含归档的），带状态点 */
+  all(): Promise<SessionSummary[]>;
+  /** 记录 tab：所有已开工的任务 */
+  records(role: UiRole): Promise<RecordItem[]>;
+}
 
 interface MockSession {
   id: string;
@@ -32,8 +48,15 @@ interface MockSession {
   draft?: Record<string, unknown>;
   /** 入库卡片上起草的描述（模拟模式不调模型，按任务标题拼一句） */
   filingDraft?: string;
+  /** 人改过的标题；没改过时取第一句话 */
+  title?: string;
+  archived: boolean;
+  /** 已读到哪一条任务事件：交付或终止之后的新内容才算没读 */
+  readUpTo: number;
   /** 发起人确认跳过的清单项 */
   skipped: Set<string>;
+  /** 会话里选择的模型（Spec 0006）；没选过时沿用设置的 lastModel */
+  selected?: ModelRef;
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -47,18 +70,63 @@ interface MockFolderFile {
 }
 
 const LEGACY = "task-";
-/** 模拟模式只有一个工作区（和 workspaces.ts 的 ws-demo 一致） */
+/** 模拟模式的工作区（和 workspaces.ts 的两个一致） */
 const MOCK_WORKSPACE = "ws-demo";
+const WORKSPACE_NAMES: Record<string, string> = { "ws-demo": "我的工作区", "ws-huanan": "华南区" };
 const PAUSED = new Set(["awaiting_initiator", "awaiting_operator", "awaiting_review"]);
+const RUNNING = new Set(["admission", "running", "qc"]);
+const FINISHED = new Set(["delivered", "terminated"]);
+
+/** 任务状态 → 记录分组（和 internal/session/status.go 的 recordGroupOf 一致） */
+function recordGroupOf(state: string): RecordGroup {
+  switch (state) {
+    case "awaiting_initiator":
+      return "supplement";
+    case "awaiting_review":
+      return "review";
+    case "delivered":
+      return "delivered";
+    case "terminated":
+      return "terminated";
+    default:
+      return "running";
+  }
+}
+
+/**
+ * 状态点（和 internal/session/status.go 的 StatusDot 一样的优先级）：
+ * 等你处理 → 运行中 → 已完成未读 → 空闲。待人工处理不算等你处理。
+ */
+function dotOf(role: UiRole, status: string, state: string | undefined, unread: boolean): StatusDot {
+  if (status === "reception" || status === "drafting") return role === "initiator" ? "waiting" : "idle";
+  if (state === "awaiting_initiator" && role === "initiator") return "waiting";
+  if (state === "awaiting_review" && role === "reviewer") return "waiting";
+  if (state !== undefined && RUNNING.has(state)) return "running";
+  if (state !== undefined && FINISHED.has(state) && unread) return "done";
+  return "idle";
+}
+
+/** 模拟模式可选的模型（和 settings.ts 的模拟连接一致：只有 DeepSeek 配了 Key）。 */
+const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }];
+/** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
+const MOCK_DEFAULT_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
 
 export function createMockSessions(
   employees: EmployeeInfo[],
   getRole: () => UiRole,
   tasks: TaskBackend,
   knowledge?: { filedFrom(taskId: string): string | undefined },
-): SessionApi {
+): MockSessions {
   const sessions = new Map<string, MockSession>();
+  /** 任务最后一条事件的序号 */
+  const taskSeqs = new Map<string, number>();
+  /** 打开过的旧任务会话（旧任务推导出的会话没有会话日志） */
+  const legacyRead = new Set<string>();
   let counter = 0;
+  // 和 Go 一样：选过的模型记在设置里，新会话沿用
+  let lastModel: ModelRef = MOCK_DEFAULT_MODEL;
+  /** 模拟任务当前的会话模型（运行中切换时更新；任务事件由 mock.ts 写入） */
+  const taskModels = new Map<string, ModelRef>();
 
   const fail = (error: string, message: string): SessionResult => ({ ok: false, error, message });
   const write = (s: MockSession, input: Omit<SessionMessage, "id" | "seq" | "ts">, out: SessionMessage[]) => {
@@ -71,23 +139,35 @@ export function createMockSessions(
   const attachments = (s: MockSession): SessionAttachment[] => s.files.map((f) => ({ name: f.name, size: f.size }));
   const formCard = (s: MockSession): SessionCard => ({ type: "form", employee: s.employee, draft: s.draft, attachments: attachments(s) });
   const roster = () => employees.map((e) => ({ id: e.id, name: e.name, description: e.description }));
+  const titleOf = (s: MockSession) => s.title ?? s.messages.find((m) => m.kind === "user")?.text?.slice(0, 30) ?? "新对话";
   const checklistOf = (s: MockSession, form = s.draft) => {
     const items = s.employee ? CHECKLISTS[s.employee] : undefined;
     return items ? evaluateChecklist(items, form ?? {}, s.files, s.skipped) : undefined;
   };
+  const lastSeq = (taskId: string | undefined) => (taskId ? (taskSeqs.get(taskId) ?? 0) : 0);
+  const unreadOf = (s: MockSession, summary: TaskSummary | undefined) =>
+    summary !== undefined && FINISHED.has(summary.state) && lastSeq(s.taskId) > s.readUpTo;
 
   async function summaryOf(taskId: string | undefined): Promise<TaskSummary | undefined> {
-    return taskId ? (await tasks.listTasks()).find((t) => t.id === taskId) : undefined;
+    if (!taskId) return undefined;
+    const events = await tasks.getEvents(taskId);
+    const tail = events[events.length - 1];
+    if (tail) taskSeqs.set(taskId, tail.seq);
+    return (await tasks.listTasks()).find((t) => t.id === taskId);
   }
 
   async function view(s: MockSession): Promise<SessionSummary> {
-    const title = s.messages.find((m) => m.kind === "user")?.text?.slice(0, 30) ?? "新对话";
+    const title = titleOf(s);
     const summary = await summaryOf(s.taskId);
-    const closed = summary?.state === "delivered" || summary?.state === "terminated";
+    const closed = summary !== undefined && FINISHED.has(summary.state);
+    const status: SessionSummary["status"] = s.taskId ? (closed ? "closed" : "task") : s.employee ? "drafting" : "reception";
+    const unread = unreadOf(s, summary);
     return {
+      // 绑定了任务时是任务的当前模型；还没任务时是选过的模型，没选过沿用 lastModel
+      ...(s.taskId ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
       id: s.id,
       workspaceId: s.workspaceId,
-      status: s.taskId ? (closed ? "closed" : "task") : s.employee ? "drafting" : "reception",
+      status,
       readOnly: false,
       title,
       employee: s.employee,
@@ -99,6 +179,10 @@ export function createMockSessions(
       taskState: summary?.state,
       statusText: summary?.statusText,
       waitingFor: summary?.waitingFor ?? [],
+      statusDot: dotOf(getRole(), status, summary?.state, unread),
+      unread,
+      archived: s.archived,
+      workspaceName: WORKSPACE_NAMES[s.workspaceId] ?? "",
     };
   }
 
@@ -127,6 +211,8 @@ export function createMockSessions(
 
   async function withTask(messages: SessionMessage[], taskId: string, s?: MockSession): Promise<SessionMessage[]> {
     const events = await tasks.getEvents(taskId);
+    const tail = events[events.length - 1];
+    if (tail) taskSeqs.set(taskId, tail.seq);
     const snapshot = await tasks.getTask(taskId);
     const title = (await summaryOf(taskId))?.title;
     // 交付之后紧跟一张入库确认卡片（和 internal/session/cards.go 的 filingMessage 一致）
@@ -189,10 +275,14 @@ export function createMockSessions(
   const isFailure = (v: MockSession | SessionResult): v is SessionResult => "ok" in v;
 
   async function legacyDetail(task: TaskSummary): Promise<SessionDetail> {
+    const finished = FINISHED.has(task.state);
+    const unread = finished && !legacyRead.has(task.id);
+    const status: SessionSummary["status"] = finished ? "closed" : "task";
+    const workspaceId = task.workspaceId ?? MOCK_WORKSPACE;
     return {
       id: `${LEGACY}${task.id}`,
-      workspaceId: task.workspaceId ?? "",
-      status: task.state === "delivered" || task.state === "terminated" ? "closed" : "task",
+      workspaceId,
+      status,
       readOnly: true,
       title: task.title,
       employee: task.employee,
@@ -203,13 +293,47 @@ export function createMockSessions(
       taskState: task.state,
       statusText: task.statusText,
       waitingFor: task.waitingFor,
+      statusDot: dotOf(getRole(), status, task.state, unread),
+      unread,
+      archived: false,
+      workspaceName: WORKSPACE_NAMES[workspaceId] ?? "",
       messages: [],
     };
   }
 
   return {
-    async listSessions(workspaceId) {
-      const own = await Promise.all([...sessions.values()].filter((s) => !workspaceId || s.workspaceId === workspaceId).map(view));
+    async modelOptions() {
+      return MOCK_MODEL_OPTIONS;
+    },
+
+    /** 选模型：规则照搬 Go 的 SelectModel（只能选连接列出的模型；任务运行中从下一个判断步骤生效） */
+    async selectModel(id, connection, model) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以选模型");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const option = MOCK_MODEL_OPTIONS.find((o) => o.name === connection);
+      if (!option) return fail("invalid_input", `没有这个连接：${connection}`);
+      if (!option.models.includes(model)) return fail("invalid_input", `模型「${model}」不在连接「${connection}」的模型列表里`);
+      if (s.taskId) {
+        const task = await tasks.getTask(s.taskId);
+        if (task?.state === "delivered" || task?.state === "terminated") return fail("session_read_only", "任务已结束，模型不能再改；下一个任务请开新对话");
+      }
+      const next: ModelRef = { connection, model };
+      if (s.selected && s.selected.connection === connection && s.selected.model === model) return reply(s, []);
+      const out: SessionMessage[] = [];
+      s.selected = next;
+      lastModel = next;
+      if (s.taskId) {
+        taskModels.set(s.taskId, next);
+        tasks.switchModel?.(s.taskId, next);
+      }
+      return reply(s, out);
+    },
+
+    async listSessions(workspaceId, options) {
+      const own = await Promise.all(
+        [...sessions.values()].filter((s) => (!workspaceId || s.workspaceId === workspaceId) && (options?.archived || !s.archived)).map(view),
+      );
       const bound = new Set(own.map((s) => s.taskId));
       // 由旧任务推导出的只读会话：发起事件里没有工作区的旧任务带不出归属，按不属于任何工作区处理
       const legacy = workspaceId
@@ -223,13 +347,29 @@ export function createMockSessions(
       if (id.startsWith(LEGACY)) {
         const task = (await tasks.listTasks()).find((t) => `${LEGACY}${t.id}` === id);
         if (!task) throw new Error(`会话不存在：${id}`);
+        // 打开旧任务的会话就算读过（它们没有会话日志，记在内存里）
+        legacyRead.add(task.id);
         const detail = await legacyDetail(task);
-        return { ...detail, messages: await withTask([], task.id) };
+        return { ...detail, statusDot: "idle", unread: false, messages: await withTask([], task.id) };
       }
       const s = sessions.get(id);
       if (!s) throw new Error(`会话不存在：${id}`);
+      // 打开会话就算已读（Go 后端写在会话日志里，模拟模式记在内存里）
+      s.readUpTo = lastSeq(s.taskId);
       const messages = s.messages.filter((m) => m.kind !== "tool_called");
       return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
+    },
+
+    async updateSession(id, patch) {
+      const s = writable(id);
+      if (isFailure(s)) throw new Error(!s.ok ? s.message : "操作被拒绝");
+      if ("archived" in patch) {
+        s.archived = patch.archived;
+        return view(s);
+      }
+      if (typeof patch.title !== "string" || !patch.title.trim()) throw new Error("标题不能为空");
+      s.title = patch.title.trim();
+      return view(s);
     },
 
     async createSession(workspaceId) {
@@ -237,6 +377,8 @@ export function createMockSessions(
       const s: MockSession = {
         id: `s-mock-${counter}`,
         workspaceId: workspaceId ?? MOCK_WORKSPACE,
+        archived: false,
+        readUpTo: 0,
         skipped: new Set(),
         files: [],
         messages: [],
@@ -331,10 +473,11 @@ export function createMockSessions(
       const startForm = { ...s.draft, ...Object.fromEntries(skipped.map((i) => [i.skipField!, true])) };
       // 模拟任务按上传项判定材料：会话里的文件没有上传项，按扩展名归位
       const uploads: UploadItem[] = s.files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
-      const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads });
+      const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads, model: s.selected ?? lastModel });
       s.taskId = snapshot.id;
+      taskModels.set(snapshot.id, s.selected ?? lastModel);
       const res = await tasks.command(snapshot.id, { type: "submit" });
-      if (!res.ok) return fail(res.error, res.message);
+      if (!res.ok) return fail("illegal_transition", "提交被拒绝");
       return reply(s, []);
     },
 
@@ -364,5 +507,42 @@ export function createMockSessions(
     },
 
     preflight: async () => ({ ok: true }),
+
+    // ---- 侧栏“工作区”和“记录”两个 tab ----
+
+    all: allSummaries,
+
+    async records(role) {
+      const summaries = await allSummaries();
+      const items: RecordItem[] = [];
+      for (const summary of summaries) {
+        if (!summary.taskId || !summary.taskState) continue;
+        items.push({
+          taskId: summary.taskId,
+          group: recordGroupOf(summary.taskState),
+          title: summary.title,
+          employee: summary.employee ?? "",
+          state: summary.taskState,
+          statusText: summary.statusText ?? "",
+          // 记录里的状态点按读的人的角色算，和侧栏列表走同一套规则
+          statusDot: dotOf(role, summary.status, summary.taskState, false),
+          sessionId: summary.id,
+          workspaceId: summary.workspaceId,
+          workspaceName: summary.workspaceName ?? "",
+          updatedAt: summary.updatedAt,
+        });
+      }
+      return items;
+    },
   };
+
+  /** 全部会话（含归档的），带状态点：工作区列表和记录 tab 都从这里取 */
+  async function allSummaries(): Promise<SessionSummary[]> {
+    const own = await Promise.all([...sessions.values()].map(view));
+    const bound = new Set(own.map((s) => s.taskId));
+    // 种子任务的旧任务会话也列出来：和 Go 一样，没绑会话的任务以只读会话出现
+    const legacy = await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
+    const summaries = [...own, ...legacy.map(({ messages: _m, ...rest }) => rest)];
+    return summaries.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  }
 }

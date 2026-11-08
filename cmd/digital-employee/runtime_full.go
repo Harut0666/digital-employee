@@ -23,6 +23,7 @@ import (
 	"digital-employee/internal/contract"
 	"digital-employee/internal/engine"
 	"digital-employee/internal/render"
+	"digital-employee/internal/server"
 	"digital-employee/internal/tools"
 )
 
@@ -89,6 +90,8 @@ func newEngine(options cli.EngineOptions, faults *contract.FaultHooks) (contract
 		Faults:         faults,
 		ExitOnCrash:    true,
 		ConfigFallback: options.ConfigFallback,
+		// 交付文件写进任务所属工作区的目录（T42）；单目录模式和命令行没有登记
+		Workspaces: options.Workspaces,
 	})
 	if err != nil {
 		return nil, err
@@ -118,7 +121,24 @@ func appEngineFactory(deps app.EngineDeps) (contract.Engine, error) {
 		ScriptFile:     deps.ScriptFile,
 		ModelSettings:  deps.ModelSettings,
 		ConfigFallback: deps.ConfigFallback,
+		// 交付文件夹按登记的工作区找目录（T42）；单目录模式没有登记，不写
+		Workspaces: registeredWorkspaces(deps.Workspaces),
 	}, deps.Faults)
+}
+
+// registeredWorkspaces 登记的工作区 → 引擎的“工作区 ID → 目录”查询（T42 写交付文件夹用）。
+func registeredWorkspaces(items []server.Workspace) func(string) (string, bool) {
+	if len(items) == 0 {
+		return nil
+	}
+	return func(id string) (string, bool) {
+		for _, item := range items {
+			if item.ID == id && item.Path != "" {
+				return item.Path, true
+			}
+		}
+		return "", false
+	}
 }
 
 // appToolFactory 服务端模式的工具客户端工厂。

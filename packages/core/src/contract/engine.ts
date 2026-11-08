@@ -132,6 +132,9 @@ export interface ModelConnection {
 
 export interface ModelSettings {
   connections: ModelConnection[];
+  /** 最近一次在会话里选的模型（Spec 0006）；还没选过为 null */
+  lastModel?: import("./settings").ModelRef | null;
+  /** 旧文档的键：与 lastModel 同时出现时以 lastModel 为准 */
   defaultConnection: string;
   defaultModel: string;
 }

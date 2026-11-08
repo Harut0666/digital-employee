@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"digital-employee/internal/agent"
@@ -38,6 +39,10 @@ type Options struct {
 	Workspaces []Workspace
 	// ListWorkspaces 当前登记的工作区（宿主提供）；nil 时用启动时的快照 Workspaces。
 	ListWorkspaces func() []Workspace
+	// WorkspaceWritable 登记是否可改（新建、重命名、取消登记由宿主处理，这里只如实告诉界面）；
+	// WorkspaceReadOnlyReason 只读时的原因，比如单目录模式由 DE_WORKSPACE 指定
+	WorkspaceWritable       bool
+	WorkspaceReadOnlyReason string
 	// WorkspaceDir 单目录模式的工作区目录（同时是应用目录）；缺省 DE_WORKSPACE。
 	WorkspaceDir string
 	// EmployeesDir 员工配置目录（应用目录里的副本，所有工作区共用）。
@@ -56,6 +61,8 @@ type Options struct {
 	LoadEmployee func(dir string) (*contract.EmployeeConfig, error)
 	// ProbeConnection “测试连接”实现；缺省发真实 HTTP 请求。
 	ProbeConnection func(conn contract.ModelConnection, model string) contract.ModelConnectionTest
+	// ModelListTimeout “拉取模型”的超时；缺省 15 秒（测试里调小，避免等满）。
+	ModelListTimeout time.Duration
 	// OpenFolder 打开文件夹；缺省按平台调用 explorer/open/xdg-open。
 	OpenFolder func(dir string) error
 	// OpenFile 用系统编辑器打开文件；缺省按平台调用 notepad/open/xdg-open。
@@ -72,12 +79,17 @@ type Options struct {
 	Scripted bool
 	// Model 取前台 Agent 当前可用的模型提供者；nil 时会话按模型不可用处理。
 	Model func() agent.ModelProvider
+	// single 由 New 推出：没有指定 Workspaces/ListWorkspaces 时的单目录模式（不值得从外面设）
+	single bool
 }
 
-// Workspace 一个登记过的工作区：ID 与目录。
+// Workspace 一个登记过的工作区：ID、名字与目录。
 type Workspace struct {
-	ID   string
-	Path string
+	ID        string
+	Name      string
+	Path      string
+	CreatedAt string
+	UpdatedAt string
 }
 
 // Server HTTP 服务端。
@@ -88,8 +100,10 @@ type Server struct {
 	sessions *session.Manager
 	// knowledge 应用目录里的知识库，所有工作区共用
 	knowledge *knowledge.Store
-	// workspaces 登记过的工作区（ID → 目录）；单目录模式下只有一个
-	workspaces map[string]string
+	// workspaces 登记过的工作区（ID → 目录）；单目录模式下只有一个。
+	// 每次登记变化后由宿主调 SetWorkspaces 更新，写操作回摘要时用它取工作区名。
+	workspaceMu sync.RWMutex
+	workspaces  workspaceRegistry
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
@@ -97,6 +111,17 @@ func New(opts Options) *Server {
 	s := &Server{opts: opts}
 	s.resolveDefaults()
 	s.knowledge = knowledge.Open(s.opts.AppDir)
+	// 引擎写交付文件夹时按工作区 ID 找目录：宿主提供了 ListWorkspaces 就以它为准，登记变化马上生效。
+	// 单目录模式（没有登记、只有一个目录同时是应用目录）按约定不写交付文件夹，不给引擎登记。
+	if setter, ok := s.opts.Engine.(interface {
+		SetWorkspaces(func(workspaceID string) (string, bool))
+	}); ok {
+		if s.singleWorkspace() {
+			setter.SetWorkspaces(nil)
+		} else {
+			setter.SetWorkspaces(s.workspaceDir)
+		}
+	}
 	s.sessions = s.newSessions()
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -129,19 +154,25 @@ func (s *Server) resolveDefaults() {
 	if s.opts.EmployeesDir == "" {
 		s.opts.EmployeesDir = filepath.Join(s.opts.AppDir, "employees")
 	}
-	s.workspaces = map[string]string{}
+	s.workspaces = workspaceRegistry{dirs: map[string]string{}, names: map[string]string{}}
 	for _, item := range s.opts.Workspaces {
 		if item.ID != "" && item.Path != "" {
-			s.workspaces[item.ID] = item.Path
+			s.workspaces.dirs[item.ID] = item.Path
+			s.workspaces.names[item.ID] = item.Name
 		}
 	}
-	if len(s.workspaces) == 0 {
+	if !s.opts.WorkspaceWritable && s.opts.ListWorkspaces != nil {
+		// 宿主管登记（能读到最新的登记），除非它说了只读（单目录模式）
+		s.opts.WorkspaceWritable = s.opts.WorkspaceReadOnlyReason == ""
+	}
+	if len(s.workspaces.dirs) == 0 {
 		// 单目录模式：唯一的工作区就是这个目录
+		s.opts.single = true
 		single := s.opts.WorkspaceDir
 		if single == "" {
 			single = s.opts.AppDir
 		}
-		s.workspaces[SingleWorkspaceID] = single
+		s.workspaces.dirs[SingleWorkspaceID] = single
 	}
 	if s.opts.DefaultEmployeesDir == "" {
 		s.opts.DefaultEmployeesDir = s.opts.EmployeesDir
@@ -227,12 +258,49 @@ func (s *Server) registeredWorkspaces() []Workspace {
 	if s.opts.ListWorkspaces != nil {
 		return s.opts.ListWorkspaces()
 	}
-	out := make([]Workspace, 0, len(s.workspaces))
-	for id, dir := range s.workspaces {
-		out = append(out, Workspace{ID: id, Path: dir})
+	s.workspaceMu.RLock()
+	defer s.workspaceMu.RUnlock()
+	out := make([]Workspace, 0, len(s.workspaces.dirs))
+	for id, dir := range s.workspaces.dirs {
+		out = append(out, Workspace{ID: id, Name: workspaceBaseName(dir), Path: dir})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// workspaceRegistry 服务端看到的工作区登记。
+type workspaceRegistry struct {
+	// dirs 工作区 ID → 目录
+	dirs map[string]string
+	// names 工作区 ID → 名字：取消登记后名字也留着，未归属的会话仍显示它原来的工作区名
+	names map[string]string
+}
+
+// SetWorkspaces 宿主登记变化后调用：服务端按最新的这份校验工作区、给会话配工作区名。
+func (s *Server) SetWorkspaces(items []Workspace) {
+	next := workspaceRegistry{dirs: make(map[string]string, len(items)), names: map[string]string{}}
+	s.workspaceMu.Lock()
+	for _, item := range items {
+		if item.ID == "" || item.Path == "" {
+			continue
+		}
+		next.dirs[item.ID] = item.Path
+		next.names[item.ID] = item.Name
+	}
+	s.workspaces.dirs = next.dirs
+	for id, name := range next.names {
+		s.workspaces.names[id] = name
+	}
+	s.workspaceMu.Unlock()
+}
+
+// workspaceBaseName 目录名，作为名字缺省时的显示名。
+func workspaceBaseName(dir string) string {
+	name := filepath.Base(filepath.Clean(dir))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return dir
+	}
+	return name
 }
 
 // workspaceDirs 工作区 ID → 目录，按 ID 排序（列表顺序稳定）。
@@ -255,6 +323,30 @@ func (s *Server) onlyWorkspace() string {
 	return ""
 }
 
+// singleWorkspace 单目录模式：目录同时是应用目录和唯一的工作区（Spec 0006）。
+func (s *Server) singleWorkspace() bool { return s.opts.single }
+
+// workspaceDir 工作区 ID 对应的目录（写交付文件夹、前台 Agent 读目录文件、上传写进“材料”用）；
+// 没有登记时找不到。单目录模式（没传登记、只有一个唯一工作区）返回 WorkspaceDir（没有时用应用目录）。
+func (s *Server) workspaceDir(id string) (string, bool) {
+	items := s.registeredWorkspaces()
+	for _, item := range items {
+		if item.ID == id && item.Path != "" {
+			return item.Path, true
+		}
+	}
+	if len(items) > 0 || id != SingleWorkspaceID {
+		return "", false
+	}
+	if s.opts.WorkspaceDir != "" {
+		return s.opts.WorkspaceDir, true
+	}
+	if s.opts.AppDir != "" {
+		return s.opts.AppDir, true
+	}
+	return "", false
+}
+
 // workspaceRegistered 工作区 ID 是否登记过。
 func (s *Server) workspaceRegistered(id string) bool {
 	for _, item := range s.registeredWorkspaces() {
@@ -268,26 +360,6 @@ func (s *Server) workspaceRegistered(id string) bool {
 // workspaceSampleDir 公开样例放在哪里：单目录模式看工作区目录（同时是应用目录），应用目录模式看应用目录。
 // 工作区目录里不再释放样例（T41），样例和评测用例只放在应用目录。
 func (s *Server) workspaceSampleDir() string {
-	if s.opts.WorkspaceDir != "" {
-		return s.opts.WorkspaceDir
-	}
-	return s.opts.AppDir
-}
-
-// workspaceDir 工作区 ID → 目录（前台 Agent 读目录文件、上传写进“材料”用）。没登记过时返回空串；
-// 单目录模式（没传登记、只有一个唯一工作区）返回 WorkspaceDir / 应用目录。
-func (s *Server) workspaceDir(id string) string {
-	if items := s.registeredWorkspaces(); len(items) > 0 {
-		for _, item := range items {
-			if item.ID == id {
-				return item.Path
-			}
-		}
-		return ""
-	}
-	if id != SingleWorkspaceID {
-		return ""
-	}
 	if s.opts.WorkspaceDir != "" {
 		return s.opts.WorkspaceDir
 	}
@@ -329,6 +401,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions", s.sessionRoute(s.handleListSessions))
 	m.HandleFunc("POST /api/sessions", s.sessionRoute(s.handleCreateSession))
 	m.HandleFunc("GET /api/sessions/{id}", s.sessionRoute(s.handleGetSession))
+	m.HandleFunc("PATCH /api/sessions/{id}", s.sessionRoute(s.handlePatchSession))
+	m.HandleFunc("PUT /api/sessions/{id}/model", s.sessionRoute(s.handleSelectSessionModel))
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
@@ -338,6 +412,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/checklist/{item}/skip", s.sessionRoute(s.handleSkipChecklistItem))
 	m.HandleFunc("POST /api/sessions/{id}/filing-draft", s.sessionRoute(s.handleDraftFiling))
 
+	// ---- 工作区与记录（T38；新建、重命名、取消登记由宿主处理） ----
+	m.HandleFunc("GET /api/workspaces", s.handleListWorkspaces)
+	m.HandleFunc("POST /api/workspaces/{id}/open", s.handleOpenWorkspaceFolder)
+	m.HandleFunc("GET /api/records", s.handleRecords)
+
 	// ---- 知识库 ----
 	m.HandleFunc("GET /api/knowledge", s.handleListKnowledge)
 	m.HandleFunc("POST /api/knowledge", s.handleFileKnowledge)
@@ -346,9 +425,11 @@ func (s *Server) routes() {
 
 	// ---- 设置中心 ----
 	m.HandleFunc("GET /api/settings", s.handleSettingsConnections)
+	m.HandleFunc("GET /api/settings/models", s.handleModelOptions)
 	m.HandleFunc("PUT /api/settings/connections/{name}", s.handleSaveConnection)
 	m.HandleFunc("DELETE /api/settings/connections/{name}", s.handleDeleteConnection)
 	m.HandleFunc("POST /api/settings/connections/{name}/test", s.handleTestConnection)
+	m.HandleFunc("POST /api/settings/connections/{name}/models", s.handleFetchModels)
 	m.HandleFunc("GET /api/settings/app", s.handleGetAppSettings)
 	m.HandleFunc("PATCH /api/settings/app", s.handlePatchAppSettings)
 	m.HandleFunc("PUT /api/settings/role", s.handleSetRole)

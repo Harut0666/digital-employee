@@ -14,6 +14,7 @@ import (
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/settings"
 )
 
 // MaxToolRounds 单条回复的工具轮次上限，超过就停下说明。
@@ -114,12 +115,19 @@ func (t *turn) resolveModel() (*agent.ResolvedStepModel, error) {
 	if provider == nil {
 		return fail("没有可用的模型提供者")
 	}
-	resolved, err := provider.Resolve(agent.FrontdeskStepID, nil)
+	// 前台 Agent 也用会话模型（Spec 0006）；绑定任务时是任务当前的模型
+	model := t.manager.taskModel(t.current)
+	if model.Connection != "" && model.Model != "" {
+		if connection, found := settings.FindConnection(t.manager.effectiveModelSettings().Connections, model.Connection); found && connection.APIKey == "" {
+			return fail("模型连接「" + model.Connection + "」没有配置 API Key")
+		}
+	}
+	resolved, err := provider.Resolve(agent.FrontdeskStepID, &model)
 	if err != nil {
 		return fail(err.Error())
 	}
 	if provider.Kind() == "real" && resolved.APIKey == "" {
-		return fail("默认模型连接没有配置 API Key")
+		return fail("模型连接没有配置 API Key")
 	}
 	return resolved, nil
 }

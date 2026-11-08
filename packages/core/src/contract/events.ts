@@ -13,9 +13,27 @@ interface EventBase {
   taskId: string;
 }
 
+/** 模型引用见 `settings.ts` 的 ModelRef（设置里的连接名 + 连接列出的模型 ID）。 */
+import type { ModelRef } from "./settings";
+
 export type TaskEvent = EventBase &
   (
-    | { type: "task_created"; employee: string; configHash: string; form: Record<string, unknown>; attachments: AttachmentRef[] }
+    | {
+        type: "task_created";
+        employee: string;
+        configHash: string;
+        form: Record<string, unknown>;
+        attachments: AttachmentRef[];
+        /** 任务发起时的会话模型 */
+        model?: ModelRef;
+      }
+    | {
+        type: "model_switched";
+        /** 切换后的模型 */
+        model: ModelRef;
+        /** 切换前的模型 */
+        fromModel?: ModelRef;
+      }
     | { type: "form_updated"; form: Record<string, unknown>; attachments: AttachmentRef[]; actor: Role }
     | { type: "state_changed"; from: TaskState; to: TaskState; trigger: TransitionTrigger; actor: Role; pause?: PauseReason }
     | { type: "transition_rejected"; from: TaskState; trigger: TransitionTrigger; actor: Role; reason: string }
@@ -33,6 +51,10 @@ export type TaskEvent = EventBase &
         response: unknown;
         usage?: { input: number; output: number };
         durationMs: number;
+        /** 这次调用用的连接；剧本模式没有 */
+        connection?: string;
+        /** 这次调用用的模型名；剧本模式没有 */
+        modelName?: string;
       }
     | { type: "qc_result"; attempt: number; passed: boolean; checks: QcCheckResult[] }
     | { type: "review_decision"; decision: "approve" | "return"; comment?: string; sections?: string[] }

@@ -51,10 +51,10 @@ type workspaceRuntime struct {
 	ownsTool bool
 }
 
-// ServeHTTP /api/workspaces 由宿主处理，其余转给服务端。
+// ServeHTTP /api/workspaces 的 POST 和 PATCH、DELETE 由宿主处理（登记），其余（含 GET 工作区列表和会话摘要）转给服务端。
 func (h *workspaceHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimRight(r.URL.Path, "/")
-	if r.Method != http.MethodOptions && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
+	if r.Method != http.MethodOptions && r.Method != http.MethodGet && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
 		setHostCORS(w)
 		h.route(w, r, path)
 		return
@@ -95,9 +95,6 @@ const stampLayout = "2006-01-02T15:04:05.000Z07:00"
 func (h *workspaceHost) route(w http.ResponseWriter, r *http.Request, path string) {
 	if path == "/api/workspaces" {
 		switch r.Method {
-		case http.MethodGet:
-			h.handleList(w)
-			return
 		case http.MethodPost:
 			h.handleCreate(w, r)
 			return
@@ -152,13 +149,21 @@ func (w Workspace) view() workspaceView {
 	return out
 }
 
+// readOnlyReason 登记只读的原因：单目录模式下工作区由环境变量指定；否则为空（可改）。
+func (h *workspaceHost) readOnlyReason() string {
+	if h.single {
+		return "工作区由环境变量 DE_WORKSPACE 指定，不能在界面上添加或取消登记"
+	}
+	return ""
+}
+
 func (h *workspaceHost) listView() workspaceListView {
 	if h.single {
 		dir := h.singleDir()
 		only := Workspace{ID: h.singleID, Name: workspaceBaseName(dir), Path: dir}
 		return workspaceListView{
 			ReadOnly: true, Workspaces: []workspaceView{only.view()},
-			Reason: "工作区由环境变量 DE_WORKSPACE 指定，不能在界面上添加或取消登记",
+			Reason: h.readOnlyReason(),
 		}
 	}
 	items := make([]workspaceView, 0, len(h.registry.Workspaces))
@@ -474,7 +479,9 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 				return dir, true
 			},
 			EmployeesDir: employeesDir,
-			ToolClient:   toolClient, Faults: faults, ScriptFile: h.scriptFile,
+			// 登记的工作区：每个版本送审时把交付物写进它的“交付”文件夹（T42）；单目录模式不写
+			Workspaces: h.workspaces(),
+			ToolClient: toolClient, Faults: faults, ScriptFile: h.scriptFile,
 			ModelSettings: modelSettings,
 		})
 		if err != nil {
@@ -492,8 +499,10 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 		Engine: engine,
 		AppDir: appDir,
 		// 登记的工作区：服务端据此校验 workspaceId，新建的工作区马上可用
-		Workspaces:     h.workspaces(),
-		ListWorkspaces: h.ListWorkspaces,
+		Workspaces:          h.workspaces(),
+		ListWorkspaces:      h.ListWorkspaces,
+		WorkspaceWritable:   !h.single,
+		WorkspaceReadOnlyReason: h.readOnlyReason(),
 		WorkspaceDir:        layout.Workspace.Path,
 		EmployeesDir:        employeesDir,
 		DefaultEmployeesDir: defaultEmployeesDir,

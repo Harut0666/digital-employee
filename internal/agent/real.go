@@ -58,20 +58,29 @@ func NewModelProvider(settings contract.ModelSettings) *RealProvider {
 // Kind 提供者类型。
 func (p *RealProvider) Kind() string { return "real" }
 
-// Resolve 取某个步骤的模型与 stream 函数。
+// Resolve 取某个步骤的模型与 stream 函数。ref 里的 connection / model 为 "default" 或空时按缺省处理：
+// 两者都缺省时用设置的缺省模型（会话模型，Spec 0006）；
+// 只写了一半时补另一半——model 为空取这个连接列出的第一个模型，connection 为空取缺省连接的连接。
 func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepModel, error) {
-	connectionName := "default"
-	modelID := "default"
+	connectionName := p.settings.Default.Connection
+	modelID := p.settings.Default.Model
+	pinnedConnection, pinnedModel := "", ""
 	if ref != nil {
-		if ref.Connection != "" {
-			connectionName = ref.Connection
+		if ref.Connection != "" && ref.Connection != "default" {
+			pinnedConnection = ref.Connection
 		}
-		if ref.Model != "" {
-			modelID = ref.Model
+		if ref.Model != "" && ref.Model != "default" {
+			pinnedModel = ref.Model
 		}
 	}
-	if connectionName == "default" {
-		connectionName = p.settings.DefaultConnection
+	switch {
+	case pinnedConnection != "":
+		connectionName = pinnedConnection
+	case pinnedModel != "":
+		connectionName = p.settings.Default.Connection
+	}
+	if connectionName == "" {
+		return nil, fmt.Errorf("还没有可用的模型：请到设置里填写模型的 Key")
 	}
 	var connection *contract.ModelConnection
 	for index := range p.settings.Connections {
@@ -83,8 +92,14 @@ func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepM
 	if connection == nil {
 		return nil, fmt.Errorf("未找到模型连接“%s”", connectionName)
 	}
-	if modelID == "default" {
-		modelID = p.settings.DefaultModel
+	switch {
+	case pinnedModel != "":
+		modelID = pinnedModel
+	case pinnedConnection != "" && len(connection.Models) > 0:
+		modelID = connection.Models[0]
+	}
+	if modelID == "" {
+		return nil, fmt.Errorf("模型连接“%s”还没有可用的模型", connectionName)
 	}
 	var options *contract.ModelOptions
 	if connection.ModelOptions != nil {
@@ -108,7 +123,9 @@ func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepM
 	model := contractModelToAgent(*connection, modelID, reasoning, options)
 	connectionCopy := *connection
 	return &ResolvedStepModel{
-		Model: model,
+		Model:      model,
+		Connection: connection.Name,
+		ModelID:    modelID,
 		Stream: func(ctx context.Context, model Model, request StreamRequest, streamOptions StreamOptions) (*AssistantMessage, error) {
 			return streamOpenAICompatible(ctx, model, request, streamOptions, thinkingLevel)
 		},

@@ -202,7 +202,8 @@ func displayPath(rel string) string {
 	return rel
 }
 
-// FolderFiles 人可以在 @ 里选的目录文件（不列“交付”和“材料”）。
+// FolderFiles 人可以在 @ 里选的目录文件：递归列出整个工作区目录（子目录里的文件也要能选到），
+// 不列“交付”和“材料”，不列隐藏文件和隐藏文件夹，只列文件。
 func (m *Manager) FolderFiles(id string) (FolderListing, error) {
 	current, err := m.load(id)
 	if err != nil {
@@ -212,12 +213,73 @@ func (m *Manager) FolderFiles(id string) (FolderListing, error) {
 	if root == "" {
 		return FolderListing{}, failure(ErrWorkspaceUnknown, "工作区目录不存在：%s", current.workspaceID)
 	}
-	listing, err := listFolder(root, ".", atHidden)
-	var refused *denial
-	if errors.As(err, &refused) {
-		return FolderListing{}, failure(contract.ErrInvalidInput, "%s", refused.reason)
+	return listFolderDeep(root)
+}
+
+// listFolderDeep 从工作区目录开始递归列出所有文件（@ 选择用）：只列文件、不列目录项，
+// 跳过隐藏文件和隐藏文件夹、跳过 exclude 里的子目录（“材料”“交付”），链接解到目录外的跳过；
+// 按路径排序，最多 200 项，超出标 Truncated。
+func listFolderDeep(base string) (FolderListing, error) {
+	root, err := filepath.Abs(base)
+	if err != nil {
+		return FolderListing{}, err
 	}
-	return listing, err
+	info, err := os.Stat(root)
+	if err != nil {
+		return FolderListing{}, fmt.Errorf("工作区目录不存在：%s", base)
+	}
+	if !info.IsDir() {
+		return FolderListing{}, fmt.Errorf("不是目录：%s", base)
+	}
+	entries := make([]FolderEntry, 0, 16)
+	truncated := walkFiles(root, root, "", atHidden, &entries)
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
+	return FolderListing{Entries: entries, Truncated: truncated}, nil
+}
+
+// walkFiles 递归收集文件；收集够上限就提前返回 true（截断）。
+func walkFiles(root, dir, prefix string, exclude map[string]bool, entries *[]FolderEntry) bool {
+	children, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, child := range children {
+		name := child.Name()
+		if hiddenName(name) || exclude[name] {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		rel := prefix + name
+		// 链接先解开：指到工作区目录外面的既不列也不进
+		fileInfo, statErr := os.Lstat(path)
+		if statErr != nil {
+			continue
+		}
+		if fileInfo.Mode()&fs.ModeSymlink != 0 {
+			resolved, linkErr := filepath.EvalSymlinks(path)
+			if linkErr != nil || !withinRoot(root, resolved) {
+				continue
+			}
+			if fileInfo, statErr = os.Stat(path); statErr != nil {
+				continue
+			}
+		}
+		if fileInfo.IsDir() {
+			if walkFiles(root, path, rel+"/", exclude, entries) {
+				return true
+			}
+			continue
+		}
+		*entries = append(*entries, FolderEntry{
+			Path: rel, Name: name,
+			Size: fileInfo.Size(), ModTime: fileInfo.ModTime().UnixNano(),
+			Extension: strings.ToLower(filepath.Ext(name)),
+		})
+		if len(*entries) >= listFilesLimit {
+			return true
+		}
+	}
+	return false
 }
 
 // folderTools 员工接手后总会开放的目录工具：只读，路径越界由 call 接口拒绝并留痕。

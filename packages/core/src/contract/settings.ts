@@ -101,6 +101,12 @@ export interface ModelOptions {
 
 // ---------------------------------------------------------------- 文档
 
+/** 模型引用：连接名 + 连接列出的模型 ID（Spec 0006“会话模型”）。 */
+export interface ModelRef {
+  connection: string;
+  model: string;
+}
+
 export interface AppSettings {
   version: typeof SETTINGS_VERSION;
   /** 乐观锁：每次写入 +1；缺失（v1）时按 0 读 */
@@ -117,8 +123,14 @@ export interface AppSettings {
  */
 export interface SettingsDocument extends AppSettings {
   connections: ModelConnection[];
-  defaultConnection: string;
-  defaultModel: string;
+  /**
+   * 最近一次在会话里选的模型（Spec 0006“会话模型”）。存盘时取代了 defaultConnection / defaultModel；
+   * 读旧文档时由两者换算。
+   */
+  lastModel?: ModelRef | null;
+  /** 旧文档的键：只读，换算成 lastModel 后不再写回 */
+  defaultConnection?: string;
+  defaultModel?: string;
   /** 演示与调试（docs/design.md §14.1），由设置页与引擎共用 */
   demo: DemoSettings;
   extra: Record<string, unknown>;

@@ -25,6 +25,8 @@ export function readEvents(workspace: string, taskId: string): TaskEvent[] {
 
 export function summarize(e: TaskEvent): string {
   switch (e.type) {
+    case "model_switched":
+      return `模型切换：${e.fromModel ? `${e.fromModel.connection} / ${e.fromModel.model} → ` : ""}${e.model.connection} / ${e.model.model}`;
     case "task_created":
       return `员工 ${e.employee}，配置 ${e.configHash.slice(0, 8)}，附件 ${e.attachments.length} 个`;
     case "form_updated":
@@ -46,7 +48,7 @@ export function summarize(e: TaskEvent): string {
     case "tool_denied":
       return `${e.stepId} 调用 ${e.tool} 被拒绝：${e.reason}`;
     case "model_called":
-      return `${e.stepId} 第 ${e.turn} 轮，用时 ${e.durationMs}ms`;
+      return `${e.stepId} 第 ${e.turn} 轮，用时 ${e.durationMs}ms${e.modelName ? `（${e.connection ?? ""} / ${e.modelName}）` : ""}`;
     case "qc_result":
       return `第 ${e.attempt} 次质检${e.passed ? "通过" : "未通过"}，共 ${e.checks.length} 项`;
     case "review_decision":

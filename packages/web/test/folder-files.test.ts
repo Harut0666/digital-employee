@@ -21,6 +21,9 @@ const session = (messages: SessionMessage[], patch: Partial<SessionDetail> = {})
   createdAt: "2026-11-02T09:00:00.000Z",
   updatedAt: "2026-11-02T09:10:00.000Z",
   waitingFor: [],
+  statusDot: "idle",
+  unread: false,
+  archived: false,
   messages,
   ...patch,
 });
