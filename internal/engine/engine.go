@@ -101,6 +101,10 @@ type Deps struct {
 	// ConfigFallback 任务目录里的员工配置副本读不出来时，按员工 id 另找一个配置目录（Spec 0006 应用目录模式
 	// 下，员工配置在应用目录的 employees/ 里，任务目录里的副本与之同名）。nil 时不找。
 	ConfigFallback func(employeeID string) (string, bool)
+	// Workspaces 工作区 ID → 目录（Spec 0006、T42）：每个版本送审时把交付物复制到
+	// <目录>/交付/ 下。nil，或者任务没有记下工作区、工作区也查不到目录时，不写交付文件夹。
+	// 单目录模式的目录同时是应用目录，不在这里登记，所以单目录模式也不写。
+	Workspaces func(workspaceID string) (string, bool)
 }
 
 // Options 测试可注入的内部实现；生产环境不传，使用 agent / qc 的默认实现。
@@ -126,6 +130,8 @@ type Engine struct {
 	qcEngine qcEngine
 	// configFallback 任务目录副本读不出来时的员工配置来源（见 Deps.ConfigFallback）
 	configFallback func(employeeID string) (string, bool)
+	// workspaces 工作区 ID → 目录，写交付文件夹用（见 Deps.Workspaces）
+	workspaces func(workspaceID string) (string, bool)
 
 	mu       sync.Mutex
 	runtimes map[string]*taskRuntime
@@ -183,6 +189,7 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		runtimes:     map[string]*taskRuntime{},
 
 		configFallback: deps.ConfigFallback,
+		workspaces:     deps.Workspaces,
 	}
 	if engine.judgment == nil {
 		engine.judgment = agent.NewJudgmentRunner(agent.RunnerOptions{Execution: engine.executionDefaults})
@@ -249,6 +256,23 @@ func (e *Engine) SetTaskModel(taskID string, ref contract.ModelRef) error {
 		event.FromModel = &from
 	}
 	return e.appendLocked(rt, event)
+}
+
+// SetWorkspaces 替换工作区表（工作区登记变化后调用，写交付物时据此找目录）。
+func (e *Engine) SetWorkspaces(resolve func(workspaceID string) (string, bool)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.workspaces = resolve
+}
+
+func (e *Engine) workspaceDir(workspaceID string) (string, bool) {
+	e.mu.Lock()
+	resolve := e.workspaces
+	e.mu.Unlock()
+	if resolve == nil || workspaceID == "" {
+		return "", false
+	}
+	return resolve(workspaceID)
 }
 
 // ---------------------------------------------------------------- 运行时
@@ -1558,11 +1582,16 @@ func (e *Engine) finishQcPassed(rt *taskRuntime, checks []contract.QcCheckResult
 		return err
 	}
 	// Options 写进事件后属于 A-01 对拍基准，这里保持原样；快照读取时按 availableActions 重算
-	return e.transition(rt, contract.TriggerQcPassed, contract.RoleSystem, &contract.PauseReason{
+	if err := e.transition(rt, contract.TriggerQcPassed, contract.RoleSystem, &contract.PauseReason{
 		Code:    contract.PauseAwaitingReview,
 		Message: "已通过质检，等待审核人决定。",
 		Options: []string{contract.CmdApprove, contract.CmdReturn},
-	})
+	}); err != nil {
+		return err
+	}
+	// 进入待审核后，这一版在所属工作区目录的“交付”文件夹里留一份（T42）。写不进去不影响任务，只记一条说明
+	e.fileDeliverables(rt)
+	return nil
 }
 
 type qcRecord struct {
@@ -1687,8 +1716,13 @@ func corruptFirstParagraph(output any) any {
 // ---------------------------------------------------------------- 任务目录与附件
 
 func uniquePath(dir, name string) string {
+	return uniquePathFrom(dir, name, 2)
+}
+
+// uniquePathFrom 同名文件已存在时，从 from 开始找 <名字>-<序号>.<扩展名>。
+func uniquePathFrom(dir, name string, from int) string {
 	candidate := filepath.Join(dir, name)
-	for index := 2; ; index++ {
+	for index := from; ; index++ {
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			return candidate
 		}

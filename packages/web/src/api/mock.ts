@@ -19,6 +19,8 @@ import type {
   EmployeeInfo,
   ModelRef,
   PauseView,
+  RecordItem,
+  SessionSummary,
   TaskSnapshot,
   TaskSummary,
   UiRole,

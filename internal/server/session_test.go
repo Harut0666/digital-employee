@@ -376,7 +376,17 @@ func TestDeletedDefaultEmployeeFallsThroughToTheModel(t *testing.T) {
 // uploadTo 在会话里上传材料。
 func (h *harness) uploadTo(sessionID string, files []upload) (int, []byte) {
 	h.t.Helper()
-	contentType, body := multipartBody(h.t, nil, files)
+	return h.uploadToWorkspace(sessionID, files, "")
+}
+
+// uploadToWorkspace 在某个工作区的会话里上传材料：应用目录模式下上传初稿要带 workspaceId。
+func (h *harness) uploadToWorkspace(sessionID string, files []upload, workspaceID string) (int, []byte) {
+	h.t.Helper()
+	fields := map[string]string{}
+	if workspaceID != "" {
+		fields["workspaceId"] = workspaceID
+	}
+	contentType, body := multipartBody(h.t, fields, files)
 	return h.send(http.MethodPost, "/api/sessions/"+sessionID+"/attachments", contract.RoleInitiator, contentType, body)
 }
 
@@ -938,9 +948,12 @@ func TestSessionSurvivesARestart(t *testing.T) {
 	if textOf(t, got.Messages, session.KindUser) != "第 44 周" {
 		t.Fatalf("重启后的历史 = %+v", got.Messages)
 	}
-	if reply := h.submit(created.ID, nil); reply.Session.TaskID == "" {
+	reply := h.submit(created.ID, nil)
+	if reply.Session.TaskID == "" {
 		t.Fatalf("重启后不能提交：%+v", reply)
 	}
+	// 任务跑完再结束：临时目录清理时任务还在写日志会删不掉（T39 的剧本任务会真的跑起来）
+	h.settled(reply.Session.TaskID)
 }
 
 func TestTornLastLogLineIsDropped(t *testing.T) {

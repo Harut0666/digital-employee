@@ -97,6 +97,19 @@ type Manager struct {
 	store *store
 	mu    sync.Mutex
 	turns map[string]*sync.Mutex
+	// sessions 中间隔多久看一次新会话日志目录
+	scanEvery time.Duration
+	// scanned 上一次看会话目录的时间、看到 会话 ID → 目录修改时间
+	scannedAt time.Time
+	seen      map[string]time.Time
+	// seenLegacy 打开过的旧任务会话（它们没有会话日志，没有别的记录已读的地方）
+	seenLegacy map[string]bool
+	// views 会话的投影缓存：消息条数和更新时间没变就沿用（侧栏每几秒读一次全部会话）
+	views map[string]cachedView
+	// recordsCache 记录 tab 的缓存：任务列表没变时不用再读每个会话的日志
+	recordsMu    sync.Mutex
+	recordsStamp string
+	records      []Record
 }
 
 // New 组装会话模块。
@@ -104,8 +117,22 @@ func New(deps Deps) *Manager {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Manager{deps: deps, store: newStore(deps.Dir, deps.Now), turns: map[string]*sync.Mutex{}}
+	// 第一次读会话目录之前也先看一眼：新建的会话马上就能出现在列表里，之后的扫描隔一会儿一次
+	return &Manager{deps: deps, store: newStore(deps.Dir, deps.Now), turns: map[string]*sync.Mutex{}, scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour)}
 }
+
+// sessionScanEvery 会话目录隔多久重新列一次（新建的会话最多这么久之后出现在列表里）。
+const sessionScanEvery = time.Second
+
+// cachedView 一次会话回放的投影缓存：at 是当时的消息条数，updatedAt 是当时的更新时间。
+type cachedView struct {
+	at        int
+	updatedAt string
+	view      View
+}
+
+// busyText 上一条回复还没结束时又发来消息：说明一声。
+const busyText = "上一条消息还在处理，这条没有发出去，请稍后再发。"
 
 // ErrWorkspaceUnknown 会话所属的工作区没有登记过，也查不到它的目录。
 const ErrWorkspaceUnknown = "workspace_not_found"
@@ -133,6 +160,10 @@ type View struct {
 	// Selected 表示会话里明确选过。
 	Model    *contract.ModelRef `json:"model,omitempty"`
 	Selected bool               `json:"modelSelected,omitempty"`
+	// Archived 归档的会话默认不在列表里出现
+	Archived bool `json:"archived"`
+	// Unread 任务交付或终止之后还没打开过
+	Unread bool `json:"unread"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -165,8 +196,15 @@ func (m *Manager) Create(workspaceID string) (*View, error) {
 	return m.view(current), nil
 }
 
-// Get 读一个会话和它的全部消息。
+// Get 读一个会话和它的全部消息，同时写“已读”。
 func (m *Manager) Get(id string) (*Detail, error) {
+	// 已读只是顺手记一下，写不进去不影响读会话
+	_, _ = m.MarkRead(id)
+	return m.read(id)
+}
+
+// read 读一个会话和它的全部消息。
+func (m *Manager) read(id string) (*Detail, error) {
 	if strings.HasPrefix(id, legacyPrefix) {
 		return m.getLegacy(id)
 	}
@@ -207,6 +245,8 @@ func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
 	}
 	m.mu.Unlock()
 	if !lock.TryLock() {
+		// 回一条说明留痕，打开会话时能看到；不改变状态，也不用模型
+		_ = m.store.note(id, busyText)
 		return nil, nil, failure(ErrSessionBusy, "上一条消息还在处理，请稍候")
 	}
 	// 拿到锁之后才读，看到的才是上一条回复写完的状态
@@ -487,11 +527,11 @@ func (m *Manager) getLegacy(id string) (*Detail, error) {
 }
 
 // List 列出全部会话，最新的在前；已归属会话的任务不再单独列出。
-// workspaceID 非空时只列这个工作区的会话（空串表示所有工作区）。
-func (m *Manager) List(workspaceID string) ([]*View, error) {
+// workspaceID 非空时只列这个工作区的会话（空串表示所有工作区）；归档的会话默认不列。
+func (m *Manager) List(workspaceID string, includeArchived bool) ([]*View, error) {
 	out := []*View{}
 	bound := map[string]bool{}
-	for _, id := range m.store.ids() {
+	for _, id := range m.visibleIDs() {
 		current, err := m.store.read(id)
 		if err != nil {
 			return nil, err
@@ -501,6 +541,9 @@ func (m *Manager) List(workspaceID string) ([]*View, error) {
 		}
 		bound[current.taskID] = true
 		if workspaceID != "" && current.workspaceID != workspaceID {
+			continue
+		}
+		if current.archived && !includeArchived {
 			continue
 		}
 		out = append(out, m.view(current))
@@ -513,7 +556,7 @@ func (m *Manager) List(workspaceID string) ([]*View, error) {
 		if workspaceID != "" && summary.WorkspaceID != workspaceID {
 			continue
 		}
-		out = append(out, m.legacyView(summary))
+		out = append(out, m.legacyStatus(summary))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil
@@ -529,7 +572,7 @@ func (m *Manager) view(current *record) *View {
 		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
-		WaitingFor: []contract.Role{},
+		WaitingFor: []contract.Role{}, Archived: current.archived,
 	}
 	if current.employee != "" {
 		view.Status = StatusDrafting
@@ -537,6 +580,9 @@ func (m *Manager) view(current *record) *View {
 	if current.taskID != "" {
 		view.Status = StatusTask
 		m.applyTask(view, current.taskID)
+	}
+	if contract.IsTerminal(view.TaskState) && current.readUpTo < current.lastSeq() {
+		view.Unread = true
 	}
 	return view
 }
@@ -562,8 +608,11 @@ func (m *Manager) applySummary(view *View, summary contract.TaskSummary) {
 	}
 }
 
-// titleOf 会话标题：第一句话。
+// titleOf 会话标题：人改过的标题，否则是第一句话。
 func titleOf(current *record) string {
+	if current.title != "" {
+		return current.title
+	}
 	for _, message := range current.messages {
 		if message.Kind == KindUser {
 			runes := []rune(strings.TrimSpace(message.Text))

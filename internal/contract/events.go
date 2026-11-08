@@ -75,6 +75,13 @@ type TaskEvent struct {
 	// fault_injected
 	Target string `json:"target,omitempty"`
 	Mode   string `json:"mode,omitempty"`
+
+	// deliverable_filed
+	// FiledPath 交付文件夹里的文件（写不进去时为空），FiledReason 给业务人员看的说明，
+	// FiledError 写不进去时的原因
+	FiledPath   string `json:"filedPath,omitempty"`
+	FiledReason string `json:"filedReason,omitempty"`
+	FiledError  string `json:"filedError,omitempty"`
 }
 
 // EventUsage 模型 token 用量。
@@ -102,6 +109,8 @@ const (
 	EventReviewDecision     = "review_decision"
 	EventDeliverableCreated = "deliverable_created"
 	EventFaultInjected      = "fault_injected"
+	// EventDeliverableFiled 交付物写进工作区“交付”文件夹的说明（写不进去也记一条）
+	EventDeliverableFiled = "deliverable_filed"
 )
 
 // EventTypes 全部事件类型，SSE 为每条事件写具名 event:。
@@ -109,7 +118,7 @@ var EventTypes = []string{
 	EventTaskCreated, EventModelSwitched, EventFormUpdated, EventStateChanged, EventTransitionRejected,
 	EventStepStarted, EventStepCompleted, EventStepFailed, EventToolCalled,
 	EventToolResult, EventToolDenied, EventModelCalled, EventQCResult,
-	EventReviewDecision, EventDeliverableCreated, EventFaultInjected,
+	EventReviewDecision, EventDeliverableCreated, EventFaultInjected, EventDeliverableFiled,
 }
 
 func IntPtr(v int) *int          { return &v }

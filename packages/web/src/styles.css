@@ -299,6 +299,80 @@ body {
   color: var(--muted);
   font-size: calc(var(--font-size) - 2px);
 }
+/* 侧栏两个 tab（T38）：工作区分组头、已归档开关、记录行 */
+.side-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  cursor: pointer;
+  user-select: none;
+}
+.side-error {
+  color: var(--warn);
+  font-size: calc(var(--font-size) - 2px);
+  padding: 6px 4px 0;
+}
+.side-empty {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  padding: 8px 6px;
+}
+.side-label {
+  padding: 10px 6px 2px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+}
+.ws-head {
+  padding: 8px 4px 2px;
+  border-radius: 8px;
+}
+.ws-head.current {
+  background: var(--hover);
+}
+.ws-head .sub {
+  font-weight: 400;
+  color: var(--muted);
+}
+.ws-fold {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  cursor: pointer;
+}
+.ws-action {
+  opacity: 0;
+}
+.ws-head:hover .ws-action,
+.ws-head.current .ws-action {
+  opacity: 1;
+}
+.session-item .session-more {
+  opacity: 0;
+}
+.session-item:hover .session-more,
+.session-item.active .session-more {
+  opacity: 1;
+}
+.session-item .title.unread {
+  font-weight: 600;
+}
+.unread-mark {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  vertical-align: middle;
+}
+.session-item.archived {
+  opacity: 0.55;
+}
+.record-item.readonly {
+  cursor: default;
+}
 .side-foot {
   border-top: 1px solid var(--line);
   padding: 8px 4px 0;

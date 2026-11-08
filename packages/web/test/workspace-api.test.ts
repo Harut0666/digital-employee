@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createWorkspaceApi } from "../src/api/workspaces";
+import { createWorkspaceApi, type RecordGroupView } from "../src/api/workspaces";
 import type { FetchLike } from "../src/api/sessions";
 
 /** 假的 fetch：记下请求，按“方法 路径”回固定响应 */
@@ -43,6 +43,28 @@ describe("工作区接口（Spec 0006：没有切换）", () => {
     expect(await api.unregister("ws-2")).toEqual({ ok: true, id: "ws-2" });
     expect(calls[0]).toMatchObject({ method: "PATCH", body: JSON.stringify({ name: "南大区" }) });
     expect(calls[1]?.method).toBe("DELETE");
+  });
+
+  test("工作区列表带会话摘要和未归属；记录按状态分组；在资源管理器中打开", async () => {
+    const sessions = [{ id: "s-1", workspaceId: "ws-1", statusDot: "waiting", unread: false, archived: false }];
+    const groups: RecordGroupView[] = [{ key: "running", label: "进行中", items: [] }];
+    const { calls, impl } = fakeFetch({
+      "GET /api/workspaces": [200, { readOnly: false, workspaces: [{ ...huadong, sessions }], unassigned: [] }],
+      "GET /api/records": [200, { groups }],
+      "POST /api/workspaces/ws-1/open": [200, { ok: true, path: "D:\\\\de\\\\华东区" }],
+    });
+    const api = createWorkspaceApi("http://local", impl);
+    const list = await api.list();
+    expect(list.workspaces[0]?.sessions?.[0]?.statusDot).toBe("waiting");
+    expect((await api.records()).groups).toEqual(groups);
+    expect(await api.open("ws-1")).toEqual({ ok: true, path: "D:\\\\de\\\\华东区" });
+    await api.list({ archived: true });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "GET /api/workspaces",
+      "GET /api/records",
+      "POST /api/workspaces/ws-1/open",
+      "GET /api/workspaces",
+    ]);
   });
 
   test("读取列表失败时抛错；单目录模式带只读原因", async () => {
