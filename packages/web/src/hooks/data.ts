@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
-import type { EmployeeInfo, PreflightResult, SessionDetail, SessionSummary, TaskSnapshot, WebApi } from "../api";
+import type { EmployeeInfo, PreflightResult, SessionDetail, TaskSnapshot, WebApi } from "../api";
 import { deriveSessionView, type SessionView } from "../view/session-view";
 
 export const ApiContext = createContext<WebApi | null>(null);
@@ -21,24 +21,6 @@ export function useEmployees(): EmployeeInfo[] {
     };
   }, [api]);
   return list;
-}
-
-/** 会话列表（新会话和旧任务的只读会话）：定时刷新，另外暴露 refresh 供操作后立即刷新。 */
-export function useSessionList(intervalMs = 2000): { sessions: SessionSummary[]; refresh: () => void } {
-  const api = useApi();
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [tick, refresh] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    let alive = true;
-    const load = () => api.listSessions().then((l) => alive && setSessions(l), () => {});
-    void load();
-    const timer = setInterval(load, intervalMs);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [api, intervalMs, tick]);
-  return { sessions, refresh };
 }
 
 export interface SessionState {
@@ -147,5 +129,6 @@ export function useTask(id: string | undefined): TaskState {
   const view = useMemo(() => deriveSessionView(events, snapshot?.steps ?? []), [events, snapshot?.steps]);
   return { snapshot, view, events, loading, reload };
 }
+
 
 

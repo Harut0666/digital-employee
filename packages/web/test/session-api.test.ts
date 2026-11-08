@@ -74,6 +74,27 @@ describe("会话接口", () => {
     expect(calls[1]?.url).toBe("http://local/api/sessions");
   });
 
+  test("会话列表带上归档开关；PATCH 重命名和归档，返回新的会话摘要", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/sessions": [200, [session]],
+      "PATCH /api/sessions/s-1": [200, { ok: true, session: { ...session, title: "新的标题", archived: true }, statusDot: "idle" }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    await api.listSessions(undefined, { archived: true });
+    expect(calls[0]?.url).toBe("http://local/api/sessions?archived=1");
+    await api.listSessions("ws-1", { archived: true });
+    expect(calls[1]?.url).toBe("http://local/api/sessions?workspaceId=ws-1&archived=1");
+    const updated = await api.updateSession("s-1", { title: "新的标题" });
+    expect(updated).toMatchObject({ id: "s-1", title: "新的标题", archived: true });
+    expect(calls[2]).toMatchObject({ method: "PATCH", body: JSON.stringify({ title: "新的标题" }) });
+    expect(calls[2]?.headers["x-role"]).toBe("initiator");
+  });
+
+  test("重命名被拒时抛错并带原因", async () => {
+    const { impl } = fakeFetch({ "PATCH /api/sessions/s-1": [400, { ok: false, error: "invalid_input", message: "标题不能为空" }] });
+    await expect(createSessionApi("http://local", () => "initiator", impl).updateSession("s-1", { title: " " })).rejects.toThrow("标题不能为空");
+  });
+
   test("提交前检查和会话读取", async () => {
     const { impl } = fakeFetch({
       "GET /api/preflight": [200, { ok: true }],

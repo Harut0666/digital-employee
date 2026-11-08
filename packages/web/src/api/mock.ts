@@ -11,7 +11,7 @@ import { actionsOf, pauseTextOf, waitingForOf } from "./mock-rules";
 import { createMockSessions } from "./mock-sessions";
 import type { KnowledgeApi } from "./knowledge";
 import type { SessionApi } from "./sessions";
-import type { CommandResult, CreateTaskInput, DeliverableKind, DeliverableVersion, EmployeeInfo, PauseView, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
+import type { CommandResult, CreateTaskInput, DeliverableKind, DeliverableVersion, EmployeeInfo, PauseView, RecordItem, SessionSummary, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
 
 interface MockTask {
   id: string;

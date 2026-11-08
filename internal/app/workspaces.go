@@ -200,11 +200,11 @@ func (r *workspaceRegistry) add(name, path string, now time.Time) Workspace {
 	return added
 }
 
-// dirs 登记项 → 服务端用的“工作区 ID → 目录”快照，按 ID 排序。
+// dirs 登记项 → 服务端用的工作区资料（ID、名字、目录），按 ID 排序。
 func (r *workspaceRegistry) dirs() []server.Workspace {
 	out := make([]server.Workspace, 0, len(r.Workspaces))
 	for _, item := range r.Workspaces {
-		out = append(out, server.Workspace{ID: item.ID, Path: item.Path})
+		out = append(out, server.Workspace{ID: item.ID, Name: item.Name, Path: item.Path, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
