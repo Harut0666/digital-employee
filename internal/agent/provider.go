@@ -40,12 +40,28 @@ type StreamFunc func(ctx context.Context, model Model, request StreamRequest, op
 
 // ResolvedStepModel 一个步骤实际使用的模型与参数。
 type ResolvedStepModel struct {
-	Model         Model
+	Model Model
+	// Connection、ModelID 实际用的连接和模型名，写进“模型调用”事件（Spec 0006）。
+	// 剧本模型不知道这些，留空。
+	Connection    string
+	ModelID       string
 	Stream        StreamFunc
 	APIKey        string
 	ThinkingLevel string
 	TimeoutMS     *int
 	MaxRetries    *int
+}
+
+// IsPinned 流程配置里给这一步写死的模型：给出了模型名，或者不是工作流缺省值 "default" 的连接名。
+// 写死的模型优先于任何缺省值（任务当前的会话模型）。
+func IsPinned(ref *contract.ModelRef) bool {
+	if ref == nil {
+		return false
+	}
+	if ref.Model != "" && ref.Model != "default" {
+		return true
+	}
+	return ref.Connection != "" && ref.Connection != "default"
 }
 
 // ModelProvider 模型提供者：真实模型与剧本式假模型都实现它。

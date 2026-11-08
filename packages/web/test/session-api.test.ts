@@ -74,6 +74,22 @@ describe("会话接口", () => {
     expect(calls[1]?.url).toBe("http://local/api/sessions");
   });
 
+  test("会话模型：读可选模型、PUT 选模型（带当前角色），提交前检查可以带任务", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/settings/models": [200, [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }]],
+      "PUT /api/sessions/s-1/model": [200, { ok: true, messages: [], session }],
+      "GET /api/preflight": [200, { ok: true }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.modelOptions())[0]?.models).toEqual(["deepseek-chat", "deepseek-reasoner"]);
+    expect((await api.selectModel("s-1", "DeepSeek", "deepseek-reasoner")).ok).toBe(true);
+    expect(calls[1]?.method).toBe("PUT");
+    expect(calls[1]?.headers["x-role"]).toBe("initiator");
+    expect(JSON.parse(String(calls[1]?.body))).toEqual({ connection: "DeepSeek", model: "deepseek-reasoner" });
+    await api.preflight("t-1");
+    expect(calls[2]?.url).toBe("http://local/api/preflight?taskId=t-1");
+  });
+
   test("提交前检查和会话读取", async () => {
     const { impl } = fakeFetch({
       "GET /api/preflight": [200, { ok: true }],

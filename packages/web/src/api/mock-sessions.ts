@@ -8,6 +8,8 @@ import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
 import type {
   EmployeeInfo,
+  ModelConnectionOption,
+  ModelRef,
   SessionAttachment,
   SessionCard,
   SessionDetail,
@@ -21,7 +23,10 @@ import type {
   WebApi,
 } from "./types";
 
-type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createTask" | "command">;
+type TaskBackend = Pick<WebApi, "listTasks" | "getTask" | "getEvents" | "createTask" | "command"> & {
+  /** 运行中换模型：任务写一条“模型已切换”事件（对应 Go 的 Engine.SetTaskModel） */
+  switchModel?(taskId: string, model: ModelRef): void;
+};
 
 interface MockSession {
   id: string;
@@ -34,6 +39,8 @@ interface MockSession {
   filingDraft?: string;
   /** 发起人确认跳过的清单项 */
   skipped: Set<string>;
+  /** 会话里选择的模型（Spec 0006）；没选过时沿用设置的 lastModel */
+  selected?: ModelRef;
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -45,6 +52,11 @@ const LEGACY = "task-";
 const MOCK_WORKSPACE = "ws-demo";
 const PAUSED = new Set(["awaiting_initiator", "awaiting_operator", "awaiting_review"]);
 
+/** 模拟模式可选的模型（和 settings.ts 的模拟连接一致：只有 DeepSeek 配了 Key）。 */
+const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }];
+/** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
+const MOCK_DEFAULT_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+
 export function createMockSessions(
   employees: EmployeeInfo[],
   getRole: () => UiRole,
@@ -53,6 +65,10 @@ export function createMockSessions(
 ): SessionApi {
   const sessions = new Map<string, MockSession>();
   let counter = 0;
+  // 和 Go 一样：选过的模型记在设置里，新会话沿用
+  let lastModel: ModelRef = MOCK_DEFAULT_MODEL;
+  /** 模拟任务当前的会话模型（运行中切换时更新；任务事件由 mock.ts 写入） */
+  const taskModels = new Map<string, ModelRef>();
 
   const fail = (error: string, message: string): SessionResult => ({ ok: false, error, message });
   const write = (s: MockSession, input: Omit<SessionMessage, "id" | "seq" | "ts">, out: SessionMessage[]) => {
@@ -79,6 +95,8 @@ export function createMockSessions(
     const summary = await summaryOf(s.taskId);
     const closed = summary?.state === "delivered" || summary?.state === "terminated";
     return {
+      // 绑定了任务时是任务的当前模型；还没任务时是选过的模型，没选过沿用 lastModel
+      ...(s.taskId ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
       id: s.id,
       workspaceId: s.workspaceId,
       status: s.taskId ? (closed ? "closed" : "task") : s.employee ? "drafting" : "reception",
@@ -202,6 +220,34 @@ export function createMockSessions(
   }
 
   return {
+    async modelOptions() {
+      return MOCK_MODEL_OPTIONS;
+    },
+
+    /** 选模型：规则照搬 Go 的 SelectModel（只能选连接列出的模型；任务运行中从下一个判断步骤生效） */
+    async selectModel(id, connection, model) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以选模型");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const option = MOCK_MODEL_OPTIONS.find((o) => o.name === connection);
+      if (!option) return fail("invalid_input", `没有这个连接：${connection}`);
+      if (!option.models.includes(model)) return fail("invalid_input", `模型「${model}」不在连接「${connection}」的模型列表里`);
+      if (s.taskId) {
+        const task = await tasks.getTask(s.taskId);
+        if (task?.state === "delivered" || task?.state === "terminated") return fail("session_read_only", "任务已结束，模型不能再改；下一个任务请开新对话");
+      }
+      const next: ModelRef = { connection, model };
+      if (s.selected && s.selected.connection === connection && s.selected.model === model) return reply(s, []);
+      const out: SessionMessage[] = [];
+      s.selected = next;
+      lastModel = next;
+      if (s.taskId) {
+        taskModels.set(s.taskId, next);
+        tasks.switchModel?.(s.taskId, next);
+      }
+      return reply(s, out);
+    },
+
     async listSessions(workspaceId) {
       const own = await Promise.all([...sessions.values()].filter((s) => !workspaceId || s.workspaceId === workspaceId).map(view));
       const bound = new Set(own.map((s) => s.taskId));
@@ -298,8 +344,9 @@ export function createMockSessions(
       const startForm = { ...s.draft, ...Object.fromEntries(skipped.map((i) => [i.skipField!, true])) };
       // 模拟任务按上传项判定材料：会话里的文件没有上传项，按扩展名归位
       const uploads: UploadItem[] = s.files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
-      const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads });
+      const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads, model: s.selected ?? lastModel });
       s.taskId = snapshot.id;
+      taskModels.set(snapshot.id, s.selected ?? lastModel);
       const res = await tasks.command(snapshot.id, { type: "submit" });
       if (!res.ok) return fail(res.error, res.message);
       return reply(s, []);

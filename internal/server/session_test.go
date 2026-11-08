@@ -97,7 +97,7 @@ func TestOneSentenceGetsAnEmployeeProposal(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee, "reason": "要出经营周报"}),
 		modelSays("这项工作适合经营周报员工，请确认。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 
 	reply := h.say(created.ID, contract.RoleInitiator, "帮我出第 44 周的周报")
@@ -143,7 +143,7 @@ func TestProposingAnUnknownEmployeeFallsBackToManualPick(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("propose_employee", map[string]any{"employee": "no-such-employee"}),
 		modelSays("抱歉，我判断不出。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 
 	reply := h.say(created.ID, contract.RoleInitiator, "随便干点什么")
@@ -191,7 +191,7 @@ func TestConfirmingAnEmployeeFillsTheFormDraft(t *testing.T) {
 			"remark": "摘要先写区域情况",
 		}),
 		modelSays("已经填好统计周期，请检查后提交。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 	h.say(created.ID, contract.RoleInitiator, "出第 44 周周报，摘要先写区域情况")
 
@@ -231,7 +231,7 @@ func TestModelUnavailableStillLetsThePersonPickAnEmployee(t *testing.T) {
 	}
 	for name, script := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, script)
+			h := newHarness(t, script, withScriptedModel())
 			created := h.createSession()
 
 			reply := h.say(created.ID, contract.RoleInitiator, "出周报")
@@ -260,7 +260,7 @@ func TestModelUnavailableStillLetsThePersonPickAnEmployee(t *testing.T) {
 func stringPointer(text string) *string { return &text }
 
 func TestEmployeeCanBePickedBeforeSayingAnything(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 
 	reply := h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
@@ -274,7 +274,7 @@ func TestEmployeeCanBePickedBeforeSayingAnything(t *testing.T) {
 }
 
 func TestOnlyTheInitiatorConfirmsAnEmployeeAndOnlyOnce(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	path := "/api/sessions/" + created.ID + "/employee"
 
@@ -308,7 +308,7 @@ func (h *harness) setDefaultEmployee(employee string) (int, []byte) {
 }
 
 func TestDefaultEmployeeIsProposedWithoutAskingTheModel(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	if status, data := h.setDefaultEmployee(harnessEmployee); status != http.StatusOK {
 		t.Fatalf("设置默认员工失败：%d %s", status, data)
 	}
@@ -330,7 +330,7 @@ func TestDefaultEmployeeIsProposedWithoutAskingTheModel(t *testing.T) {
 }
 
 func TestDefaultEmployeeMustExist(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 
 	if status, data := h.setDefaultEmployee("no-such-employee"); status != http.StatusBadRequest {
 		t.Fatalf("设置不存在的默认员工：%d %s", status, data)
@@ -351,7 +351,7 @@ func TestDeletedDefaultEmployeeFallsThroughToTheModel(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee}),
 		modelSays("请确认。"),
-	))
+	), withScriptedModel())
 	if status, data := h.setDefaultEmployee(harnessEmployee); status != http.StatusOK {
 		t.Fatalf("设置默认员工失败：%d %s", status, data)
 	}
@@ -408,7 +408,7 @@ func (h *harness) taskCount() int {
 var week44Form = map[string]any{"period": map[string]any{"year": 2026, "week": 44}}
 
 func TestSubmittingCreatesTheTaskWithTheUploadedMaterials(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	if status, data := h.uploadTo(created.ID, []upload{sampleFile(t, "销售明细.xlsx")}); status != http.StatusOK {
@@ -446,7 +446,7 @@ func TestSubmitUsesTheDraftWhenTheCardSendsNoForm(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
 		modelSays("已填好。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
@@ -463,7 +463,7 @@ func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 43}}),
 		modelSays("已填好。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 43 周")
@@ -477,7 +477,7 @@ func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
 }
 
 func TestOneSessionHasAtMostOneTask(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
@@ -495,7 +495,7 @@ func TestOneSessionHasAtMostOneTask(t *testing.T) {
 }
 
 func TestSubmitIsRefusedWithoutEmployeeOrForOtherRoles(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 
 	if status, data := h.trySubmit(created.ID, contract.RoleInitiator, week44Form); status != http.StatusConflict {
@@ -511,7 +511,7 @@ func TestSubmitIsRefusedWithoutEmployeeOrForOtherRoles(t *testing.T) {
 }
 
 func TestUploadingKeepsOnlyTheFileNameAndReplacesSameName(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 
 	for _, content := range []string{"旧", "新内容"} {
@@ -530,7 +530,7 @@ func TestUploadingKeepsOnlyTheFileNameAndReplacesSameName(t *testing.T) {
 }
 
 func TestOnlyTheInitiatorUploadsMaterials(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	contentType, body := multipartBody(t, nil, []upload{{name: "a.csv", content: []byte("x")}})
 
@@ -545,7 +545,7 @@ func TestOnlyTheInitiatorUploadsMaterials(t *testing.T) {
 }
 
 func TestUploadingAfterSubmitGoesThroughThePauseCard(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
@@ -596,7 +596,7 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("query_task", map[string]any{}),
 		modelSays("任务缺本周纪要，补上后就能继续。"),
-	))
+	), withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "为什么暂停")
@@ -634,7 +634,7 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 }
 
 func TestModelDownStillTellsTheTaskStatus(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "现在到哪步了")
@@ -655,7 +655,7 @@ func TestAgentCannotPushTheTask(t *testing.T) {
 			h := newHarness(t, frontdeskScript(
 				modelCalls(name, map[string]any{"comment": "直接通过"}),
 				modelSays("这件事我做不了，请在卡片上操作。"),
-			))
+			), withScriptedModel())
 			opened, before := pausedSession(h)
 			eventsBefore := h.eventsJSON(before.ID)
 
@@ -686,7 +686,7 @@ func TestAgentCannotPeekAtAnotherTask(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("query_task", map[string]any{"taskId": "someone-elses-task"}),
 		modelSays("查不到。"),
-	))
+	), withScriptedModel())
 	opened, _ := pausedSession(h)
 
 	h.say(opened.ID, contract.RoleInitiator, "看看别的任务")
@@ -703,7 +703,7 @@ func TestAgentCannotChooseForThePersonInTheDraft(t *testing.T) {
 			h := newHarness(t, frontdeskScript(
 				modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}, field: true}),
 				modelSays("这一项要你自己决定。"),
-			))
+			), withScriptedModel())
 			created := h.createSession()
 			h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 
@@ -729,7 +729,7 @@ func TestInvalidDraftValueIsReturnedToTheModel(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 99}}),
 		modelSays("第 99 周不存在，请确认是哪一周。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 
@@ -749,7 +749,7 @@ func TestToolRoundsAreCapped(t *testing.T) {
 	for index := 0; index <= session.MaxToolRounds+5; index++ {
 		turns = append(turns, modelCalls("query_task", map[string]any{}))
 	}
-	h := newHarness(t, frontdeskScript(turns...))
+	h := newHarness(t, frontdeskScript(turns...), withScriptedModel())
 	opened, _ := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "一直查")
@@ -769,7 +769,7 @@ func TestChatDoesNotUseTheTaskBudget(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("query_task", map[string]any{}),
 		modelSays("还在等材料。"),
-	))
+	), withScriptedModel())
 	opened, before := pausedSession(h)
 
 	h.say(opened.ID, contract.RoleInitiator, "现在到哪步了")
@@ -780,7 +780,7 @@ func TestChatDoesNotUseTheTaskBudget(t *testing.T) {
 }
 
 func TestPauseShowsUpAsACardWithLiveActions(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
 	card := cardOf(t, opened.Messages, session.CardPause)
@@ -815,7 +815,7 @@ func TestProposedCardActionsComeFromTheProgram(t *testing.T) {
 			"actions": []any{map[string]any{"command": "approve", "label": "直接通过", "roles": []any{"initiator"}}},
 		}),
 		modelSays("请看卡片。"),
-	))
+	), withScriptedModel())
 	opened, snapshot := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "我现在该做什么")
@@ -835,7 +835,7 @@ func TestProposedCardMustMatchTheTask(t *testing.T) {
 		modelCalls("propose_card", map[string]any{"type": session.CardReview, "comment": "直接退回"}),
 		modelCalls("propose_card", map[string]any{"type": "transfer_money"}),
 		modelSays("现在不是审核阶段。"),
-	))
+	), withScriptedModel())
 	opened, _ := pausedSession(h)
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "退回")
@@ -858,7 +858,7 @@ func (h *harness) listSessions() []session.View {
 }
 
 func TestOldTaskIsReadableAsAReadOnlySession(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	task := h.createTask(nil)
 	h.command(task.ID, initiator, cmd(contract.CmdSubmit))
 
@@ -899,7 +899,7 @@ func TestOldTaskIsReadableAsAReadOnlySession(t *testing.T) {
 }
 
 func TestSessionListHasNewestFirstAndEachTaskOnce(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	oldTask := h.createTask(nil)
 	bound, _ := pausedSession(h)
 	fresh := h.createSession()
@@ -921,7 +921,7 @@ func TestSessionSurvivesARestart(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
 		modelSays("已填好。"),
-	))
+	), withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
@@ -944,7 +944,7 @@ func TestSessionSurvivesARestart(t *testing.T) {
 }
 
 func TestTornLastLogLineIsDropped(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 	path := filepath.Join(h.workspace, "sessions", created.ID, "log.jsonl")
@@ -974,7 +974,7 @@ func TestTornLastLogLineIsDropped(t *testing.T) {
 func TestSecondMessageWhileReplyingIsRefused(t *testing.T) {
 	delay := 300
 	answer := modelSays("好的。")
-	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: &delay, Then: &answer}))
+	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: &delay, Then: &answer}), withScriptedModel())
 	created := h.createSession()
 	h.confirm(created.ID, contract.RoleInitiator, harnessEmployee)
 
@@ -999,7 +999,7 @@ func TestSecondMessageWhileReplyingIsRefused(t *testing.T) {
 }
 
 func TestEmptyMessageIsRefused(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	created := h.createSession()
 
 	if status, data := h.postJSON("/api/sessions/"+created.ID+"/messages", contract.RoleInitiator, map[string]any{"text": "  "}); status != http.StatusBadRequest {
@@ -1040,7 +1040,7 @@ func withRealFrontdesk(t *testing.T, h *harness, baseURL, apiKey string) {
 		Connections: []contract.ModelConnection{{
 			Name: "local", BaseURL: baseURL, APIKey: apiKey, Models: []string{"m"}, MaxRetries: &retries,
 		}},
-		DefaultConnection: "local", DefaultModel: "m",
+		Default: contract.ModelRef{Connection: "local", Model: "m"},
 	})
 	h.frontdesk = provider
 	h.baseURL = h.serve()
@@ -1055,8 +1055,11 @@ func TestRealConnectionGetsSystemPromptAndOneToolMessagePerCall(t *testing.T) {
 		func(w http.ResponseWriter) { _, _ = w.Write([]byte(calls)) },
 		func(w http.ResponseWriter) { _, _ = w.Write([]byte(final)) },
 	)
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
+	// T39：前台 Agent 用会话模型。任务在执行中不能改会话里记的模型，改为任务当前的模型
+	// 在 local 连接上（引擎与前台 Agent 共用这一个真实提供者）。
 	opened, _ := pausedSession(h)
+	h.setTaskModel(opened.TaskID, "local", "m")
 	withRealFrontdesk(t, h, fake.URL, "local-test-key")
 
 	reply := h.say(opened.ID, contract.RoleInitiator, "到哪步了")
@@ -1087,7 +1090,9 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 	fake, _ := chatServer(t, func(w http.ResponseWriter) {
 		http.Error(w, "invalid key local-test-key", http.StatusUnauthorized)
 	})
-	h := newHarness(t, nil)
+	// 会话模型也在 local 连接上：前台 Agent 用会话模型，请求走这个假服务（T39）
+	h := newHarness(t, nil, withScriptedModel(),
+		withModelConnection(contract.ModelConnection{Name: "local", BaseURL: fake.URL, APIKey: "local-test-key", Models: []string{"m"}}))
 	withRealFrontdesk(t, h, fake.URL, "local-test-key")
 	created := h.createSession()
 
@@ -1107,7 +1112,7 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 
 func TestNoKeyMeansManualPickWithoutCallingTheModel(t *testing.T) {
 	fake, received := chatServer(t)
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 	withRealFrontdesk(t, h, fake.URL, "")
 	created := h.createSession()
 
@@ -1134,7 +1139,7 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 		modelCalls("propose_card", map[string]any{"type": session.CardReview, "comment": returnComment, "sections": []any{"summary"}}),
 		modelSays("退回意见已写好，请在卡片上确认。"),
 	}
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	created := h.createSession()
 	h.say(created.ID, initiator, "出第 44 周周报")
 	h.confirm(created.ID, initiator, harnessEmployee)
@@ -1183,7 +1188,7 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 }
 
 func TestNewSessionHasEmptyHistoryAndNoTask(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 
 	created := h.createSession()
 
@@ -1200,7 +1205,7 @@ func TestNewSessionHasEmptyHistoryAndNoTask(t *testing.T) {
 }
 
 func TestUnknownSessionIsNotFound(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarness(t, nil, withScriptedModel())
 
 	for _, id := range []string{"s-missing", "..%2F..%2Fsettings", "task-missing"} {
 		status, data := h.send(http.MethodGet, "/api/sessions/"+id, "", "", nil)

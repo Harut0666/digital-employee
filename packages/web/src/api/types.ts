@@ -70,6 +70,8 @@ export interface DeliverableVersion {
 export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause" | "steps"> {
   pause?: PauseView;
   steps: StepStatusView[];
+  /** 任务当前的会话模型（发起事件给出，随“模型已切换”更新；旧任务为空） */
+  model?: ModelRef;
   actions: TaskAction[];
   waitingFor: UiRole[];
   /** 历次送审的交付物，旧到新 */
@@ -109,6 +111,8 @@ export interface CreateTaskInput {
   employee: string;
   form: Record<string, unknown>;
   uploads: UploadItem[];
+  /** 任务的会话模型（T39）：会话里发起时记下，写进“发起”事件 */
+  model?: ModelRef;
 }
 
 export type DeliverableKind = "docx" | "md" | "qc_record";
@@ -182,6 +186,8 @@ export interface SessionMessage {
   card?: SessionCard;
   tool?: string;
   reason?: string;
+  /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
+  model?: ModelRef;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
@@ -202,6 +208,18 @@ export interface SessionChecklist {
   missing: string[];
 }
 
+/** 会话模型（Spec 0006）：设置里的连接名 + 连接列出的模型 ID */
+export interface ModelRef {
+  connection: string;
+  model: string;
+}
+
+/** 会话里可以选的模型：一个有 Key 的连接和它列出的模型（GET /api/settings/models） */
+export interface ModelConnectionOption {
+  name: string;
+  models: string[];
+}
+
 export interface SessionSummary {
   id: string;
   /** 会话属于哪个工作区（Spec 0006；侧栏按它分组是 T38） */
@@ -220,6 +238,10 @@ export interface SessionSummary {
   taskState?: TaskState;
   statusText?: string;
   waitingFor: UiRole[];
+  /** 会话模型：会话里最后一次选的；没选过时是设置的 lastModel（也可能为空） */
+  model?: ModelRef;
+  /** 会话里明确选过模型 */
+  modelSelected?: boolean;
 }
 
 export interface SessionDetail extends SessionSummary {

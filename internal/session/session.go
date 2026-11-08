@@ -38,6 +38,14 @@ const (
 type Error struct {
 	Code    string
 	Message string
+	// Settings 提交前检查不通过时带人去哪个设置页
+	Settings *SettingsEntry
+}
+
+// SettingsEntry 设置页入口（提交前检查不通过时一起返回）。
+type SettingsEntry struct {
+	Section string `json:"section"`
+	Label   string `json:"label"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -70,8 +78,12 @@ type Deps struct {
 	DefaultEmployee func() string
 	// Execution 模型重试和超时的默认值
 	Execution func() *contract.ExecutionSettings
-	// Preflight 提交前检查：返回错误时任务不会创建
-	Preflight func() error
+	// ModelSettings 当前的模型设置（连接列表 + 缺省模型），每次读设置文件
+	ModelSettings func() contract.ModelSettings
+	// SaveLastModel 会话里选了模型后记进设置（lastModel），新会话沿用它
+	SaveLastModel func(contract.ModelRef) error
+	// Preflight 提交前检查：检查 ref（会话模型）所在的连接有 Key、模型在列表里；返回错误时任务不会创建
+	Preflight func(ref contract.ModelRef) error
 	// Knowledge 知识库的只读工具；员工的 frontdesk.md 勾选了才开放给前台 Agent。nil 表示没有知识库
 	Knowledge contract.ToolClient
 	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
@@ -117,6 +129,10 @@ type View struct {
 	WaitingFor []contract.Role    `json:"waitingFor"`
 	// Checklist 开工清单，读单个会话时才有；没有员工或员工没有清单时为空
 	Checklist *Checklist `json:"checklist,omitempty"`
+	// Model 会话模型（Spec 0006）：会话里最后一次选择的；没选过时为空，沿用设置的 lastModel。
+	// Selected 表示会话里明确选过。
+	Model    *contract.ModelRef `json:"model,omitempty"`
+	Selected bool               `json:"modelSelected,omitempty"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -228,7 +244,21 @@ func (m *Manager) fullView(current *record) (*View, error) {
 		return nil, err
 	}
 	view.Checklist = checklist
+	view.Model = m.currentModel(current)
+	view.Selected = current.model != nil
 	return view, nil
+}
+
+// currentModel 会话现在用的模型：绑定了任务时是任务的当前模型，否则是会话模型。
+func (m *Manager) currentModel(current *record) *contract.ModelRef {
+	model := m.effectiveModel(current)
+	if current.taskID != "" {
+		model = m.taskModel(current)
+	}
+	if model.Connection == "" && model.Model == "" {
+		return nil
+	}
+	return &model
 }
 
 // Send 收一条人的消息，等前台 Agent 回复完。
@@ -362,10 +392,16 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 	if checklist != nil && !checklist.Ready {
 		return nil, failure(ErrChecklistIncomplete, "开工清单还缺：%s。备齐后才能开工。", strings.Join(checklist.Missing, "、"))
 	}
+	// 提交前检查按会话模型：它所在的连接有 Key，并且模型在连接的模型列表里
+	model := m.effectiveModel(t.current)
 	if m.deps.Preflight != nil {
-		if err := m.deps.Preflight(); err != nil {
+		if err := m.deps.Preflight(model); err != nil {
 			return nil, err
 		}
+	}
+	if model.Connection == "" {
+		// 还没选过模型：任务照样能建（剧本模式、旧任务路径不看它），记下检查时用的缺省模型
+		model = m.effectiveModelSettings().Default
 	}
 	if form != nil {
 		if err := t.write(Message{Kind: kindDraftSet, Draft: form}); err != nil {
@@ -379,6 +415,8 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 	snapshot, err := m.deps.Engine.Create(contract.CreateTaskInput{
 		Employee: t.current.employee, Form: applySkips(t.current.draft, checklist, items), Attachments: inputs, Actor: role,
 		WorkspaceID: t.current.workspaceID,
+		// 发起任务时会话模型写进“发起”事件
+		Model: model,
 	})
 	if err != nil {
 		return nil, err
@@ -425,6 +463,10 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{},
 	}
 	m.applySummary(view, summary)
+	if snapshot, found := m.deps.Engine.Get(summary.ID); found && snapshot.Model != nil {
+		view.Model = snapshot.Model
+		view.Selected = true
+	}
 	return view
 }
 

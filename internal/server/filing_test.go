@@ -41,7 +41,7 @@ const draftedDescription = "第 44 周经营周报：华东、华南两个异常
 func TestDeliveredSessionOffersAFilingCardDraftedByTheModel(t *testing.T) {
 	script := caseScript(t, "A-01")
 	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{modelSays(draftedDescription)}
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	sessionID, taskID := h.deliveredSession()
 
 	offered := filingCard(h, sessionID)
@@ -76,7 +76,7 @@ func TestDeliveredSessionOffersAFilingCardDraftedByTheModel(t *testing.T) {
 func TestFilingDescriptionIsHandWrittenWhenTheModelIsDown(t *testing.T) {
 	script := caseScript(t, "A-01")
 	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{{Error: stringPointer("模型接口返回 503")}}
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	sessionID, taskID := h.deliveredSession()
 
 	status, data := h.draftFiling(sessionID, initiator)

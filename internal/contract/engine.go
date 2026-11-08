@@ -45,7 +45,8 @@ const (
 	ErrForbiddenRole     = "forbidden_role"
 	ErrInvalidInput      = "invalid_input"
 	ErrNotFound          = "not_found"
-	// ErrModelNotConfigured 提交前检查不通过：默认模型连接没有可用的 Key。只由服务端返回，引擎不知道它。
+	// ErrModelNotConfigured 提交前检查不通过：会话模型所在的连接没有 Key，或模型不在连接的模型列表里。
+	// 只由服务端返回，引擎不知道它。
 	ErrModelNotConfigured = "model_not_configured"
 )
 
@@ -125,6 +126,8 @@ type TaskSnapshot struct {
 	QC           []QcCheckResult  `json:"qc,omitempty"`
 	Deliverables []DeliverableRef `json:"deliverables"`
 	LastSeq      int64            `json:"lastSeq"`
+	// Model 任务当前的会话模型（发起事件给出，随“模型已切换”更新；旧任务为空）
+	Model *ModelRef `json:"model,omitempty"`
 	// Actions 当前可用的操作，WaitingFor 在等哪些角色：都是读取时算出的投影
 	Actions    []TaskAction `json:"actions"`
 	WaitingFor []Role       `json:"waitingFor"`
@@ -205,11 +208,10 @@ type ModelConnection struct {
 	MaxRetries   *int                    `json:"maxRetries,omitempty"`
 }
 
-// ModelSettings 模型设置。
+// ModelSettings 模型设置：连接列表，加上步骤没指定模型时用的缺省模型（会话模型，见 Spec 0006）。
 type ModelSettings struct {
-	Connections       []ModelConnection `json:"connections"`
-	DefaultConnection string            `json:"defaultConnection"`
-	DefaultModel      string            `json:"defaultModel"`
+	Connections []ModelConnection `json:"connections"`
+	Default     ModelRef          `json:"default"`
 }
 
 // ModelConnectionTest “测试连接”的结果。
@@ -262,4 +264,6 @@ type CreateTaskInput struct {
 	Attachments []AttachmentInput `json:"attachments"`
 	Actor       Role              `json:"actor"`
 	WorkspaceID string            `json:"workspaceId,omitempty"`
+	// Model 会话模型（Spec 0006）：发起时写进“发起”事件，之后从它开始跟踪是否切换
+	Model ModelRef `json:"model,omitempty"`
 }

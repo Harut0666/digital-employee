@@ -64,11 +64,14 @@ func expectBlockedBySettings(t *testing.T, reply preflightReply) {
 }
 
 func TestSubmitWithoutKeyIsBlockedAndWritesNothing(t *testing.T) {
-	h := newHarness(t, nil, withModelConnection(keylessConnection()))
+	// 剧本模式下会话模型记在 scripted 连接上（检查通过），这里换成没配 Key 的连接，只看任务检查
+	h := newHarness(t, nil, withScriptedModel(), withModelConnection(keylessConnection()))
 	expectBlockedBySettings(t, h.preflight())
 
 	task := h.createTask(a01Files(t))
 	before := eventCount(t, h, task.ID)
+	// T39：任务的会话模型（设置里最近选的模型）在这个没配 Key 的连接上
+	h.setSessionModelOverride(contract.ModelRef{Connection: "fake", Model: "fake-model"})
 
 	status, data := h.submitRaw(task.ID, initiator)
 	if status != http.StatusPreconditionFailed {
@@ -83,12 +86,16 @@ func TestSubmitWithoutKeyIsBlockedAndWritesNothing(t *testing.T) {
 }
 
 func TestSessionSubmitWithoutKeyIsBlockedBeforeATaskExists(t *testing.T) {
-	h := newHarness(t, nil, withModelConnection(keylessConnection()))
+	// 任务用按剧本跑的引擎；提交前检查看设置里的模型连接
+	h := newHarness(t, nil, withScriptedModel())
 	view := h.createSession()
 	h.confirm(view.ID, initiator, harnessEmployee)
 	if status, data := h.uploadTo(view.ID, a01Files(t)); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
 	}
+	// T39：会话模型在一个没配 Key 的连接上（之前配过 Key 选了它，后来 Key 被清掉了）
+	h.useConnections(contract.ModelConnection{Name: "fake", BaseURL: "http://127.0.0.1:1", Models: []string{"fake-model"}})
+	h.setSessionModelOverride(contract.ModelRef{Connection: "fake", Model: "fake-model"})
 
 	status, data := h.trySubmit(view.ID, initiator, map[string]any{
 		"period": map[string]any{"year": 2026, "week": 44},
@@ -104,7 +111,7 @@ func TestSessionSubmitWithoutKeyIsBlockedBeforeATaskExists(t *testing.T) {
 
 func TestSubmitPassesOnceKeyIsSaved(t *testing.T) {
 	connection := keylessConnection()
-	h := newHarness(t, nil, withModelConnection(connection))
+	h := newHarness(t, nil, withScriptedModel(), withModelConnection(connection))
 	task := h.createTask(a01Files(t))
 
 	status, data := h.send(http.MethodPut, "/api/settings/connections/"+connection.Name, operator, "application/json",
@@ -124,8 +131,11 @@ func TestSubmitPassesOnceKeyIsSaved(t *testing.T) {
 
 func TestEnvironmentKeyPassesPreflight(t *testing.T) {
 	h := newHarness(t, nil,
+		// 地址用本机假端口（不会真连出去）：DEEPSEEK_API_KEY 覆盖 deepseek 连接文件里的空 Key
 		withModelConnection(contract.ModelConnection{Name: "deepseek", BaseURL: "http://127.0.0.1:1", Models: []string{"fake-model"}}),
 		withEnv(map[string]string{"DEEPSEEK_API_KEY": "sk-from-env"}))
+	// T39：会话模型在这个连接上
+	h.setSessionModelOverride(contract.ModelRef{Connection: "deepseek", Model: "fake-model"})
 	if reply := h.preflight(); !reply.OK {
 		t.Fatalf("环境变量里的 Key 也算可用：%+v", reply)
 	}

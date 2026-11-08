@@ -29,6 +29,9 @@ type ModelCalledEvent struct {
 	Response   any
 	Usage      *contract.EventUsage
 	DurationMS int64
+	// Connection、Model 这次调用用的连接和模型名（剧本模型为空）
+	Connection string
+	Model      string
 }
 
 // ToolCalledEvent 判断步骤内一次工具调用的回调参数。
@@ -62,6 +65,8 @@ type JudgmentInput struct {
 	Corrections  []string
 	ToolClient   contract.ToolClient
 	Model        ModelProvider
+	// ModelRef 任务当前的模型（会话模型），只在步骤没写死模型时使用
+	ModelRef     *contract.ModelRef
 	OutputSchema map[string]any
 	Budget       Budget
 	// Replay 断点恢复：本步骤已记录的模型响应，按顺序重放而不调用模型
@@ -145,7 +150,13 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 		return contract.JudgmentResult{OK: false, Failure: kind, Message: message, ModelCalls: realCalls}
 	}
 
-	resolved, err := in.Model.Resolve(in.Step.ID, in.Step.Model)
+	// 判断步骤取模型的顺序：流程配置里给这一步写死的模型 → 任务当前的模型。
+	// 任务当前的模型交给提供者；步骤写死了模型时再盖在它前面（写死的优先）。
+	ref := in.Step.Model
+	if in.ModelRef != nil && !IsPinned(in.Step.Model) {
+		ref = in.ModelRef
+	}
+	resolved, err := in.Model.Resolve(in.Step.ID, ref)
 	if err != nil {
 		return fail(contract.FailModelError, err.Error()), nil
 	}
@@ -299,6 +310,8 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 						Response:   message,
 						Usage:      &contract.EventUsage{Input: message.Usage.Input, Output: message.Usage.Output},
 						DurationMS: time.Since(started).Milliseconds(),
+						Connection: resolved.Connection,
+						Model:      resolved.ModelID,
 					}); err != nil {
 						return fail(contract.FailModelError, err.Error()), err
 					}

@@ -4,7 +4,7 @@ import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
-import { createApi, IS_MOCK, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
+import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createMockWorkspaceApi, createWorkspaceApi, type WorkspaceItem } from "./api/workspaces";
 import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
@@ -55,6 +55,18 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const { preflight, reload: reloadPreflight } = usePreflight();
+  /** 会话可选的模型（输入框右下角的下拉，T39）：设置里变了就重读 */
+  const [modelOptions, setModelOptions] = useState<ModelConnectionOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api.modelOptions().then(
+      (options) => alive && setModelOptions(options),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [api, selection.kind]);
 
   const sessionId = selection.kind === "session" ? selection.id : undefined;
   const session = useSession(sessionId);
@@ -111,6 +123,14 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     session.reload();
     refresh();
     return res;
+  };
+
+  /** 在会话里换模型（T39）：写进会话日志；任务运行中从下一个判断步骤生效。切换说明由视图按前后两次插进对话。 */
+  const selectModel = async (connection: string, model: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    const res = await settle(api.selectModel(sessionId, connection, model));
+    if (!res.ok) message.error(res.message);
+    return res.ok;
   };
 
   const startConversation = async (text: string): Promise<boolean> => {
@@ -205,9 +225,24 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   };
 
   const items = useMemo(
-    () => (detail ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined) : []),
-    [detail, task.snapshot],
+    () =>
+      detail
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events)
+        : [],
+    [detail, task.snapshot, task.events],
   );
+  /** 新会话沿用的模型：设置的 lastModel（T39） */
+  const [lastModel, setLastModel] = useState<ModelRef | undefined>();
+  useEffect(() => {
+    let alive = true;
+    settingsApi.getAppSettings().then(
+      (view) => alive && setLastModel(view.lastModel ?? undefined),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [settingsApi, selection.kind]);
 
   let center: React.ReactNode;
   let panel: React.ReactNode = null;
@@ -229,6 +264,8 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         openSettings={actions.openSettings}
         onStart={startConversation}
         onSample={() => void loadSample()}
+        modelOptions={modelOptions}
+        defaultModel={lastModel}
       />
     );
   } else if (!detail) {
@@ -259,6 +296,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
             <ChecklistPanel checklist={detail.checklist} started={Boolean(detail.taskId)} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
           )
         }
+        modelOptions={modelOptions}
+        onSelectModel={selectModel}
+        openSettings={actions.openSettings}
         onSend={send}
       />
     );

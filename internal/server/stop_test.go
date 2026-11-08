@@ -394,8 +394,7 @@ func TestStopAbortsRealModelRequest(t *testing.T) {
 
 	retries := 3
 	real := agent.NewModelProvider(contract.ModelSettings{
-		DefaultConnection: "fake",
-		DefaultModel:      "fake-model",
+		Default: contract.ModelRef{Connection: "fake", Model: "fake-model"},
 		Connections: []contract.ModelConnection{{
 			Name: "fake", BaseURL: fake.URL, APIKey: "test-key", Models: []string{"fake-model"}, MaxRetries: &retries,
 		}},

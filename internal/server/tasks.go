@@ -194,7 +194,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if command.Type == contract.CmdSubmit && s.submitWouldProceed(id, role) {
-		if check := s.preflight(); !check.OK {
+		if check := s.preflight(id); !check.OK {
 			writeJSON(w, statusOf(check.Error), check)
 			return
 		}

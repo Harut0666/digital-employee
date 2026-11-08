@@ -11,18 +11,35 @@ import (
 	"testing"
 
 	"digital-employee/internal/contract"
+	"digital-employee/internal/settings"
 )
 
 // 生产环境不注入 Env：环境变量里的 Key 必须能被看到，否则只配环境变量的人提交不了任务。
+// 和 submit 走同一条路（服务进程读的是进程环境）；测试里只替换这个进程变量，不读真实的 Key。
 func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "sk-process-env")
+	// 先清掉可能存在的（沙箱里 DSH 会设一个），再换成这个测试自己的
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	key := "sk-process-env-" + strings.Repeat("x", 8)
+	t.Setenv("DEEPSEEK_API_KEY", key)
+	// 设置只影响以后读（模块初始化时已经记下了进程环境，Setenv 改不到它）
+	settings.ResetProcessEnv()
 	workspace := t.TempDir()
+	// 连接要有模型列表：模型列表从接口拉取（T37）之后，手工填的模型只在旧文档里还有
+	if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+		// 文件里没有 Key：Key 只能来自进程环境变量（这里只证明“能看到进程环境”）
+		doc.Connections = []contract.ModelConnection{{Name: "deepseek", BaseURL: "http://127.0.0.1:9/v1", Models: []string{"deepseek-chat"}}}
+	}); err != nil {
+		t.Fatal(err)
+	}
 	srv := New(Options{
 		Engine:       newFakeEngine(),
 		AppDir:       workspace,
 		WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join("..", "..", "employees"),
-		Logger:       NewLogger(LevelError, func(string, string) {}),
+		// 进程环境在启动时读一次（服务端不存 Env，按需读进程环境）：这里就是生产路径。
+		// 测试里不连真实的模型服务（沙箱可能带真实的 DEEPSEEK_API_KEY）
+		Env: map[string]string{"DE_MODEL_SERVICE_ENABLED": "0"},
+		Logger: NewLogger(LevelError, func(string, string) {}),
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -109,8 +126,12 @@ func TestSettingsConnectionsCRUD(t *testing.T) {
 	if len(connections) != 1 {
 		t.Fatalf("默认连接数应为 1：%s", body)
 	}
-	if connections[0].(map[string]any)["isDefault"] != true {
-		t.Fatalf("默认连接标记不对：%s", body)
+	// 会话模型取代了“默认模型”：视图里给出最近一次在会话里选的模型（还没选过为空）
+	if value, present := view["lastModel"]; !present || value != nil {
+		t.Fatalf("还没选过模型时 lastModel 应为 null：%s", body)
+	}
+	if _, present := view["defaultModel"]; present {
+		t.Fatalf("视图里不应再有 defaultModel：%s", body)
 	}
 
 	// 非法 Base URL

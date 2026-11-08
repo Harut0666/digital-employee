@@ -28,7 +28,9 @@ const (
 	KindToolDenied  = "tool_denied"
 	KindModelFailed = "model_failed"
 
-	kindCreated         = "created"
+	kindCreated = "created"
+	// kindModelSelected 人在会话里选了模型（Spec 0006“会话模型”）；Model 记下选的是哪个
+	kindModelSelected   = "model_selected"
 	kindEmployeeSet     = "employee_set"
 	kindDraftSet        = "draft_set"
 	kindAttachmentAdded = "attachment_added"
@@ -72,12 +74,15 @@ type Message struct {
 	Attachment *Attachment    `json:"attachment,omitempty"`
 	// Item 开工清单项的 id
 	Item string `json:"item,omitempty"`
+	// Model 会话模型：model_selected 选的是哪个；selected 为 true 表示会话里明确选过
+	Model    *contract.ModelRef `json:"model,omitempty"`
+	Selected bool               `json:"selected,omitempty"`
 }
 
 // visible 读取历史时是否返回（状态变更已体现在会话字段上）。
 func (m Message) visible() bool {
 	switch m.Kind {
-	case kindCreated, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped:
+	case kindCreated, kindModelSelected, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped:
 		return false
 	}
 	return true
@@ -100,6 +105,8 @@ type record struct {
 	filingFailed bool
 	// skipped 发起人确认跳过的清单项
 	skipped map[string]bool
+	// model 会话里最后一次选的模型；nil 表示没选过，沿用设置的 lastModel
+	model *contract.ModelRef
 }
 
 func (r *record) apply(message Message) {
@@ -111,6 +118,8 @@ func (r *record) apply(message Message) {
 	switch message.Kind {
 	case kindCreated:
 		r.workspaceID = message.WorkspaceID
+	case kindModelSelected:
+		r.model = message.Model
 	case kindEmployeeSet:
 		r.employee = message.Employee
 	case kindDraftSet:
