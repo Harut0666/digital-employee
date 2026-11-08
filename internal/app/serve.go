@@ -39,6 +39,9 @@ type EngineDeps struct {
 	EmployeesDir string
 	// ConfigFallback 任务目录里的员工配置副本读不出来时，按员工 id 找配置目录（见 engine.Deps.ConfigFallback）
 	ConfigFallback func(employeeID string) (string, bool)
+	// Workspaces 登记的工作区（ID 与目录）：引擎写交付文件夹时按任务的工作区找目录（见 engine.Deps.Workspaces）。
+	// 单目录模式为空。
+	Workspaces    []server.Workspace
 	ToolClient    contract.ToolClient
 	Faults        *contract.FaultHooks
 	ScriptFile    string

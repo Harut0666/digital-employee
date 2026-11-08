@@ -150,6 +150,8 @@ type harness struct {
 	faults    *contract.FaultHooks
 	workspace string
 	employees string
+	// app 已经切到应用目录模式时的工作区接线：应用目录、员工副本、两个登记的工作区
+	app *appWire
 }
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。

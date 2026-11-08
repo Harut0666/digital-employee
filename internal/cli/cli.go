@@ -26,6 +26,9 @@ type EngineOptions struct {
 	ModelSettings  contract.ModelSettings
 	Env            map[string]string
 	ConfigFallback func(employeeID string) (string, bool)
+	// Workspaces 登记的工作区：引擎写交付文件夹时按“工作区 ID → 目录”查（T42，形状同
+	// engine.Deps.Workspaces）；命令行没有登记，为空。
+	Workspaces func(workspaceID string) (string, bool)
 }
 
 // Deps 命令行依赖。

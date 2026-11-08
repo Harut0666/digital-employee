@@ -56,6 +56,15 @@ export interface ConnectionTestResult {
   error?: string;
 }
 
+/** 拉取模型的请求体：可带未保存的 baseUrl / apiKey（新建连接时先拉取；空串 = 用已保存的值）。 */
+export interface FetchModelsInput {
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+/** 拉取模型的响应：成功给模型 ID 列表，失败给原因（Key 已脱敏）；拉取结果不写设置。 */
+export type FetchModelsResult = { ok: true; models: string[] } | { ok: false; error: string };
+
 export interface DemoTool {
   name: string;
   label: string;
@@ -102,6 +111,8 @@ export interface SettingsApi {
   saveConnection(name: string, input: SaveConnectionInput): Promise<{ ok: true; connection: SettingsConnectionView; warning?: string }>;
   deleteConnection(name: string): Promise<{ ok: true; connections: SettingsConnectionView[]; warning?: string }>;
   testConnection(name: string, model?: string): Promise<ConnectionTestResult>;
+  /** 拉取 {baseUrl}/models 的模型列表（只读，不写设置） */
+  fetchModels(name: string, input?: FetchModelsInput): Promise<FetchModelsResult>;
   getDemo(): Promise<DemoView>;
   saveDemo(patch: Partial<DemoState>): Promise<DemoSaveResult>;
   getWorkspace(): Promise<WorkspaceView>;
@@ -136,6 +147,7 @@ interface ConnectionRoute {
   put(body: unknown): Reply<SavedConnection>;
   delete(): Reply<DeletedConnections>;
   test: { post(body: unknown): Reply<ConnectionTestResult> };
+  models: { post(body: unknown): Reply<FetchModelsResult> };
 }
 
 /** Eden 的路由类型很深，这里按 packages/server/src/routes/settings.ts 的实际路由收窄。 */
@@ -211,6 +223,10 @@ function createEdenSettingsApi(origin: string, getRole?: () => DefaultRole): Set
     async testConnection(name, model) {
       return unwrap(await connection(name).test.post(model ? { model } : {}));
     },
+    async fetchModels(name, input) {
+      // 拉取失败（401、超时等）由后端以 200 + ok:false 说明原因；只有路径/参数错误才抛异常
+      return unwrap(await connection(name).models.post(input ?? {}));
+    },
     getDemo: async () => unwrap(await settings.demo.get()),
     async saveDemo(patch) {
       return unwrap(await settings.demo.put(patch));
@@ -257,6 +273,32 @@ interface MockConnection extends SettingsConnectionView {
 // Spec 0006：应用目录放全局内容（设置、员工、知识库），工作区是用户的普通目录
 const workspace = "C:\\Users\\demo\\Documents\\数字员工";
 const appDir = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee-app";
+
+/** 模拟的 /models 返回：按连接名给一份固定剧本，不访问网络。 */
+const MOCK_MODEL_CATALOG: Record<string, string[]> = {
+  DeepSeek: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"],
+  通义千问: ["qwen-plus", "qwen-max", "qwen-long", "qwen-turbo"],
+};
+
+/**
+ * 模拟拉取模型（对应 Go 的 handleFetchModels）：
+ * 连接不存在且没给 baseUrl → 404 式错误；没 Key → ok:false；baseUrl 含 demo-error → ok:false（Key 打码）。
+ */
+function mockFetchModels(
+  name: string,
+  input: FetchModelsInput | undefined,
+  connections: readonly MockConnection[],
+): FetchModelsResult {
+  const existing = connections.find((c) => c.name === name);
+  const baseUrl = input?.baseUrl?.trim() ? input.baseUrl.trim() : existing?.baseUrl ?? "";
+  if (!baseUrl) throw new Error(`连接不存在：${name}（新建连接时请先填写 Base URL）`);
+  const apiKey = input?.apiKey?.trim() ? input.apiKey.trim() : existing?.apiKey ?? "";
+  if (!apiKey) return { ok: false, error: "未配置 API Key，无法拉取模型" };
+  if (/demo-error/i.test(baseUrl)) return { ok: false, error: "模型接口返回 401：Incorrect API key provided: ***" };
+  const catalog = MOCK_MODEL_CATALOG[name] ?? ["mock-model-a", "mock-model-b"];
+  const models = [...new Set([...(existing?.models ?? []), ...catalog])];
+  return { ok: true, models };
+}
 
 function createMockSettingsApi(): SettingsApi {
   let connections: MockConnection[] = [
@@ -394,6 +436,11 @@ function createMockSettingsApi(): SettingsApi {
       }),
     testConnection: (name, model) =>
       later({ ok: true, latencyMs: 320, model: model ?? connections.find((c) => c.name === name)?.models[0] ?? "deepseek-chat" }, 400),
+    // ---- 拉取模型（T37）：规则照搬 Go 的 handleFetchModels，用固定剧本代替网络
+    fetchModels: (name, input) =>
+      later<FetchModelsResult>(mockFetchModels(name, input, connections)).then((result) =>
+        result.ok ? { ok: true as const, models: result.models } : result,
+      ),
     getDemo: () => later({ ok: true as const, toolFaults: demoTools, ...demo, tools }),
     saveDemo: (patch) =>
       later(undefined).then(() => {
