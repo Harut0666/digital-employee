@@ -16,7 +16,7 @@ const qaEmployee = "knowledge-qa"
 
 func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T) {
 	script := caseScript(t, "A-01")
-	h := newHarness(t, script, withEmployee(qaEmployee))
+	h := newHarness(t, script, withEmployee(qaEmployee), withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。", "tags": []string{"周报"}})
 	// 条目 ID 入库后才知道：前台 Agent 的剧本这时再写
 	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{
@@ -66,7 +66,7 @@ func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T
 
 func TestChineseSentenceSearchFindsTheEntry(t *testing.T) {
 	script := caseScript(t, "A-01")
-	h := newHarness(t, script, withEmployee(qaEmployee))
+	h := newHarness(t, script, withEmployee(qaEmployee), withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。"})
 	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{
 		modelCalls(contract.ToolKBSearch, map[string]any{"query": "华南区域上周有什么异常"}),
@@ -112,7 +112,7 @@ func TestWeeklyReportNeverCarriesNumbersFromTheKnowledgeBase(t *testing.T) {
 	const oldNumber = "87.65"
 	script := caseScript(t, "A-01")
 	submitCauses, submitReport := script["match_causes"][0], script["write_report"][0]
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "上期周报：华东环比 +" + oldNumber + "%（旧口径）。", "tags": []string{"周报"}})
 	// 第二份周报：写作步骤先想查知识库，再把知识库里的数字直接写进叙述，质检打回后才交出干净的稿子
 	script["match_causes"] = append(script["match_causes"], submitCauses)
@@ -155,7 +155,7 @@ func TestWeeklyReportNeverCarriesNumbersFromTheKnowledgeBase(t *testing.T) {
 
 func TestQATaskIsOneJudgeStepWithOnlyKnowledgeTools(t *testing.T) {
 	script := caseScript(t, "A-01")
-	h := newHarness(t, script, withEmployee(qaEmployee))
+	h := newHarness(t, script, withEmployee(qaEmployee), withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。"})
 	script["answer"] = []agent.ScriptedTurn{
 		kbCall(contract.ToolKBSearch, map[string]any{"query": "周报 44"}),

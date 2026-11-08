@@ -2,6 +2,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,12 @@ func writeSessionError(w http.ResponseWriter, err error) {
 		return
 	}
 	if code == contract.ErrModelNotConfigured {
-		writeJSON(w, statusOf(code), preflightResult{Error: code, Message: message, Settings: &modelSettingsEntry})
+		entry := modelSettingsEntry
+		var typed *session.Error
+		if errors.As(err, &typed) && typed.Settings != nil {
+			entry = settingsEntry{Section: typed.Settings.Section, Label: typed.Settings.Label}
+		}
+		writeJSON(w, statusOf(code), preflightResult{Error: code, Message: message, Settings: &entry})
 		return
 	}
 	status, ok := sessionErrorStatus[code]
@@ -63,11 +69,16 @@ func (s *Server) newSessions() *session.Manager {
 			return s.opts.LoadEmployee(filepath.Join(s.opts.EmployeesDir, id))
 		},
 		DefaultEmployee: func() string { return settings.Read(s.opts.AppDir).DefaultEmployee },
-		Preflight: func() error {
-			if result := s.preflight(); !result.OK {
-				return &session.Error{Code: result.Error, Message: result.Message}
-			}
-			return nil
+		// 提交前检查按会话模型（Spec 0006“会话模型”）
+		Preflight: s.checkSessionModel,
+		// 会话里选过的模型、新会话沿用的缺省模型：每次都读设置文件（设置页保存后立即生效）
+		ModelSettings: func() contract.ModelSettings { return s.effectiveModels() },
+		SaveLastModel: func(ref contract.ModelRef) error {
+			_, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
+				copied := ref
+				doc.LastModel = &copied
+			})
+			return err
 		},
 		Execution: func() *contract.ExecutionSettings {
 			execution := settings.Read(s.opts.AppDir).Execution
@@ -247,6 +258,34 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, view)
+}
+
+// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型。
+// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务运行中再写一条“模型已切换”任务事件。
+func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	connection, _ := body["connection"].(string)
+	model, _ := body["model"].(string)
+	reply, err := s.sessions.SelectModel(r.PathValue("id"), role, connection, model)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleModelOptions GET /api/settings/models：会话里可以选的模型（只列有 Key 的连接和它们列出的模型）。
+func (s *Server) handleModelOptions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.sessions.ModelOptions())
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {

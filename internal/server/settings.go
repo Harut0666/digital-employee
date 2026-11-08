@@ -334,11 +334,10 @@ func (s *Server) diagnosticsInfo() diagnosticsInfo {
 func (s *Server) handleSettingsConnections(w http.ResponseWriter, r *http.Request) {
 	view := settings.View(settings.Read(s.opts.AppDir), s.settingsEnv())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":                true,
-		"defaultConnection": view.DefaultConnection,
-		"defaultModel":      view.DefaultModel,
-		"envOverride":       view.EnvOverride,
-		"connections":       view.Connections,
+		"ok":          true,
+		"lastModel":   view.LastModel,
+		"envOverride": view.EnvOverride,
+		"connections": view.Connections,
 	})
 }
 
@@ -456,19 +455,6 @@ func (s *Server) handleSaveConnection(w http.ResponseWriter, r *http.Request) {
 			doc.Connections[existingIndex] = next
 		} else {
 			doc.Connections = append(doc.Connections, next)
-		}
-		hasDefault := false
-		for _, conn := range doc.Connections {
-			if conn.Name == doc.DefaultConnection {
-				hasDefault = true
-				break
-			}
-		}
-		if !hasDefault {
-			doc.DefaultConnection = name
-		}
-		if doc.DefaultModel == "" && len(next.Models) > 0 {
-			doc.DefaultModel = next.Models[0]
 		}
 	})
 	if err != nil {
@@ -660,12 +646,9 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	updated, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
 		doc.Connections = append(doc.Connections[:index], doc.Connections[index+1:]...)
-		if doc.DefaultConnection == name {
-			if len(doc.Connections) > 0 {
-				doc.DefaultConnection = doc.Connections[0].Name
-			} else {
-				doc.DefaultConnection = ""
-			}
+		// 最近选的模型在被删掉的连接上：清掉，缺省模型回到第一个有 Key 的连接
+		if doc.LastModel != nil && doc.LastModel.Connection == name {
+			doc.LastModel = nil
 		}
 	})
 	if err != nil {
@@ -682,15 +665,9 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	effective := settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())
-	var connection *contract.ModelConnection
-	for index := range effective.Connections {
-		if effective.Connections[index].Name == name {
-			connection = &effective.Connections[index]
-			break
-		}
-	}
-	if connection == nil {
+	effective := s.effectiveModels()
+	connection, found := settings.FindConnection(effective.Connections, name)
+	if !found {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("连接不存在：%s", name)))
 		return
 	}
@@ -703,14 +680,11 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	if model == "" && len(connection.Models) > 0 {
 		model = connection.Models[0]
 	}
-	if model == "" {
-		model = effective.DefaultModel
-	}
 	if connection.APIKey == "" {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "latencyMs": 0, "model": model, "error": "未配置 API Key，无法测试连接"})
 		return
 	}
-	result := s.opts.ProbeConnection(*connection, model)
+	result := s.opts.ProbeConnection(connection, model)
 	response := map[string]any{
 		"ok": result.OK, "latencyMs": result.LatencyMS, "model": result.Model,
 	}
@@ -735,7 +709,7 @@ func (s *Server) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 已有连接按设置页看到的同一个来源取 Key（DEEPSEEK_API_KEY 优先于文件）
-	effective := settings.LoadModelSettings(s.opts.WorkspaceDir, s.settingsEnv())
+	effective := s.effectiveModels()
 	var existing *contract.ModelConnection
 	for index := range effective.Connections {
 		if effective.Connections[index].Name == name {

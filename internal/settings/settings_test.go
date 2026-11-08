@@ -17,8 +17,8 @@ func TestNormalizeDefaultsAndMigration(t *testing.T) {
 	if len(doc.Connections) != 1 || doc.Connections[0].Name != DefaultConnectionName {
 		t.Fatalf("默认连接不对：%+v", doc.Connections)
 	}
-	if doc.DefaultConnection != DefaultConnectionName || doc.DefaultModel != DefaultDefaultModel {
-		t.Fatalf("默认连接/模型不对：%q %q", doc.DefaultConnection, doc.DefaultModel)
+	if doc.LastModel != nil {
+		t.Fatalf("新文档还没选过模型，lastModel 应为空：%+v", doc.LastModel)
 	}
 
 	// v1 文档（无 version）+ 未识别顶层键 + 坏值：合法值保留，坏值退回默认，未知键进 Extra

@@ -3,6 +3,7 @@
 // 密钥约定（Spec 0004「密钥不落响应」）：设置视图、导出、诊断包都只出末 4 位 + hasKey + source；
 // 导出含明文 Key 必须显式 `includeKeys=true`，文件名追加 `-with-keys` 警示。
 import type { DemoSettings } from "./engine";
+import type { ModelRef } from "./settings";
 import type {
   DiagnosticsSettings,
   ExecutionSettings,
@@ -37,8 +38,8 @@ export interface AppSettingsView {
   diagnostics: DiagnosticsSettings;
   permissions: PermissionSettings;
   connections: SettingsConnectionView[];
-  defaultConnection: string;
-  defaultModel: string;
+  /** 最近一次在会话里选的模型（Spec 0006“会话模型”）；还没选过为 null。取代了旧的 defaultModel */
+  lastModel?: ModelRef | null;
   demo: DemoSettings;
   /** 未识别的顶层键（只读展示；写入时原样保留） */
   extra: Record<string, unknown>;

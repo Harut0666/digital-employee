@@ -20,6 +20,7 @@ import {
   type SettingsRoleResult,
 } from "@de/core/contract";
 import { IS_MOCK } from "./index";
+import type { ModelRef } from "./types";
 
 export type FaultMode = "timeout" | "error" | "invalid_output";
 export type ApiKeySource = SettingsConnectionView["source"];
@@ -29,8 +30,8 @@ export type { SettingsConnectionView };
 
 export interface SettingsView {
   ok: true;
-  defaultConnection: string;
-  defaultModel: string;
+  /** 最近一次在会话里选的模型（T39）；还没选过为 null */
+  lastModel: ModelRef | null;
   /** DEEPSEEK_API_KEY 优先于文件 */
   envOverride: boolean;
   connections: SettingsConnectionView[];
@@ -324,6 +325,8 @@ function createMockSettingsApi(): SettingsApi {
     },
   ];
   let defaultConnection = "DeepSeek";
+  // 最近一次在会话里选的模型（Spec 0006）；模拟环境和会话模块一样，新会话默认用它
+  let lastModel: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
   let demoTools: Partial<Record<string, FaultMode>> = {};
   let demo = { corruptTraceability: false, crashOnNextStep: false };
   const tools: DemoTool[] = [
@@ -363,7 +366,6 @@ function createMockSettingsApi(): SettingsApi {
   let execution = { ...DEFAULT_EXECUTION_SETTINGS, retryBackoffMs: [...DEFAULT_EXECUTION_SETTINGS.retryBackoffMs] };
   let diagnosticsSettings = { ...DEFAULT_DIAGNOSTICS_SETTINGS };
   let permissions = { ...DEFAULT_PERMISSION_SETTINGS };
-  const defaultModelOf = () => connections[0]?.models[0] ?? "deepseek-chat";
   const currentAppView = (): AppSettingsView => ({
     ok: true,
     version: SETTINGS_VERSION,
@@ -373,8 +375,7 @@ function createMockSettingsApi(): SettingsApi {
     diagnostics: { ...diagnosticsSettings },
     permissions: { ...permissions },
     connections: connections.map(view),
-    defaultConnection,
-    defaultModel: defaultModelOf(),
+    lastModel: { ...lastModel },
     demo: { toolFaults: demoTools, ...demo },
     extra: {},
     envOverride: false,
@@ -391,8 +392,7 @@ function createMockSettingsApi(): SettingsApi {
       ...(c.timeoutMs !== undefined ? { timeoutMs: c.timeoutMs } : {}),
       ...(c.maxRetries !== undefined ? { maxRetries: c.maxRetries } : {}),
     })),
-    defaultConnection,
-    defaultModel: defaultModelOf(),
+    lastModel: { ...lastModel },
     demo: { toolFaults: demoTools, ...demo },
     ui: { ...ui },
     execution: { ...execution, retryBackoffMs: [...execution.retryBackoffMs] },
@@ -404,8 +404,7 @@ function createMockSettingsApi(): SettingsApi {
     getSettings: () =>
       later({
         ok: true as const,
-        defaultConnection,
-        defaultModel: connections[0]?.models[0] ?? "deepseek-chat",
+        lastModel: { ...lastModel },
         envOverride: false,
         connections: connections.map(view),
       }),

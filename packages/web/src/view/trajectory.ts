@@ -204,6 +204,8 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
           id: `model:${ev.seq}`,
           kind: "model",
           label: `模型第 ${ev.turn} 轮`,
+          // 这次调用用的连接和模型名（T39）；剧本模式没有
+          detail: ev.connection && ev.modelName ? `${ev.connection} / ${ev.modelName}` : undefined,
           status: "done",
           ts: ev.ts,
           meta: { turn: ev.turn, durationMs: ev.durationMs, usage: ev.usage },
@@ -212,6 +214,15 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
         summary.modelCalls += 1;
         break;
       }
+      case "model_switched":
+        // 运行中换了模型：从下一个判断步骤开始生效（T39）
+        notice(currentRound, {
+          kind: "notice",
+          label: `模型已切换：${ev.fromModel ? `${ev.fromModel.connection} / ${ev.fromModel.model} → ` : ""}${ev.model.connection} / ${ev.model.model}`,
+          status: "info",
+          ts: ev.ts,
+        });
+        break;
       case "qc_result": {
         const bad = ev.checks.filter((c) => !c.passed);
         ensureRound(currentRound).items.push({

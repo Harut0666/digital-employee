@@ -21,7 +21,9 @@ function connectionSummary(view: AppSettingsView): string {
   const count = view.connections.length;
   if (count === 0) return "模型连接：0 个";
   const names = view.connections.map((c) => `${c.name}（${c.hasKey ? `末 4 位 ${c.apiKeyLast4}` : "未配置 Key"}）`);
-  return `模型连接：${count} 个：${names.join("、")}；默认 ${view.defaultConnection} / ${view.defaultModel}`;
+  // 会话模型取代了“默认模型”（Spec 0006）：最近一次在会话里选的模型
+  const last = view.lastModel ? `${view.lastModel.connection} / ${view.lastModel.model}` : "还没选过";
+  return `模型连接：${count} 个：${names.join("、")}；最近选的模型 ${last}`;
 }
 
 function executionSummary(view: AppSettingsView): string {

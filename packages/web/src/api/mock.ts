@@ -11,12 +11,29 @@ import { actionsOf, pauseTextOf, waitingForOf } from "./mock-rules";
 import { createMockSessions } from "./mock-sessions";
 import type { KnowledgeApi } from "./knowledge";
 import type { SessionApi } from "./sessions";
-import type { CommandResult, CreateTaskInput, DeliverableKind, DeliverableVersion, EmployeeInfo, PauseView, RecordItem, SessionSummary, TaskSnapshot, TaskSummary, UiRole, UploadItem, WebApi } from "./types";
+import type {
+  CommandResult,
+  CreateTaskInput,
+  DeliverableKind,
+  DeliverableVersion,
+  EmployeeInfo,
+  ModelRef,
+  PauseView,
+  RecordItem,
+  SessionSummary,
+  TaskSnapshot,
+  TaskSummary,
+  UiRole,
+  UploadItem,
+  WebApi,
+} from "./types";
 
 interface MockTask {
   id: string;
   /** 任务属于哪个工作区（Spec 0006） */
   workspaceId?: string;
+  /** 任务的会话模型（T39）：发起时记下，运行中可以从“模型已切换”事件更新 */
+  model?: ModelRef;
   employee: string;
   title: string;
   form: Record<string, unknown>;
@@ -53,6 +70,9 @@ function versionsOf(events: readonly TaskEvent[]): DeliverableVersion[] {
   return versions;
 }
 
+/** 公开样例没有会话：按模拟环境里唯一配了 Key 的连接的第一个模型（和 mock-sessions.ts 一致） */
+const MOCK_SAMPLE_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+
 const STEP_GAP_MS = 900;
 const MODEL_LIMIT = 30;
 const TIME_LIMIT_MS = 600_000;
@@ -64,6 +84,8 @@ export function createMockApi(getRole: () => UiRole): WebApi {
 
   const emit = (t: MockTask, input: EventInput, ts = new Date()) => {
     const ev = { ...input, seq: t.events.length + 1, ts: ts.toISOString(), taskId: t.id } as TaskEvent;
+    // 任务事件里“模型已切换”之后，任务当前的模型跟着变（和 Go 的投影一致）
+    if (ev.type === "model_switched") t.model = ev.model;
     t.events.push(ev);
     for (const l of [...t.listeners]) l(ev);
     return ev;
@@ -194,6 +216,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
       deliverables: view.deliverables,
       lastSeq: view.lastSeq,
       versions: versionsOf(t.events),
+      model: t.model,
     };
   };
 
@@ -204,7 +227,9 @@ export function createMockApi(getRole: () => UiRole): WebApi {
 
   const later = <T>(v: T) => new Promise<T>((r) => setTimeout(() => r(v), 80));
 
-  const api: Omit<WebApi, keyof SessionApi | keyof KnowledgeApi> = {
+  const api: Omit<WebApi, keyof SessionApi | keyof KnowledgeApi> & {
+    switchModel?(taskId: string, model: ModelRef): void;
+  } = {
     listEmployees: () => later(EMPLOYEES as EmployeeInfo[]),
     listTasks: () => later([...tasks.values()].map(summary)),
     getTask: (id) => later(tasks.get(id) && snapshot(tasks.get(id)!)),
@@ -226,9 +251,11 @@ export function createMockApi(getRole: () => UiRole): WebApi {
         listeners: new Set(),
         allowMissingMinutes: false,
         allowPartial: false,
+        // 发起任务时记下会话模型（T39）；没有会话时（公开样例）用模拟的缺省模型
+        model: input.model ?? MOCK_SAMPLE_MODEL,
       };
       attach(t, input.uploads);
-      emit(t, { type: "task_created", employee: t.employee, configHash: "mock", form: t.form, attachments: t.attachments });
+      emit(t, { type: "task_created", employee: t.employee, configHash: "mock", form: t.form, attachments: t.attachments, ...(t.model ? { model: t.model } : {}) });
       tasks.set(t.id, t);
       return later(snapshot(t));
     },
@@ -311,9 +338,19 @@ export function createMockApi(getRole: () => UiRole): WebApi {
         { slot: "salesFile", file: new File(["mock-xlsx"], "销售明细.xlsx") },
         { slot: "minutesFiles", file: new File(["mock-docx"], "周会纪要_2026W44.docx") },
       ]);
-      emit(t, { type: "task_created", employee: t.employee, configHash: "mock", form: t.form, attachments: t.attachments });
+      t.model = MOCK_SAMPLE_MODEL;
+      emit(t, { type: "task_created", employee: t.employee, configHash: "mock", form: t.form, attachments: t.attachments, model: t.model });
       tasks.set(t.id, t);
       return later(snapshot(t));
+    },
+
+    /** 运行中换模型（T39）：写一条“模型已切换”事件，任务当前的模型跟着变 */
+    switchModel(id: string, model: ModelRef) {
+      const t = tasks.get(id);
+      if (!t) return;
+      const fromModel = t.model && (t.model.connection !== model.connection || t.model.model !== model.model) ? t.model : undefined;
+      t.model = model;
+      emit(t, { type: "model_switched", model, ...(fromModel ? { fromModel } : {}) } as EventInput);
     },
 
     subscribe(id, afterSeq, onEvent) {

@@ -98,8 +98,8 @@ func (h *harness) wireApp(t *testing.T) {
 		doc.Connections = []contract.ModelConnection{{
 			Name: "测试连接", BaseURL: "http://127.0.0.1:9/v1", APIKey: "sk-t42-test", Models: []string{"m1"},
 		}}
-		doc.DefaultConnection = "测试连接"
-		doc.DefaultModel = "m1"
+		// T39：会话模型用 lastModel（设置里最近选的模型）
+		doc.LastModel = &contract.ModelRef{Connection: "测试连接", Model: "m1"}
 	}); err != nil {
 		t.Fatalf("写应用目录设置失败：%v", err)
 	}

@@ -51,6 +51,15 @@ const defaultFactsStep = "compute_metrics"
 // contradictionsTool 用这个工具的计算步骤输出纪要矛盾，供“纪要矛盾覆盖”质检使用。
 const contradictionsTool = "detect_contradictions"
 
+// modelPointer 空的模型引用写成 nil（字段省略）。
+func modelPointer(ref contract.ModelRef) *contract.ModelRef {
+	if ref.Connection == "" && ref.Model == "" {
+		return nil
+	}
+	copied := ref
+	return &copied
+}
+
 // SimulatedCrash 模拟进程被杀：崩溃注入命中时返回。返回之后这个引擎实例不再写任何事件。
 type SimulatedCrash struct {
 	StepID string
@@ -81,6 +90,8 @@ type Deps struct {
 	EmployeesDir string
 	ToolClient   contract.ToolClient
 	Model        agent.ModelProvider
+	// DefaultModel 步骤没写死模型时的缺省模型（设置的 lastModel）；为空时由提供者自己的缺省值决定
+	DefaultModel contract.ModelRef
 	// Now 可注入的时钟（测试用）
 	Now func() time.Time
 	// Faults 运行时可变故障开关（服务端与引擎共享同一对象）
@@ -109,6 +120,8 @@ type Engine struct {
 	tasksDir     string
 	toolClient   contract.ToolClient
 	model        agent.ModelProvider
+	// defaultModel 步骤没写死模型时的缺省模型（保存设置后的会话模型，Spec 0006）
+	defaultModel contract.ModelRef
 	now          func() time.Time
 	faults       *contract.FaultHooks
 	exitOnCrash  bool
@@ -167,6 +180,7 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		tasksDir:     filepath.Join(dir, "tasks"),
 		toolClient:   toolClient,
 		model:        deps.Model,
+		defaultModel: deps.DefaultModel,
 		now:          now,
 		faults:       faults,
 		exitOnCrash:  deps.ExitOnCrash,
@@ -204,6 +218,44 @@ func (e *Engine) modelProvider() agent.ModelProvider {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.model
+}
+
+// SetDefaultModel 换掉步骤没写死模型时用的缺省模型（保存设置后的会话模型）。
+func (e *Engine) SetDefaultModel(ref contract.ModelRef) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.defaultModel = ref
+}
+
+func (e *Engine) defaultModelRef() contract.ModelRef {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.defaultModel
+}
+
+// SetTaskModel 换掉一个任务的会话模型（Spec 0006“会话模型”），从下一个判断步骤开始生效。
+//
+// 正在进行的模型调用不中断：判断步骤开始时才读任务当前的模型。
+// 只在任务还没结束、模型确实变了的时候写一条“模型已切换”事件；任务已结束或不存在时什么也不做。
+func (e *Engine) SetTaskModel(taskID string, ref contract.ModelRef) error {
+	rt := e.openRuntime(taskID)
+	if rt == nil {
+		return fmt.Errorf("任务 %s 不存在", taskID)
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.proj.Model != nil && *rt.proj.Model == ref {
+		return nil
+	}
+	if contract.IsTerminal(rt.proj.State) {
+		return nil
+	}
+	event := contract.TaskEvent{Type: contract.EventModelSwitched, Model: &ref}
+	if rt.proj.Model != nil && ref != (contract.ModelRef{}) {
+		from := *rt.proj.Model
+		event.FromModel = &from
+	}
+	return e.appendLocked(rt, event)
 }
 
 // SetWorkspaces 替换工作区表（工作区登记变化后调用，写交付物时据此找目录）。
@@ -1182,6 +1234,14 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 	}
 	deadline := time.UnixMilli(e.now().UnixMilli() + available)
 
+	// 任务当前的会话模型：每个判断步骤开始时读一次，运行中切换的模型从这里生效（Spec 0006）
+	taskModel := view(rt, func(p *projection) contract.ModelRef {
+		if p.Model != nil {
+			return *p.Model
+		}
+		return contract.ModelRef{}
+	})
+
 	var crashErr error
 	result, runErr := e.judgment.Run(agent.JudgmentInput{
 		TaskID:       rt.id,
@@ -1191,6 +1251,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		Corrections:  corrections,
 		ToolClient:   e.toolClient,
 		Model:        e.modelProvider(),
+		ModelRef:     &taskModel,
 		OutputSchema: outputSchema,
 		Budget:       agent.Budget{RemainingModelCalls: remaining, Deadline: deadline},
 		Replay:       replay,
@@ -1208,6 +1269,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 				if err := e.append(rt, contract.TaskEvent{
 					Type: contract.EventModelCalled, StepID: step.ID, Turn: contract.IntPtr(event.Turn),
 					Response: event.Response, Usage: event.Usage, DurationMS: contract.Int64Ptr(event.DurationMS),
+					Connection: event.Connection, ModelName: event.Model,
 				}); err != nil {
 					crashErr = err
 					return err
@@ -1790,9 +1852,17 @@ func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot,
 	if form == nil {
 		form = map[string]any{}
 	}
+	// 发起事件记下任务的会话模型：之后运行中换模型，从“模型已切换”事件接上。
+	// 调用方没给时（命令行等）用引擎的缺省模型；两个都为空就不写（剧本模式）。
+	model := input.Model
+	if model.Connection == "" && model.Model == "" {
+		model = e.defaultModel
+	}
+	rt.proj.Model = modelPointer(model)
 	if err := e.append(rt, contract.TaskEvent{
 		Type: contract.EventTaskCreated, Employee: input.Employee, ConfigHash: cfg.Hash,
 		Form: form, Attachments: refs, WorkspaceID: input.WorkspaceID,
+		Model: modelPointer(model),
 	}); err != nil {
 		return nil, err
 	}

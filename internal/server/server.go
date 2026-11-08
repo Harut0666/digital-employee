@@ -393,6 +393,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions", s.sessionRoute(s.handleCreateSession))
 	m.HandleFunc("GET /api/sessions/{id}", s.sessionRoute(s.handleGetSession))
 	m.HandleFunc("PATCH /api/sessions/{id}", s.sessionRoute(s.handlePatchSession))
+	m.HandleFunc("PUT /api/sessions/{id}/model", s.sessionRoute(s.handleSelectSessionModel))
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
@@ -413,6 +414,7 @@ func (s *Server) routes() {
 
 	// ---- 设置中心 ----
 	m.HandleFunc("GET /api/settings", s.handleSettingsConnections)
+	m.HandleFunc("GET /api/settings/models", s.handleModelOptions)
 	m.HandleFunc("PUT /api/settings/connections/{name}", s.handleSaveConnection)
 	m.HandleFunc("DELETE /api/settings/connections/{name}", s.handleDeleteConnection)
 	m.HandleFunc("POST /api/settings/connections/{name}/test", s.handleTestConnection)

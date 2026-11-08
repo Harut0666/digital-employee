@@ -69,6 +69,8 @@ export interface DeliverableVersion {
 export interface TaskSnapshot extends Omit<ContractTaskSnapshot, "pause" | "steps"> {
   pause?: PauseView;
   steps: StepStatusView[];
+  /** 任务当前的会话模型（发起事件给出，随“模型已切换”更新；旧任务为空） */
+  model?: ModelRef;
   actions: TaskAction[];
   waitingFor: UiRole[];
   /** 历次送审的交付物，旧到新 */
@@ -108,6 +110,8 @@ export interface CreateTaskInput {
   employee: string;
   form: Record<string, unknown>;
   uploads: UploadItem[];
+  /** 任务的会话模型（T39）：会话里发起时记下，写进“发起”事件 */
+  model?: ModelRef;
 }
 
 export type DeliverableKind = "docx" | "md" | "qc_record";
@@ -220,6 +224,8 @@ export interface SessionMessage {
   card?: SessionCard;
   tool?: string;
   reason?: string;
+  /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
+  model?: ModelRef;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
@@ -240,6 +246,18 @@ export interface SessionChecklist {
   missing: string[];
 }
 
+/** 会话模型（Spec 0006）：设置里的连接名 + 连接列出的模型 ID */
+export interface ModelRef {
+  connection: string;
+  model: string;
+}
+
+/** 会话里可以选的模型：一个有 Key 的连接和它列出的模型（GET /api/settings/models） */
+export interface ModelConnectionOption {
+  name: string;
+  models: string[];
+}
+
 export interface SessionSummary {
   id: string;
   /** 会话属于哪个工作区（Spec 0006；侧栏按它分组是 T38） */
@@ -258,6 +276,10 @@ export interface SessionSummary {
   taskState?: TaskState;
   statusText?: string;
   waitingFor: UiRole[];
+  /** 会话模型：会话里最后一次选的；没选过时是设置的 lastModel（也可能为空） */
+  model?: ModelRef;
+  /** 会话里明确选过模型 */
+  modelSelected?: boolean;
   /** 状态点（后端按读的人的角色算）：等你处理 / 运行中 / 已完成未读 / 空闲 */
   statusDot: StatusDot;
   /** 任务交付或终止之后还没打开过 */
@@ -325,6 +347,10 @@ export interface SessionApi {
   createSession(workspaceId?: string): Promise<SessionSummary>;
   /** 重命名会话；归档或取消归档 */
   updateSession(id: string, patch: { title?: string } | { archived: boolean }): Promise<SessionSummary>;
+  /** 会话里可以选的模型：只列有 Key 的连接和它们列出的模型 */
+  modelOptions(): Promise<ModelConnectionOption[]>;
+  /** 选模型：会话日志里写一条选择，同时更新设置的 lastModel；任务运行中从下一个判断步骤生效 */
+  selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
   sendMessage(id: string, text: string): Promise<SessionResult>;
   confirmEmployee(id: string, employee: string): Promise<SessionResult>;
   uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
@@ -334,8 +360,8 @@ export interface SessionApi {
   skipChecklistItem(id: string, item: string): Promise<SessionResult>;
   /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
   draftFiling(id: string): Promise<SessionResult>;
-  /** 提交前检查：默认模型连接有没有可用 Key */
-  preflight(): Promise<PreflightResult>;
+  /** 提交前检查：会话模型所在的连接有没有 Key、模型还在不在列表里；给任务 ID 时检查任务的会话模型 */
+  preflight(taskId?: string): Promise<PreflightResult>;
 }
 
 export type SessionResult =

@@ -27,6 +27,11 @@ import (
 
 const harnessEmployee = "weekly-report"
 
+// scriptedConnection 剧本模式下提交前检查用的连接：有 Key、有模型列表，但不发任何请求。
+var scriptedConnection = contract.ModelConnection{
+	Name: "scripted", BaseURL: "http://127.0.0.1:9/v1", APIKey: "sk-scripted-not-used", Models: []string{"scripted-model"},
+}
+
 // repoPath 仓库内的路径（测试的工作目录是 internal/server）。
 func repoPath(parts ...string) string {
 	return filepath.Join(append([]string{"..", ".."}, parts...)...)
@@ -70,7 +75,11 @@ func a01Files(t *testing.T) []upload {
 type harnessConfig struct {
 	workflowEdits [][2]string
 	connection    *contract.ModelConnection
-	env           map[string]string
+	// connections 多个连接（会话模型要在它们之间选）；与 connection 二选一
+	connections []contract.ModelConnection
+	// scriptedModel 剧本模式下也配一条能通过提交前检查的连接（只在主人设里用）
+	scriptedModel bool
+	env         map[string]string
 	wrapModel     func(agent.ModelProvider) agent.ModelProvider
 	wrapTools     func(contract.ToolClient) contract.ToolClient
 	qc            qcRunner
@@ -102,6 +111,16 @@ func withWorkflowEdit(old, replacement string) harnessOption {
 // withModelConnection 不用剧本：引擎走真实模型提供者，这条连接写进工作区设置并设为默认。
 func withModelConnection(connection contract.ModelConnection) harnessOption {
 	return func(config *harnessConfig) { config.connection = &connection }
+}
+
+// withModelConnections 不用剧本：引擎走真实模型提供者，这几条连接写进设置（第一个是默认连接）。
+func withModelConnections(connections ...contract.ModelConnection) harnessOption {
+	return func(config *harnessConfig) { config.connections = connections }
+}
+
+// withScriptedModel 剧本模式下也配一条能通过提交前检查的连接（会话里要提交任务时用）。
+func withScriptedModel() harnessOption {
+	return func(config *harnessConfig) { config.scriptedModel = true }
 }
 
 // withEnv 注入服务端看到的环境变量。
@@ -180,21 +199,42 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if env == nil {
 		env = map[string]string{}
 	}
+	// 测试不读进程里真实的 DEEPSEEK_API_KEY（沙箱里 DSH 会设一个）：服务端按注入的 Env 读，
+	// 没给就是这个空值（withEnv 注入的照样生效）
+	env["DEEPSEEK_API_KEY"] = config.env["DEEPSEEK_API_KEY"]
 	// Spec 0006：设置、员工、知识库在应用目录里。主接缝是单目录模式：工作区目录同时是应用目录。
 	env["DE_WORKSPACE"] = workspace
 	// 判断步骤和前台 Agent 共用一个剧本模型，前台 Agent 消费 agent.FrontdeskStepID 下的轮次
 	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	var model agent.ModelProvider = provider
+	connections := config.connections
 	if config.connection != nil {
-		connection := *config.connection
+		connections = []contract.ModelConnection{*config.connection}
+	}
+	if len(connections) > 0 {
 		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
-			doc.Connections = []contract.ModelConnection{connection}
-			doc.DefaultConnection = connection.Name
-			doc.DefaultModel = connection.Models[0]
+			doc.Connections = connections
+			doc.LastModel = &contract.ModelRef{Connection: connections[0].Name, Model: connections[0].Models[0]}
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
 		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+	} else if config.scriptedModel && config.connection == nil {
+		// 剧本模式不走网络，但提交前检查照常检查会话模型（Spec 0006）：
+		// 给一个能通过检查的连接（指向本机、不存在的端口），否则会话里提交不了任务。
+		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+			doc.Connections = []contract.ModelConnection{scriptedConnection}
+			doc.LastModel = &contract.ModelRef{Connection: scriptedConnection.Name, Model: scriptedConnection.Models[0]}
+				}); err != nil {
+			t.Fatalf("写模型设置失败：%v", err)
+		}
+	} else if config.scriptedModel {
+		// 指定了连接（比如没配 Key 的那个来测提交前检查）：引擎仍用剧本模型，设置按原样写
+		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+			doc.Connections = []contract.ModelConnection{*config.connection}
+		}); err != nil {
+			t.Fatalf("写模型设置失败：%v", err)
+		}
 	}
 	if config.wrapModel != nil {
 		model = config.wrapModel(model)
@@ -218,7 +258,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		t.Fatalf("创建引擎失败：%v", err)
 	}
 	h := &harness{
-		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil, env: env,
+		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil && len(config.connections) == 0, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
 	}
 	h.baseURL = h.serve()

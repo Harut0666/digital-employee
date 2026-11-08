@@ -315,8 +315,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
   function persistSettings(settings: ModelSettings): void {
     updateSettingsDocument(workspaceDir, (doc) => {
       doc.connections = settings.connections;
-      doc.defaultConnection = settings.defaultConnection;
-      doc.defaultModel = settings.defaultModel;
+      // 会话模型（Spec 0006）取代了 defaultModel：保存连接不再改“默认模型”，lastModel 保持不变
     });
   }
 
@@ -329,8 +328,7 @@ export function createSettingsRoutes(deps: RouteDeps) {
     const view = appView();
     return {
       ok: true as const,
-      defaultConnection: view.defaultConnection,
-      defaultModel: view.defaultModel,
+      lastModel: view.lastModel ?? null,
       envOverride: view.envOverride,
       connections: view.connections,
     };

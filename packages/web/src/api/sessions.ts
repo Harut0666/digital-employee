@@ -3,8 +3,7 @@
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
 
-
-import type { PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
+import type { ModelConnectionOption, PreflightResult, SessionApi, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
 
 export type { SessionApi };
 
@@ -27,10 +26,10 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     return body as T;
   }
 
-  async function act(target: string, body: BodyInit, json = true): Promise<SessionResult> {
+  async function act(target: string, body: BodyInit, json = true, method = "POST"): Promise<SessionResult> {
     const headers: Record<string, string> = { "x-role": getRole() };
     if (json) headers["content-type"] = "application/json";
-    const res = await fetchImpl(target, { method: "POST", headers, body });
+    const res = await fetchImpl(target, { method, headers, body });
     const parsed: unknown = await res.json().catch(() => undefined);
     if (typeof parsed === "object" && parsed !== null && "ok" in parsed) return parsed as SessionResult;
     return { ok: false, error: "internal", message: messageOf(parsed, res.status) };
@@ -51,6 +50,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
         headers: { "x-role": getRole(), ...(workspaceId ? { "content-type": "application/json" } : {}) },
         ...(workspaceId ? { body: JSON.stringify({ workspaceId }) } : {}),
       }),
+    modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
+    selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
       const body = await read<{ session?: SessionSummary }>(session(id), {
@@ -60,7 +61,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       });
       if (!body.session) throw new Error("响应里没有会话");
       return body.session;
-    },    sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
+    },
+    sendMessage: (id, text) => act(session(id, "/messages"), JSON.stringify({ text })),
     confirmEmployee: (id, employee) => act(session(id, "/employee"), JSON.stringify({ employee })),
     uploadAttachments(id, files) {
       const form = new FormData();
@@ -70,6 +72,6 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
-    preflight: () => read<PreflightResult>(url("preflight")),
+    preflight: (taskId) => read<PreflightResult>(url(taskId ? `preflight?taskId=${encodeURIComponent(taskId)}` : "preflight")),
   };
 }

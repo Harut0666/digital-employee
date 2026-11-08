@@ -538,6 +538,17 @@ body {
 .chat-foot {
   padding: 8px 18px 16px;
 }
+/* 输入框右下角的模型下拉（T39）：连接 / 模型 */
+.chat-foot-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+.chat-foot-bar .model-picker {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  gap: 4px;
+}
 .msg-row {
   display: flex;
   gap: 10px;

@@ -229,7 +229,7 @@ func (h *harness) runningSession(sessionID string, entered <-chan struct{}) (str
 // --- 状态点：四种各一个用例 ---
 
 func TestStatusDotWaitingForMe(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	// 待确认员工：只有发起人能确认
 	reception := h.createSession()
 	if got := h.sessionSummaryOf(reception.ID, contract.RoleInitiator); got.StatusDot != "waiting" || got.Unread {
@@ -251,7 +251,7 @@ func TestStatusDotWaitingForMe(t *testing.T) {
 }
 
 func TestStatusDotWaitingDependsOnTheRole(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	// 待审核只归审核人：发起人和操作员看到的都不是“等你处理”，也不是“已完成未读”
 	review, _ := h.submittedSession(a01Files(t))
 	if got := h.sessionSummaryOf(review, contract.RoleInitiator); got.StatusDot != "idle" || got.Unread {
@@ -290,7 +290,7 @@ func (p *lockedProvider) Resolve(stepID string, ref *contract.ModelRef) (*agent.
 }
 
 func TestStatusDotRunningWhileFrontdeskReplies(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	gate := &lockedProvider{inner: h.model, step: agent.FrontdeskStepID, entered: make(chan struct{}), release: make(chan struct{})}
 	h.frontdesk = gate
 	h.baseURL = h.serve()
@@ -364,7 +364,7 @@ func releaseGate(q *gatedQC) {
 func TestStatusDotRunningWhileTaskExecutes(t *testing.T) {
 	t.Run("admission", func(t *testing.T) {
 		tool, holding := holdTool(contract.ToolValidateSubmission)
-		h := newHarness(t, caseScript(t, "A-01"), holding)
+		h := newHarness(t, caseScript(t, "A-01"), holding, withScriptedModel())
 		defer tool.open()
 		sessionID := h.draftedSession()
 		id, task := h.runningSession(sessionID, tool.entered)
@@ -375,7 +375,7 @@ func TestStatusDotRunningWhileTaskExecutes(t *testing.T) {
 	})
 	t.Run("running", func(t *testing.T) {
 		model, holding := holdModel("match_causes", false)
-		h := newHarness(t, caseScript(t, "A-01"), holding)
+		h := newHarness(t, caseScript(t, "A-01"), holding, withScriptedModel())
 		sessionID := h.draftedSession()
 		id, task := h.runningSession(sessionID, model.entered)
 		expectState(t, task, contract.StateRunning)
@@ -389,7 +389,7 @@ func TestStatusDotRunningWhileTaskExecutes(t *testing.T) {
 	})
 	t.Run("qc", func(t *testing.T) {
 		held := &gatedQC{entered: make(chan struct{}), release: make(chan struct{})}
-		h := newHarness(t, caseScript(t, "A-01"), withQC(held))
+		h := newHarness(t, caseScript(t, "A-01"), withQC(held), withScriptedModel())
 		sessionID := h.draftedSession()
 		id, task := h.runningSession(sessionID, held.entered)
 		expectState(t, task, contract.StateQC)
@@ -407,7 +407,7 @@ func (c *heldTools) open() { c.once.Do(func() { close(c.release) }) }
 // --- 已读：记录在会话日志里，打开会话时写入 ---
 
 func TestOpenedSessionWritesReadToItsLog(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	review, _ := h.submittedSession(a01Files(t))
 	h.readSession(review)
 	logPath := filepath.Join(h.workspace, "sessions", review, "log.jsonl")
@@ -428,7 +428,7 @@ func TestOpenedSessionWritesReadToItsLog(t *testing.T) {
 // --- 会话：重命名、归档 ---
 
 func TestSessionRenameAndArchive(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	id := h.draftedSession()
 
 	renamed := h.sessionPatch(id, map[string]any{"title": "第 44 周华东周报"})
@@ -480,7 +480,7 @@ type alwaysQC struct{}
 func (alwaysQC) Run(input contract.QcInput) []contract.QcCheckResult { return qc.NewEngine().Run(input) }
 
 func TestRecordsGroupedByState(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	delivered, deliveredTask := h.submittedSession(a01Files(t))
 	h.finish(deliveredTask.ID)
 	supplement, _ := h.submittedSession([]upload{sampleFile(t, "销售明细.xlsx")})
@@ -549,7 +549,7 @@ func contains(items []string, want string) bool {
 
 func TestRecordsListRunningTasks(t *testing.T) {
 	tool, holding := holdTool(contract.ToolValidateSubmission)
-	h := newHarness(t, caseScript(t, "A-01"), holding)
+	h := newHarness(t, caseScript(t, "A-01"), holding, withScriptedModel())
 	sessionID := h.draftedSession()
 	h.uploadTo(sessionID, a01Files(t))
 	reply := h.submit(sessionID, week44Form)
@@ -567,7 +567,7 @@ func TestRecordsListRunningTasks(t *testing.T) {
 }
 
 func TestRecentTasksAndSessionsShareTheRecords(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	delivered, deliveredTask := h.submittedSession(a01Files(t))
 	if _, err := h.engine.WaitForSettled(deliveredTask.ID); err != nil {
 		t.Fatal(err)
@@ -591,7 +591,7 @@ func TestRecentTasksAndSessionsShareTheRecords(t *testing.T) {
 }
 
 func TestRecordsShowTheTaskStateTheEngineReports(t *testing.T) {
-	h := newHarness(t, caseScript(t, "A-01"))
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
 	sessionID := h.draftedSession()
 	h.uploadTo(sessionID, a01Files(t))
 	reply := h.submit(sessionID, week44Form)

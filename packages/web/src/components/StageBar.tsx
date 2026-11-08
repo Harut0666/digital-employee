@@ -7,7 +7,18 @@ const fmtTime = (ms: number) => {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 
-export function StageBar({ line, live, meta }: { line: StageLine; live: boolean; meta?: { modelCalls: { used: number; limit: number }; elapsedMs: number } }) {
+export function StageBar({
+  line,
+  live,
+  meta,
+  model,
+}: {
+  line: StageLine;
+  live: boolean;
+  meta?: { modelCalls: { used: number; limit: number }; elapsedMs: number };
+  /** 任务当前的会话模型（“连接 / 模型”），轨迹里核对用的是哪个模型（T39） */
+  model?: string;
+}) {
   return (
     <div className="stages">
       <ol className="stage-track">
@@ -27,7 +38,7 @@ export function StageBar({ line, live, meta }: { line: StageLine; live: boolean;
         <span>{line.activity}</span>
         {meta && meta.modelCalls.limit > 0 && (
           <span className="stage-meta">
-            模型 {meta.modelCalls.used}/{meta.modelCalls.limit} · 用时 {fmtTime(meta.elapsedMs)}
+            {model ? `${model} · ` : ""}模型 {meta.modelCalls.used}/{meta.modelCalls.limit} · 用时 {fmtTime(meta.elapsedMs)}
           </span>
         )}
       </div>

@@ -31,6 +31,7 @@ import {
   type DemoSettings,
   type ExecutionSettings,
   type ModelOptions,
+  type ModelRef,
   type PermissionSettings,
   type SettingsDocument,
   type UiSettings,
@@ -193,9 +194,30 @@ export function normalizeSettingsDocument(raw: Record<string, unknown>): Setting
     defaultConnection:
       typeof raw.defaultConnection === "string" ? raw.defaultConnection : (connections[0]?.name ?? DEFAULT_DEFAULT_CONNECTION),
     defaultModel: typeof raw.defaultModel === "string" ? raw.defaultModel : (connections[0]?.models[0] ?? DEFAULT_DEFAULT_MODEL),
+    lastModel: normalizeLastModel(raw, connections),
     demo: normalizeDemo(raw.demo),
     extra,
   };
+}
+
+/**
+ * 会话模型（Spec 0006）：读 lastModel；旧文档（有 defaultConnection / defaultModel、没有 lastModel）
+ * 换算成它。两者都有时以 lastModel 为准；形状不完整时忽略。
+ */
+function normalizeLastModel(raw: Record<string, unknown>, connections: ModelConnection[]): ModelRef | null {
+  const last = raw.lastModel;
+  if (typeof last === "object" && last !== null) {
+    const record = last as Record<string, unknown>;
+    if (typeof record.connection === "string" && record.connection.trim() !== "" && typeof record.model === "string" && record.model.trim() !== "") {
+      return { connection: record.connection, model: record.model };
+    }
+  }
+  if (typeof raw.defaultModel === "string" && raw.defaultModel.trim() !== "") {
+    const connection =
+      typeof raw.defaultConnection === "string" && raw.defaultConnection.trim() !== "" ? raw.defaultConnection : connections[0]?.name;
+    if (connection) return { connection, model: raw.defaultModel };
+  }
+  return null;
 }
 
 /** 读设置文档；v1 文件会在内存里补成 v2，但不写盘（迁移只发生在写入时）。 */
@@ -225,8 +247,8 @@ export function serializeSettingsDocument(doc: SettingsDocument): Record<string,
     version: SETTINGS_VERSION,
     revision: doc.revision,
     connections: doc.connections.map(serializeConnection),
-    defaultConnection: doc.defaultConnection,
-    defaultModel: doc.defaultModel,
+    // 会话模型取代了 defaultConnection / defaultModel：写出时不再写它们
+    ...(doc.lastModel ? { lastModel: { connection: doc.lastModel.connection, model: doc.lastModel.model } } : {}),
     demo: { ...doc.demo, toolFaults: { ...doc.demo.toolFaults } },
     ui: { ...doc.ui },
     execution: { ...doc.execution, retryBackoffMs: [...doc.execution.retryBackoffMs] },
@@ -291,9 +313,9 @@ export function settingsDocumentView(doc: SettingsDocument, env: Env = {}): AppS
     execution: { ...doc.execution, retryBackoffMs: [...doc.execution.retryBackoffMs] },
     diagnostics: { ...doc.diagnostics },
     permissions: { ...doc.permissions },
-    connections: doc.connections.map((c) => connectionView(c, doc.defaultConnection, env)),
-    defaultConnection: doc.defaultConnection,
-    defaultModel: doc.defaultModel,
+    connections: doc.connections.map((c) => connectionView(c, doc.defaultConnection ?? "", env)),
+    // 会话模型（Spec 0006）：最近一次在会话里选的模型；旧文档里由 defaultConnection/defaultModel 换算
+    lastModel: doc.lastModel ?? null,
     demo: { ...doc.demo, toolFaults: { ...doc.demo.toolFaults } },
     extra: structuredClone(doc.extra),
     envOverride: Boolean(env.DEEPSEEK_API_KEY),
@@ -405,7 +427,9 @@ export function settingsDocumentOfImportBody(body: unknown): unknown {
 export function modelSettingsOf(doc: SettingsDocument): ModelSettings {
   return {
     connections: doc.connections,
-    defaultConnection: doc.defaultConnection,
-    defaultModel: doc.defaultModel,
+    // 会话模型（Spec 0006）：最近一次在会话里选的模型
+    lastModel: doc.lastModel ?? null,
+    defaultConnection: doc.defaultConnection ?? "",
+    defaultModel: doc.defaultModel ?? "",
   };
 }

@@ -1,9 +1,10 @@
 import { Prompts, Sender, Welcome } from "@ant-design/x";
-import { Alert, Button, Tag } from "antd";
-import { FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { Alert, Button, Dropdown, Tag } from "antd";
+import { DownOutlined, FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
-import type { PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
+import type { ModelConnectionOption, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
+import { modelLabel, modelMenuItems, parseModelValue } from "../view/session-model";
 import type { ChatItem } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
 import { deriveTrajectory } from "../view/trajectory";
@@ -56,8 +57,68 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }>
   );
 }
 
-/** 输入框：发送等完整回复；失败时保留原文。 */
-function ChatInput({ placeholder, disabled, onSend }: { placeholder: string; disabled?: boolean; onSend: (text: string) => Promise<boolean> }) {
+/** 输入框右下角的模型下拉（T39）：显示“连接 / 模型”，点开按连接分组列出可选模型。 */
+function ModelPicker({
+  options,
+  current,
+  disabled,
+  onPick,
+  openSettings,
+}: {
+  options: readonly ModelConnectionOption[];
+  current: SessionDetail["model"];
+  disabled?: boolean;
+  onPick: (connection: string, model: string) => Promise<boolean>;
+  openSettings?: () => void;
+}) {
+  const groups = modelMenuItems(options, current);
+  const picked = current ? `${current.connection}/${current.model}` : undefined;
+  const empty = groups.length === 0;
+  return (
+    <Dropdown
+      trigger={["click"]}
+      placement="topRight"
+      disabled={disabled && !empty}
+      menu={{
+        selectedKeys: picked ? [picked] : [],
+        items: empty
+          ? [{ key: "empty", disabled: true, label: "还没有可用的模型：先到设置里配置 Key 并选好模型" }]
+          : [
+              ...groups.map((group) => ({ type: "group" as const, key: `group:${group.label}`, label: group.label, children: group.options.map((o) => ({ key: o.value, label: o.label })) })),
+              { type: "divider" as const, key: "divider" },
+              { key: "settings", label: "去设置里配置模型连接" },
+            ],
+        onClick: ({ key }) => {
+          if (key === "settings") {
+            openSettings?.();
+            return;
+          }
+          if (disabled) return;
+          const { connection, model } = parseModelValue(key);
+          if (connection && model && !(current && current.connection === connection && current.model === model)) void onPick(connection, model);
+        },
+      }}
+    >
+      <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={empty ? "还没有可用的模型" : modelLabel(current)}>
+        {empty ? "选择模型" : modelLabel(current)}
+        <DownOutlined />
+      </Button>
+    </Dropdown>
+  );
+}
+
+/** 输入框：发送等完整回复；失败时保留原文。右下角是这一轮用的模型（T39）。 */
+function ChatInput({
+  placeholder,
+  disabled,
+  onSend,
+  modelPicker,
+}: {
+  placeholder: string;
+  disabled?: boolean;
+  onSend: (text: string) => Promise<boolean>;
+  modelPicker?: React.ReactNode;
+}) {
   const { ui } = useUiPreferences();
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
@@ -100,6 +161,7 @@ function ChatInput({ placeholder, disabled, onSend }: { placeholder: string; dis
           return undefined;
         }}
       />
+      {modelPicker && <div className="chat-foot-bar">{modelPicker}</div>}
     </div>
   );
 }
@@ -118,6 +180,9 @@ export function SessionChat({
   artifacts,
   checklist,
   headerExtra,
+  modelOptions,
+  onSelectModel,
+  openSettings,
   onSend,
 }: {
   detail: SessionDetail;
@@ -125,6 +190,10 @@ export function SessionChat({
   subtitle?: string;
   actions: CardActions;
   session: SessionActions;
+  /** 输入框右下角的模型下拉（T39）：可选模型、选模型、去设置 */
+  modelOptions: readonly ModelConnectionOption[];
+  onSelectModel: (connection: string, model: string) => Promise<boolean>;
+  openSettings: () => void;
   /** 会话绑定任务时的事件和步骤，用来画状态机和轨迹 */
   events: TaskEvent[];
   steps: StepStatusView[];
@@ -168,7 +237,14 @@ export function SessionChat({
         )}
         {headerExtra}
       </div>
-      {showStages && <StageBar line={stages} live={trajectory.active} meta={detail.taskId ? { modelCalls, elapsedMs } : undefined} />}
+      {showStages && (
+        <StageBar
+          line={stages}
+          live={trajectory.active}
+          meta={detail.taskId ? { modelCalls, elapsedMs } : undefined}
+          model={detail.taskId && detail.model ? modelLabel(detail.model) : undefined}
+        />
+      )}
       {checklist}
       {detail.taskId && traceOpen && (
         <TrajectoryDetails view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} attachments={attachments} artifacts={artifacts} />
@@ -180,6 +256,9 @@ export function SessionChat({
         placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
         disabled={detail.readOnly}
         onSend={onSend}
+        modelPicker={
+          <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />
+        }
       />
     </>
   );
@@ -209,12 +288,17 @@ export function NewConversation({
   onStart,
   onSample,
   role,
+  modelOptions,
+  defaultModel,
 }: {
   preflight: PreflightResult | undefined;
   openSettings: () => void;
   onStart: (text: string) => Promise<boolean>;
   onSample: () => void;
   role: UiRole;
+  /** 新会话沿用的模型（设置的 lastModel）：右下角显示，开了会话就定了（T39） */
+  modelOptions?: readonly ModelConnectionOption[];
+  defaultModel?: SessionDetail["model"];
 }) {
   return (
     <>
@@ -247,7 +331,30 @@ export function NewConversation({
           {role !== "initiator" && <p className="chat-sub" style={{ marginTop: 16 }}>当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工和提交任务。</p>}
         </div>
       </div>
-      <ChatInput placeholder="例如：帮我出第 44 周的经营周报" onSend={onStart} />
+      <ChatInput
+        placeholder="例如：帮我出第 44 周的经营周报"
+        onSend={onStart}
+        modelPicker={
+          modelOptions ? (
+            <Dropdown
+              trigger={["click"]}
+              placement="topRight"
+              menu={{
+                items: [
+                  { key: "hint", disabled: true, label: "发出第一句话后就能在会话里换模型" },
+                  { key: "settings", label: "去设置里配置模型连接" },
+                ],
+                onClick: ({ key }) => key === "settings" && openSettings(),
+              }}
+            >
+              <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={modelLabel(defaultModel)}>
+                {modelLabel(defaultModel)}
+                <DownOutlined />
+              </Button>
+            </Dropdown>
+          ) : undefined
+        }
+      />
     </>
   );
 }
