@@ -189,9 +189,9 @@ func ChecklistProblems(items []contract.ChecklistItem, formSchema map[string]any
 			problems = append(problems, where+" 缺少 label")
 		}
 		switch item.Source {
-		case contract.ChecklistSourceUpload:
+		case contract.ChecklistSourceMaterial, contract.ChecklistSourceUpload:
 			if len(item.Accept) == 0 {
-				problems = append(problems, where+" 判定来源是上传文件，accept 至少要有一个扩展名")
+				problems = append(problems, where+" 判定来源是已提供材料，accept 至少要有一个扩展名")
 			}
 			for _, extension := range item.Accept {
 				if !strings.HasPrefix(extension, ".") {
@@ -205,7 +205,7 @@ func ChecklistProblems(items []contract.ChecklistItem, formSchema map[string]any
 				problems = append(problems, fmt.Sprintf("%s 的 field %q 不在表单字段里", where, item.Field))
 			}
 		default:
-			problems = append(problems, where+" 的 source 必须是 upload 或 field")
+			problems = append(problems, where+" 的 source 必须是 material、upload（旧写法）或 field")
 		}
 		if item.SkipField != "" {
 			if item.Required {

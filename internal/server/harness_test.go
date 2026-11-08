@@ -77,6 +77,14 @@ type harnessConfig struct {
 	crashAtStep   string
 	// extraEmployees 经营周报员工之外，再复制进工作区的员工
 	extraEmployees []string
+	// appMode 应用目录模式：工作区是单独一个目录，应用目录在应用目录下的 app/
+	appMode bool
+}
+
+// withAppMode 应用目录模式：工作区目录只是工作区（设置、员工、会话和任务都在应用目录里），
+// 用来验证工作区目录里有什么、没有什么。
+func withAppMode() harnessOption {
+	return func(config *harnessConfig) { config.appMode = true }
 }
 
 // withEmployee 再复制一个仓库里的员工进工作区（比如知识库问答员工）。
@@ -150,6 +158,23 @@ type harness struct {
 	faults    *contract.FaultHooks
 	workspace string
 	employees string
+	// appDir 应用目录模式下的应用目录（单目录模式下是空串，应用目录就是工作区目录）
+	appDir string
+	// workspaces 应用目录模式下登记的工作区
+	workspaces []server.Workspace
+}
+
+// setFrontdeskScript 换一份前台 Agent 的剧本（路径要等工作区建好才定得下来的测试用）。
+func (h *harness) setFrontdeskScript(script agent.ModelScript) {
+	h.provider.SetScript(script)
+}
+
+// appDirs 应用目录。
+func (h *harness) appDirs() string {
+	if h.appDir != "" {
+		return h.appDir
+	}
+	return h.workspace
 }
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。
@@ -157,7 +182,6 @@ type harness struct {
 // 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。
 func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption) *harness {
 	t.Helper()
-	t.Parallel()
 	config := harnessConfig{
 		// 工具重试不等待，否则每次工具故障都要白等几秒
 		workflowEdits: [][2]string{{"backoffMs: [1000, 2000, 4000]", "backoffMs: [0]"}},
@@ -167,7 +191,18 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	}
 
 	workspace := t.TempDir()
-	employees := filepath.Join(workspace, "employees")
+	appDir := workspace
+	if config.appMode {
+		workspace = filepath.Join(t.TempDir(), "工作区")
+		if err := os.MkdirAll(workspace, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		appDir = filepath.Join(t.TempDir(), "app")
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "交付"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	employees := filepath.Join(appDir, "employees")
 	copyEmployee(t, repoPath("employees", harnessEmployee), filepath.Join(employees, harnessEmployee))
 	editWorkflow(t, filepath.Join(employees, harnessEmployee, "workflow.yaml"), config.workflowEdits)
 	for _, id := range config.extraEmployees {
@@ -178,21 +213,25 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if env == nil {
 		env = map[string]string{}
 	}
-	// Spec 0006：设置、员工、知识库在应用目录里。主接缝是单目录模式：工作区目录同时是应用目录。
-	env["DE_WORKSPACE"] = workspace
+	// Spec 0006：设置、员工、知识库在应用目录里。主接缝默认是单目录模式：工作区目录同时是应用目录。
+	if config.appMode {
+		env["DE_APP_DIR"] = appDir
+	} else {
+		env["DE_WORKSPACE"] = workspace
+	}
 	// 判断步骤和前台 Agent 共用一个剧本模型，前台 Agent 消费 agent.FrontdeskStepID 下的轮次
 	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	var model agent.ModelProvider = provider
 	if config.connection != nil {
 		connection := *config.connection
-		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{connection}
 			doc.DefaultConnection = connection.Name
 			doc.DefaultModel = connection.Models[0]
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
-		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+		model = agent.NewModelProvider(settings.LoadModelSettings(appDir, settings.Env(env)))
 	}
 	if config.wrapModel != nil {
 		model = config.wrapModel(model)
@@ -206,7 +245,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		toolClient = config.wrapTools(toolClient)
 	}
 	eng, err := engine.NewWithOptions(engine.Deps{
-		Dir:          workspace,
+		Dir:          appDir,
 		EmployeesDir: employees,
 		ToolClient:   toolClient,
 		Model:        model,
@@ -219,16 +258,24 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
 	}
+	if config.appMode {
+		h.appDir = appDir
+		h.workspaces = []server.Workspace{{ID: appWorkspaceID, Path: workspace}}
+	}
 	h.baseURL = h.serve()
 	return h
 }
+
+// appWorkspaceID 应用目录模式里的工作区 ID。
+const appWorkspaceID = "ws-app"
 
 // serve 在同一个工作区上起一个服务端，返回地址。再调一次就是“重启后”的服务端。
 func (h *harness) serve() string {
 	h.t.Helper()
 	srv := server.New(server.Options{
 		Engine:       h.engine,
-		AppDir:       h.workspace,
+		AppDir:       h.appDirs(),
+		Workspaces:   h.workspaces,
 		WorkspaceDir: h.workspace,
 		EmployeesDir: h.employees,
 		ToolClient:   h.registry,

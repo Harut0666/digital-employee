@@ -55,7 +55,7 @@ func TestRegistryListTools(t *testing.T) {
 	want := []string{
 		contract.ToolValidateSubmission, contract.ToolLoadSales, contract.ToolComputeMetrics,
 		contract.ToolDetectContradictions, contract.ToolParseMinutes, contract.ToolRenderReportDocx,
-		contract.ToolWebSearch, contract.ToolAdminSetFaults,
+		contract.ToolReadFile, contract.ToolWebSearch, contract.ToolAdminSetFaults,
 	}
 	if len(names) != len(want) {
 		t.Fatalf("工具数量 = %d，期望 %d：%v", len(names), len(want), names)
@@ -71,6 +71,26 @@ func TestRegistryListTools(t *testing.T) {
 				t.Errorf("admin_set_faults 描述应说明只由服务端调用：%s", tool.Description)
 			}
 		}
+	}
+}
+
+// 前台 Agent 的目录读取工具在注册表里也能用（复用同一套解析，见 TestReadFileReusesParsers）。
+func TestReadFileThroughRegistry(t *testing.T) {
+	r := NewRegistry()
+	path := filepath.Join(samplesDir(t), "销售明细.xlsx")
+	res, err := r.Call(contract.ToolReadFile, map[string]any{"path": path})
+	if err != nil {
+		t.Fatalf("read_file 返回 error：%v", err)
+	}
+	if !res.OK {
+		t.Fatalf("read_file 失败：%s", res.Error)
+	}
+	out, ok := res.Data.(contract.ReadFileOutput)
+	if !ok {
+		t.Fatalf("read_file 返回类型 = %T", res.Data)
+	}
+	if !strings.Contains(out.Text, "记录ID") || out.Truncated {
+		t.Fatalf("read_file 应复用销售明细解析：%+v", out)
 	}
 }
 

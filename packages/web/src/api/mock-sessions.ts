@@ -40,6 +40,12 @@ interface MockSession {
   updatedAt: string;
 }
 
+interface MockFolderFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
 const LEGACY = "task-";
 /** 模拟模式只有一个工作区（和 workspaces.ts 的 ws-demo 一致） */
 const MOCK_WORKSPACE = "ws-demo";
@@ -281,6 +287,33 @@ export function createMockSessions(
       s.files = [...s.files.filter((f) => !files.some((n) => n.name === f.name)), ...files];
       const out: SessionMessage[] = [];
       write(s, { kind: "notice", text: `已收到材料：${files.map((f) => f.name).join("、")}` }, out);
+      return reply(s, out);
+    },
+
+    // 模拟模式的工作区目录：固定的几份样例文件（对应工作区目录里人放进去的样例）
+    async listFolderFiles() {
+      const files: MockFolderFile[] = [
+        { path: "销售明细.xlsx", name: "销售明细.xlsx", size: 28_000 },
+        { path: "周会纪要_2026W44.docx", name: "周会纪要_2026W44.docx", size: 18_000 },
+      ];
+      return { entries: files.map((f) => ({ path: f.path, name: f.name, size: f.size })), truncated: false };
+    },
+
+    // @ 选择即视为人已确认：和卡片上的“用这个文件”一样，复制进会话材料
+    async useFolderFiles(id, paths) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认目录里的文件");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (s.taskId) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
+      if (paths.length === 0) return fail("invalid_input", "没有选择文件");
+      const files: File[] = [];
+      for (const p of paths) {
+        const name = p.split("/").at(-1) ?? p;
+        files.push(new File([`模拟的 ${name}`], name));
+      }
+      s.files = [...s.files.filter((f) => !files.some((n) => n.name === f.name)), ...files];
+      const out: SessionMessage[] = [];
+      write(s, { kind: "notice", text: `已把目录里的文件作为材料：${paths.join("、")}` }, out);
       return reply(s, out);
     },
 

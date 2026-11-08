@@ -1,6 +1,6 @@
 // 开工清单：员工开工前必须备齐的事项，由人写在员工配置的 checklist.yaml 里，只有程序能勾选。
 //
-// 清单只判定“文件是否已上传、必填项是否已填写”；内容问题（周次不符、工作表缺失）留给引擎的准入校验，
+// 清单只判定“材料是否已提供、必填项是否已填写”；内容问题（周次不符、工作表缺失）留给引擎的准入校验，
 // 它仍是最后一道关。必需项不齐时会话层拒绝开工；可跳过项由发起人确认跳过，开工时写入表单字段并留痕。
 package session
 
@@ -40,7 +40,7 @@ type Checklist struct {
 	Missing []string `json:"missing"`
 }
 
-// evaluateChecklist 按会话里已上传的材料和表单判定清单。
+// evaluateChecklist 按会话里的材料和表单判定清单。
 func evaluateChecklist(items []contract.ChecklistItem, formSchema map[string]any, form map[string]any, attachments []Attachment, skipped map[string]bool) *Checklist {
 	out := &Checklist{Items: []ChecklistEntry{}, Ready: true, Missing: []string{}}
 	for _, item := range items {
@@ -67,7 +67,8 @@ func evaluateChecklist(items []contract.ChecklistItem, formSchema map[string]any
 
 func itemSatisfied(item contract.ChecklistItem, formSchema map[string]any, form map[string]any, attachments []Attachment) bool {
 	switch item.Source {
-	case contract.ChecklistSourceUpload:
+	case contract.ChecklistSourceMaterial, contract.ChecklistSourceUpload:
+		// “已提供材料”：上传的和从工作区目录确认的都算，只看扩展名
 		for _, attachment := range attachments {
 			extension := strings.ToLower(filepath.Ext(attachment.Name))
 			for _, accepted := range item.Accept {
@@ -182,7 +183,7 @@ func checklistLines(config *contract.EmployeeConfig, current *record) []string {
 		return nil
 	}
 	checklist := evaluateChecklist(config.Checklist, config.FormSchema, current.draft, current.attachments, current.skipped)
-	lines := []string{"- 开工清单（程序按上传的文件和表单判定，你不能勾选；必需项不齐不能开工，可跳过项要发起人在清单上确认跳过）："}
+	lines := []string{"- 开工清单（程序按已提供的材料和表单判定，你不能勾选；必需项不齐不能开工，可跳过项要发起人在清单上确认跳过）："}
 	for _, entry := range checklist.Items {
 		text := "  - " + entry.Label + "：" + entryText[entry.Status]
 		if entry.Status == ItemMissing {

@@ -67,9 +67,11 @@ type Message struct {
 	// WorkspaceID 只在第一行（created）里：会话属于哪个工作区
 	WorkspaceID string         `json:"workspaceId,omitempty"`
 	Employee    string         `json:"employee,omitempty"`
-	TaskID     string         `json:"taskId,omitempty"`
-	Draft      map[string]any `json:"draft,omitempty"`
-	Attachment *Attachment    `json:"attachment,omitempty"`
+	TaskID      string         `json:"taskId,omitempty"`
+	Draft       map[string]any `json:"draft,omitempty"`
+	Attachment  *Attachment    `json:"attachment,omitempty"`
+	// ConfirmedPath 这份材料是人在哪张“使用目录文件”卡片上确认的（目录里的相对路径）
+	ConfirmedPath string `json:"confirmedPath,omitempty"`
 	// Item 开工清单项的 id
 	Item string `json:"item,omitempty"`
 }

@@ -74,6 +74,18 @@ describe("会话接口", () => {
     expect(calls[1]?.url).toBe("http://local/api/sessions");
   });
 
+  test("目录文件：列文件、确认后用目录里的文件，路径放在请求体里", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/sessions/s-1/folder-files": [200, { entries: [{ path: "资料/销售明细.xlsx", name: "销售明细.xlsx", size: 10 }], truncated: false }],
+      "POST /api/sessions/s-1/folder-files": [200, { ok: true, messages: [], session }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.listFolderFiles("s-1")).entries[0]).toEqual({ path: "资料/销售明细.xlsx", name: "销售明细.xlsx", size: 10 });
+    expect((await api.useFolderFiles("s-1", ["资料/销售明细.xlsx", "资料/周会纪要_2026W44.docx"])).ok).toBe(true);
+    expect(JSON.parse(String(calls[1]?.body))).toEqual({ paths: ["资料/销售明细.xlsx", "资料/周会纪要_2026W44.docx"] });
+    expect(calls[1]?.headers["x-role"]).toBe("initiator");
+  });
+
   test("提交前检查和会话读取", async () => {
     const { impl } = fakeFetch({
       "GET /api/preflight": [200, { ok: true }],

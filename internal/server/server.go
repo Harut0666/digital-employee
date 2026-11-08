@@ -265,13 +265,31 @@ func (s *Server) workspaceRegistered(id string) bool {
 	return false
 }
 
-// workspaceSampleDir 列公开样例用哪个目录：单目录模式看工作区目录，应用目录模式看第一个登记的工作区。
+// workspaceSampleDir 公开样例放在哪里：单目录模式看工作区目录（同时是应用目录），应用目录模式看应用目录。
+// 工作区目录里不再释放样例（T41），样例和评测用例只放在应用目录。
 func (s *Server) workspaceSampleDir() string {
 	if s.opts.WorkspaceDir != "" {
 		return s.opts.WorkspaceDir
 	}
-	if dirs := s.registeredWorkspaces(); len(dirs) > 0 {
-		return dirs[0].Path
+	return s.opts.AppDir
+}
+
+// workspaceDir 工作区 ID → 目录（前台 Agent 读目录文件、上传写进“材料”用）。没登记过时返回空串；
+// 单目录模式（没传登记、只有一个唯一工作区）返回 WorkspaceDir / 应用目录。
+func (s *Server) workspaceDir(id string) string {
+	if items := s.registeredWorkspaces(); len(items) > 0 {
+		for _, item := range items {
+			if item.ID == id {
+				return item.Path
+			}
+		}
+		return ""
+	}
+	if id != SingleWorkspaceID {
+		return ""
+	}
+	if s.opts.WorkspaceDir != "" {
+		return s.opts.WorkspaceDir
 	}
 	return s.opts.AppDir
 }
@@ -314,6 +332,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
+	m.HandleFunc("GET /api/sessions/{id}/folder-files", s.sessionRoute(s.handleListFolderFiles))
+	m.HandleFunc("POST /api/sessions/{id}/folder-files", s.sessionRoute(s.handleUseFolderFiles))
 	m.HandleFunc("POST /api/sessions/{id}/submit", s.sessionRoute(s.handleSubmitSession))
 	m.HandleFunc("POST /api/sessions/{id}/checklist/{item}/skip", s.sessionRoute(s.handleSkipChecklistItem))
 	m.HandleFunc("POST /api/sessions/{id}/filing-draft", s.sessionRoute(s.handleDraftFiling))

@@ -6,7 +6,9 @@ package session
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"digital-employee/internal/contract"
@@ -21,6 +23,8 @@ const (
 	CardReview          = "review"
 	// CardFiling 入库确认：交付后由程序发出，模型起草描述，人确认后入库
 	CardFiling = "knowledge_filing"
+	// CardUseFile 使用目录文件：前台 Agent 提议把工作区目录里的文件用作材料，人确认后才复制进会话
+	CardUseFile = "folder_file"
 )
 
 // 员工确认卡片的来源。
@@ -69,6 +73,13 @@ type Card struct {
 	// DraftFailed 模型起草失败，由人手写
 	DraftFailed bool   `json:"draftFailed,omitempty"`
 	Filed       string `json:"filed,omitempty"`
+
+	// folder_file：目录里的文件（Path 相对工作区目录），提议理由用 Reason
+	Path string `json:"path,omitempty"`
+	Name string `json:"name,omitempty"`
+	Size int64  `json:"size,omitempty"`
+	// Confirmed 人已经确认过：材料已经在会话里
+	Confirmed bool `json:"confirmed,omitempty"`
 }
 
 func confirmCard(employees []Employee, proposed, source, reason string) Card {
@@ -137,7 +148,85 @@ func (m *Manager) withTask(messages []Message, taskID string, current *record) (
 		}
 	}
 	sort.SliceStable(merged, func(i, j int) bool { return parseTime(merged[i].TS).Before(parseTime(merged[j].TS)) })
-	return merged, m.attachActions(merged, taskID, events)
+	if err := m.attachActions(merged, taskID, events); err != nil {
+		return nil, err
+	}
+	root := ""
+	if current != nil {
+		root = m.workspaceDir(current.workspaceID)
+	}
+	return attachFolderFileActions(merged, root), nil
+}
+
+// folder_file 按钮的命令名（与任务命令分开：它不是任务命令，只复制材料）。
+const commandUseFolderFile = "use_folder_file"
+
+// folderCardConfirmed 人已经确认过这张卡片：会话里记着“已把目录里的文件作为材料：…”里列出了它的路径。
+func folderCardConfirmed(messages []Message, card Card) bool {
+	for _, message := range messages {
+		if message.Kind != KindUser {
+			continue
+		}
+		for _, rel := range folderConfirmedPaths(message.Text) {
+			if rel == card.Path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// folderConfirmedPaths 从确认说明里取出列出的路径（“已把目录里的文件作为材料：a、b/周报.docx”）。
+func folderConfirmedPaths(text string) []string {
+	const prefix = "已把目录里的文件作为材料："
+	index := strings.Index(text, prefix)
+	if index < 0 {
+		return nil
+	}
+	out := []string{}
+	for _, item := range strings.Split(text[index+len(prefix):], "、") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// attachFolderFileActions 给“使用目录文件”卡片配上确认按钮：文件还在目录里、人还没确认过才有。
+// 人确认过（会话里记着这张卡片路径的 attachment_added）就不再给按钮。
+func attachFolderFileActions(messages []Message, root string) []Message {
+	if root == "" {
+		return messages
+	}
+	pending := make([]int, 0, 2)
+	for index := range messages {
+		card := messages[index].Card
+		if card == nil || card.Type != CardUseFile || card.Confirmed {
+			continue
+		}
+		pending = append(pending, index)
+	}
+	for _, index := range pending {
+		card := messages[index].Card
+		if folderCardConfirmed(messages, *card) {
+			card.Confirmed = true
+			card.Actions = nil
+			continue
+		}
+		target, _, err := resolveInWorkspace(root, card.Path)
+		if err != nil {
+			card.Actions = nil
+			continue
+		}
+		if info, err := os.Stat(target); err != nil || !info.Mode().IsRegular() {
+			card.Actions = nil
+			continue
+		}
+		card.Actions = []contract.TaskAction{{
+			Command: commandUseFolderFile, Label: "用这个文件", Roles: []contract.Role{contract.RoleInitiator}, Style: "primary",
+		}}
+	}
+	return messages
 }
 
 // filingMessage 交付之后的入库确认卡片：紧跟在“任务已交付”之后。

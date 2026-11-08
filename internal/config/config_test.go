@@ -148,6 +148,25 @@ func TestConsistencyProblems(t *testing.T) {
 	}
 }
 
+// 开工清单的判定来源：旧的 upload 照旧可用，新的 material 与它等价（T41“已提供材料”）。
+func TestChecklistSources(t *testing.T) {
+	schema := map[string]any{"properties": map[string]any{"remark": map[string]any{"type": "string"}}}
+	item := func(source string, accept []string) contract.ChecklistItem {
+		return contract.ChecklistItem{ID: "sales", Label: "销售明细", Required: true, Source: source, Accept: accept}
+	}
+	for _, source := range []string{"upload", "material"} {
+		if problems := ChecklistProblems([]contract.ChecklistItem{item(source, []string{".xlsx"})}, schema); len(problems) != 0 {
+			t.Fatalf("source=%s 应合法：%v", source, problems)
+		}
+	}
+	if problems := ChecklistProblems([]contract.ChecklistItem{item("material", nil)}, schema); len(problems) == 0 {
+		t.Fatal("判定来源是已提供材料时 accept 至少要有一个扩展名")
+	}
+	if problems := ChecklistProblems([]contract.ChecklistItem{item("attachment", []string{".xlsx"})}, schema); len(problems) == 0 {
+		t.Fatal("未知的 source 应报错")
+	}
+}
+
 func TestCollectWritingRequirements(t *testing.T) {
 	schema := map[string]any{
 		"type": "object",

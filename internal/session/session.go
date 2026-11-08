@@ -60,6 +60,8 @@ type Deps struct {
 	Engine contract.Engine
 	// Workspace 工作区 ID 是否已登记（登记项被取消后会话仍可查看）
 	Workspace func(id string) bool
+	// WorkspaceDir 工作区 ID → 目录。前台 Agent 读目录文件、上传写进“材料”都从这里找；找不到时返回空串
+	WorkspaceDir func(id string) string
 	// Model 取当前模型提供者（设置保存后会换）；nil 或返回 nil 都算模型不可用
 	Model func() agent.ModelProvider
 	// Employees 列出可接手的员工
@@ -74,6 +76,8 @@ type Deps struct {
 	Preflight func() error
 	// Knowledge 知识库的只读工具；员工的 frontdesk.md 勾选了才开放给前台 Agent。nil 表示没有知识库
 	Knowledge contract.ToolClient
+	// Tools 工具客户端：前台 Agent 的 read_file 复用它的文件解析。nil 时 read_file 报没有工具
+	Tools contract.ToolClient
 	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
 	Filing FilingSource
 	Now    func() time.Time
@@ -133,6 +137,15 @@ func newID(now time.Time) string {
 	return fmt.Sprintf("s-%s-%x", now.UTC().Format("20060102150405"), buffer)
 }
 
+// WorkspaceOf 会话属于哪个工作区。
+func (m *Manager) WorkspaceOf(id string) (string, error) {
+	current, err := m.load(id)
+	if err != nil {
+		return "", err
+	}
+	return current.workspaceID, nil
+}
+
 // Create 在 workspaceID 工作区里开一个新会话；工作区必须登记过。
 func (m *Manager) Create(workspaceID string) (*View, error) {
 	if m.deps.Workspace == nil || !m.deps.Workspace(workspaceID) {
@@ -159,10 +172,13 @@ func (m *Manager) Get(id string) (*Detail, error) {
 		return nil, err
 	}
 	messages := visibleMessages(current.messages)
+
 	if current.taskID != "" {
 		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
 			return nil, err
 		}
+	} else {
+		messages = attachFolderFileActions(messages, m.workspaceDir(current.workspaceID))
 	}
 	view, err := m.fullView(current)
 	if err != nil {
@@ -204,6 +220,12 @@ func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
 
 func (m *Manager) reply(t *turn) (*Reply, error) {
 	messages := visibleMessages(t.out)
+	// t.current 是写入之前的快照：补上这次新写进去的草稿和材料，清单按写完的样子显示
+	for _, message := range t.out {
+		if message.Kind == kindAttachmentAdded || message.Kind == kindDraftSet {
+			t.current.apply(message)
+		}
+	}
 	if taskID := t.current.taskID; taskID != "" {
 		events, err := m.deps.Engine.Events(taskID, 0)
 		if err != nil {
@@ -212,6 +234,8 @@ func (m *Manager) reply(t *turn) (*Reply, error) {
 		if err := m.attachActions(messages, taskID, events); err != nil {
 			return nil, err
 		}
+	} else {
+		messages = attachFolderFileActions(messages, m.workspaceDir(t.current.workspaceID))
 	}
 	view, err := m.fullView(t.current)
 	if err != nil {

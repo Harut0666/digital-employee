@@ -44,10 +44,11 @@ func writeSessionError(w http.ResponseWriter, err error) {
 // newSessions 组装会话模块：员工和设置都按需读，配置改动立即生效。
 func (s *Server) newSessions() *session.Manager {
 	return session.New(session.Deps{
-		Dir:       s.opts.AppDir,
-		Engine:    s.opts.Engine,
-		Model:     s.opts.Model,
-		Workspace: s.workspaceRegistered,
+		Dir:          s.opts.AppDir,
+		Engine:       s.opts.Engine,
+		Model:        s.opts.Model,
+		Workspace:    s.workspaceRegistered,
+		WorkspaceDir: s.workspaceDir,
 		Employees: func() ([]session.Employee, error) {
 			listed, err := s.listEmployees()
 			if err != nil {
@@ -74,8 +75,10 @@ func (s *Server) newSessions() *session.Manager {
 			return &execution
 		},
 		Knowledge: knowledge.WithTools(s.knowledge, nil),
-		Filing:    filingSource{server: s},
-		Now:       s.opts.Now,
+		// 前台 Agent 的 read_file 复用工具客户端的文件解析
+		Tools:  s.opts.ToolClient,
+		Filing: filingSource{server: s},
+		Now:    s.opts.Now,
 	})
 }
 
@@ -201,7 +204,71 @@ func (s *Server) handleSessionAttachments(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer uploads.cleanup()
-	reply, err := s.sessions.AddAttachments(r.PathValue("id"), role, uploads.attachments)
+	id := r.PathValue("id")
+	workspaceID, err := s.sessions.WorkspaceOf(id)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	reply, err := s.sessions.AddAttachments(id, role, uploads.attachments)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	// 对话里上传的文件同时写一份到 <工作区目录>/材料/，重名加序号；写不进去不影响这次上传，只记一条说明
+	if err := s.sessions.SaveWorkspaceMaterials(workspaceID, uploads.attachments); err != nil {
+		s.logf("warn", "上传的材料写进工作区目录失败：%v", err)
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleListFolderFiles GET /api/sessions/{id}/folder-files：@ 选择用的目录文件列表。
+func (s *Server) handleListFolderFiles(w http.ResponseWriter, r *http.Request) {
+	// 只读列表：任何角色都能看目录里有什么；确认（POST）才只有发起人能做
+	if _, ok := roleOf(r); !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	listing, err := s.sessions.FolderFiles(r.PathValue("id"))
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing)
+}
+
+// handleUseFolderFiles POST /api/sessions/{id}/folder-files：人确认（或 @ 选择）目录里的文件，复制进会话材料。
+func (s *Server) handleUseFolderFiles(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	raw, present := body["paths"]
+	if !present {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "缺少 paths：要用的目录文件路径列表"))
+		return
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "paths 必须是字符串数组"))
+		return
+	}
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "paths 必须是字符串数组"))
+			return
+		}
+		paths = append(paths, text)
+	}
+	reply, err := s.sessions.UseFolderFiles(r.PathValue("id"), role, paths)
 	if err != nil {
 		writeSessionError(w, err)
 		return

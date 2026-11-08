@@ -7,7 +7,7 @@ import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contra
 import { createApi, IS_MOCK, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createMockWorkspaceApi, createWorkspaceApi, type WorkspaceItem } from "./api/workspaces";
-import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
+import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
 import { NewConversation, SessionChat } from "./components/Chat";
@@ -54,11 +54,19 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   }, [workspaceApi]);
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 材料有变化（确认目录文件、上传）时让 @ 选择重读目录 */
+  const [folderVersion, setFolderVersion] = useState(0);
   const { preflight, reload: reloadPreflight } = usePreflight();
 
   const sessionId = selection.kind === "session" ? selection.id : undefined;
   const session = useSession(sessionId);
   const detail = session.detail;
+  // @ 选目录文件：员工接手、还没提交时才有；每次会话读出来（材料变化时重读）刷新一次
+  const folderFiles = useFolderFiles(
+    sessionId,
+    detail?.status === "drafting" && !detail.readOnly,
+    `${detail?.status}:${detail?.attachments.length}:${folderVersion}:${detail?.updatedAt}`,
+  );
   const taskId = detail?.taskId;
   const task = useTask(taskId);
   // 服务端快照里的 state 最权威（草稿任务没有 state_changed 事件，视图里可能还是空）
@@ -140,6 +148,14 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       if (!sessionId) return;
       const res = await settle(api.uploadAttachments(sessionId, files));
       if (!res.ok) message.error(res.message);
+      setFolderVersion((n) => n + 1);
+    },
+    // 卡片上的“用这个文件”和输入框里的 @ 选择都走这里：人确认后复制进会话，与上传等效
+    async useFolderFiles(paths) {
+      if (!sessionId) return;
+      const res = await settle(api.useFolderFiles(sessionId, paths));
+      if (!res.ok) message.error(res.message);
+      setFolderVersion((n) => n + 1);
     },
     submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
     async draftFiling() {
@@ -246,6 +262,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
         attachments={(task.snapshot?.attachments ?? []).map((a) => a.name)}
+        folderFiles={folderFiles}
         artifacts={artifactsOf(task.snapshot, actions.downloadUrl)}
         headerExtra={
           drawerMode && taskId ? (

@@ -419,7 +419,7 @@ func TestFirstStartCreatesMyWorkspaceInDocuments(t *testing.T) {
 			t.Fatalf("应用目录里应有 %s：%v", name, err)
 		}
 	}
-	// 工作目录里只放用得上的东西：样例和“交付”文件夹，没有应用数据
+	// 工作目录里只放用得上的东西：一个空的“交付”文件夹，不放样例，也没有应用数据
 	entries, err := os.ReadDir(want)
 	if err != nil {
 		t.Fatal(err)
@@ -428,8 +428,89 @@ func TestFirstStartCreatesMyWorkspaceInDocuments(t *testing.T) {
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	if !slices.Equal(names, []string{"samples", "交付"}) {
-		t.Fatalf("工作目录里只应有样例和“交付”文件夹：%v", names)
+	if !slices.Equal(names, []string{"交付"}) {
+		t.Fatalf("工作目录里只应有“交付”文件夹：%v", names)
+	}
+	// 公开样例和评测用例只放在应用目录
+	if !hasFile(filepath.Join(appDir, "samples", "cases", "A-01.json")) || !hasFile(filepath.Join(appDir, "samples", "scenario-a", "销售明细.xlsx")) {
+		t.Fatal("应用目录里应有公开样例")
+	}
+}
+
+// sampleList GET /api/samples 里的样例 ID。
+func (a *switchingApp) sampleList() []string {
+	a.t.Helper()
+	status, data := a.call(http.MethodGet, "/api/samples", nil)
+	if status != http.StatusOK {
+		a.t.Fatalf("读取公开样例失败：%d %s", status, data)
+	}
+	ids := []string{}
+	for _, item := range decodeAs[struct {
+		Samples []struct {
+			ID string `json:"id"`
+		} `json:"samples"`
+	}](a.t, data).Samples {
+		ids = append(ids, item.ID)
+	}
+	return ids
+}
+
+// loadSample POST /api/samples/scenario-a/tasks。
+func (a *switchingApp) loadSample(workspaceID string) (int, []byte) {
+	a.t.Helper()
+	return a.call(http.MethodPost, "/api/samples/scenario-a/tasks", map[string]any{"workspaceId": workspaceID})
+}
+
+func TestWorkspaceFolderHasNoSamplesAndPublicSampleStillLoads(t *testing.T) {
+	// 假仓库：只有 employees/ 和 samples/，应用目录里的样例从这里释放
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "employees"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(repo, "samples", "cases", "A-01.json"), `{"employee":"weekly-report","form":{"period":{"year":2026,"week":44}}}`)
+	writeTestFile(t, filepath.Join(repo, "samples", "scenario-a", "销售明细.xlsx"), "xlsx")
+	writeTestFile(t, filepath.Join(repo, "samples", "scenario-a", "周会纪要_2026W44.docx"), "docx")
+
+	appDir := t.TempDir()
+	home := t.TempDir()
+	env := withAppEnv(map[string]string{"USERPROFILE": home, "DE_REPO_ROOT": repo})
+	a := startApp(t, appDir, "", env)
+
+	// 新建的工作区目录里没有 samples/
+	created := a.createWorkspace("华南区", filepath.Join(home, "华南区"))
+	if isDir(filepath.Join(created.Path, "samples")) {
+		t.Fatalf("新建的工作区目录里不应释放样例：%s", created.Path)
+	}
+	if !isDir(filepath.Join(created.Path, "交付")) {
+		t.Fatalf("新建的工作区目录里应有“交付”文件夹：%s", created.Path)
+	}
+	mine := a.byName("我的工作区")
+	if isDir(filepath.Join(mine.Path, "samples")) || !isDir(filepath.Join(mine.Path, "交付")) {
+		t.Fatalf("“我的工作区”目录里只应有“交付”：%s", mine.Path)
+	}
+	// 载入公开样例：从应用目录取，不需要工作区里有 samples/
+	if ids := a.sampleList(); !slices.Equal(ids, []string{"scenario-a"}) {
+		t.Fatalf("公开样例列表 = %v", ids)
+	}
+	status, data := a.loadSample(created.ID)
+	if status != http.StatusCreated {
+		t.Fatalf("载入公开样例失败：%d %s", status, data)
+	}
+	snapshot := decodeAs[contract.TaskSnapshot](a.t, data)
+	if len(snapshot.Attachments) != 2 || snapshot.Form == nil {
+		t.Fatalf("样例任务 = %+v", snapshot)
+	}
+}
+
+func TestSingleDirectoryModeKeepsSamples(t *testing.T) {
+	// 单目录模式布局不变：目录同时是应用目录，样例照样释放到它的 samples/ 下
+	pinned := filepath.Join(t.TempDir(), "演示")
+	a := startApp(t, t.TempDir(), pinned)
+	if !hasFile(filepath.Join(pinned, "samples", "cases", "A-01.json")) {
+		t.Fatal("单目录模式下应释放公开用例")
+	}
+	if ids := a.sampleList(); !slices.Equal(ids, []string{"scenario-a"}) {
+		t.Fatalf("单目录模式的公开样例列表 = %v", ids)
 	}
 }
 

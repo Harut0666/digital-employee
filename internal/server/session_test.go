@@ -19,9 +19,12 @@ import (
 	"digital-employee/internal/session"
 )
 
-// createSession 发起人开一个新会话。
+// createSession 发起人开一个新会话（应用目录模式下开在装置的工作区里）。
 func (h *harness) createSession() session.View {
 	h.t.Helper()
+	if len(h.workspaces) > 0 {
+		return h.createSessionIn(appWorkspaceID)
+	}
 	status, data := h.send(http.MethodPost, "/api/sessions", contract.RoleInitiator, "", nil)
 	if status != http.StatusCreated {
 		h.t.Fatalf("建会话失败：%d %s", status, data)
@@ -628,7 +631,7 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	if strings.Contains(toolResult.Content[0].Text, h.workspace) {
 		t.Fatalf("工具结果泄露了本地路径：%s", toolResult.Content[0].Text)
 	}
-	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task propose_card]" {
+	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task propose_card list_files read_file use_folder_file]" {
 		t.Fatalf("任务开始后开放的工具：%s", names)
 	}
 }

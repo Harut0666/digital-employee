@@ -2,7 +2,7 @@
 // 人的操作（发消息、确认员工、上传、提交）返回 SessionResult：业务错误也是结果，不抛异常，
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
-import type { PreflightResult, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
+import type { FolderListing, PreflightResult, SessionDetail, SessionResult, SessionSummary, UiRole } from "./types";
 
 export interface SessionApi {
   listSessions(workspaceId?: string): Promise<SessionSummary[]>;
@@ -12,6 +12,10 @@ export interface SessionApi {
   sendMessage(id: string, text: string): Promise<SessionResult>;
   confirmEmployee(id: string, employee: string): Promise<SessionResult>;
   uploadAttachments(id: string, files: File[]): Promise<SessionResult>;
+  /** @ 选择：工作区目录里可选的文件（不列“交付”和“材料”） */
+  listFolderFiles(id: string): Promise<FolderListing>;
+  /** 确认目录里的文件（卡片上的按钮和 @ 选择都走这里）：复制进会话材料，与上传等效 */
+  useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
   /** form 省略时用草稿 */
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */
@@ -67,6 +71,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       for (const file of files) form.append("attachments", file, file.name);
       return act(session(id, "/attachments"), form, false);
     },
+    listFolderFiles: (id) => read<FolderListing>(session(id, "/folder-files"), { headers: { "x-role": getRole() } }),
+    useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),

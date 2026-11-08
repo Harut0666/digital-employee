@@ -345,7 +345,7 @@ func (t *turn) assistantSystem(config *contract.EmployeeConfig) string {
 		for _, attachment := range t.current.attachments {
 			names = append(names, attachment.Name)
 		}
-		lines = append(lines, "- 已上传的材料："+strings.Join(names, "、"))
+		lines = append(lines, "- 已提供的材料："+strings.Join(names, "、"))
 		lines = append(lines, checklistLines(config, t.current)...)
 	}
 	return strings.Join(lines, "\n") + "\n"
@@ -378,7 +378,8 @@ func (t *turn) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(tools, knowledge...), nil
+	// 目录读取工具对所有员工都开放：工作区就是目录，Agent 要能看见里面有什么
+	return append(append(tools, t.folderTools()...), knowledge...), nil
 }
 
 // unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。

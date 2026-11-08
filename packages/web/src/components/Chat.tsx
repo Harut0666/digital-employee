@@ -1,4 +1,5 @@
 import { Prompts, Sender, Welcome } from "@ant-design/x";
+import type { SenderRef } from "@ant-design/x/es/sender/interface";
 import { Alert, Button, Tag } from "antd";
 import { FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -9,6 +10,7 @@ import { deriveStages } from "../view/stages";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
+import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
 import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
 import { StageBar } from "./StageBar";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
@@ -56,11 +58,29 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }>
   );
 }
 
-/** 输入框：发送等完整回复；失败时保留原文。 */
-function ChatInput({ placeholder, disabled, onSend }: { placeholder: string; disabled?: boolean; onSend: (text: string) => Promise<boolean> }) {
+/** 输入框：发送等完整回复；失败时保留原文。@ 选目录文件（T41）：选中即视为人已确认。 */
+function ChatInput({
+  placeholder,
+  disabled,
+  folderFiles = [],
+  onUseFolderFile,
+  onSend,
+}: {
+  placeholder: string;
+  disabled?: boolean;
+  /** 工作区目录里可选的文件（相对路径） */
+  folderFiles?: string[];
+  /** 人用 @ 选中的文件：确认作为材料 */
+  onUseFolderFile?: (path: string) => Promise<void>;
+  onSend: (text: string) => Promise<boolean>;
+}) {
   const { ui } = useUiPreferences();
   const [value, setValue] = useState("");
+  const [caret, setCaret] = useState(0);
   const [sending, setSending] = useState(false);
+  const areaRef = useRef<SenderRef>(null);
+  const word = folderFiles.length > 0 && onUseFolderFile ? atQuery(value, caret) : undefined;
+  const candidates = word === undefined ? [] : filterFolderPaths(folderFiles, word);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
@@ -75,18 +95,50 @@ function ChatInput({ placeholder, disabled, onSend }: { placeholder: string; dis
     }
   };
 
+  /** 选中一个目录文件：把 @词 换成 @路径，并把文件作为材料（与在卡片上确认一样） */
+  const pick = async (path: string) => {
+    if (!onUseFolderFile) return;
+    const next = insertAtPath(value, caret, path);
+    setValue(next.text);
+    setCaret(next.caret);
+    await onUseFolderFile(path);
+    // 光标放回输入框，人可以接着写
+    requestAnimationFrame(() => {
+      const area = areaRef.current?.inputElement ?? areaRef.current;
+      if (!area || typeof (area as HTMLTextAreaElement).setSelectionRange !== "function") return;
+      (area as HTMLTextAreaElement).focus();
+      (area as HTMLTextAreaElement).setSelectionRange(next.caret, next.caret);
+    });
+  };
+
   return (
     <div className="chat-foot">
+      {candidates.length > 0 && (
+        <div className="at-picker" role="listbox" aria-label="工作区目录里的文件">
+          {candidates.slice(0, 20).map((path) => (
+            <button key={path} type="button" role="option" aria-selected={false} className="at-picker-item" onClick={() => void pick(path)}>
+              {path}
+            </button>
+          ))}
+        </div>
+      )}
       <Sender
+        ref={areaRef}
         value={value}
-        onChange={setValue}
-        placeholder={placeholder}
+        onChange={(text, event) => {
+          setValue(text);
+          const element = event?.target as HTMLTextAreaElement | undefined;
+          setCaret(element?.selectionStart ?? text.length);
+        }}
+        placeholder={folderFiles.length > 0 ? `${placeholder}（输入 @ 选目录里的文件）` : placeholder}
         loading={sending}
         disabled={disabled}
         // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
         submitType="enter"
         onSubmit={(text) => void send(text)}
         onKeyDown={(event) => {
+          const textarea = event.target as HTMLTextAreaElement | null;
+          if (textarea && typeof textarea.selectionStart === "number") setCaret(textarea.selectionStart);
           if (event.key !== "Enter") return;
           const ctrl = event.ctrlKey || event.metaKey;
           // Ctrl/Cmd+Enter 始终发送（两种模式一致）
@@ -118,6 +170,7 @@ export function SessionChat({
   artifacts,
   checklist,
   headerExtra,
+  folderFiles,
   onSend,
 }: {
   detail: SessionDetail;
@@ -125,6 +178,8 @@ export function SessionChat({
   subtitle?: string;
   actions: CardActions;
   session: SessionActions;
+  /** 工作区目录里可选的文件（@ 选择）；只读会话和已开工的会话不给 */
+  folderFiles?: string[];
   /** 会话绑定任务时的事件和步骤，用来画状态机和轨迹 */
   events: TaskEvent[];
   steps: StepStatusView[];
@@ -179,6 +234,8 @@ export function SessionChat({
       <ChatInput
         placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
         disabled={detail.readOnly}
+        folderFiles={detail.taskId ? [] : folderFiles}
+        onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
         onSend={onSend}
       />
     </>
