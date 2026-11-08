@@ -3,6 +3,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,12 @@ func writeSessionError(w http.ResponseWriter, err error) {
 		return
 	}
 	if code == contract.ErrModelNotConfigured {
-		writeJSON(w, statusOf(code), preflightResult{Error: code, Message: message, Settings: &modelSettingsEntry})
+		entry := modelSettingsEntry
+		var typed *session.Error
+		if errors.As(err, &typed) && typed.Settings != nil {
+			entry = settingsEntry{Section: typed.Settings.Section, Label: typed.Settings.Label}
+		}
+		writeJSON(w, statusOf(code), preflightResult{Error: code, Message: message, Settings: &entry})
 		return
 	}
 	status, ok := sessionErrorStatus[code]
@@ -51,6 +57,13 @@ func (s *Server) newSessions() *session.Manager {
 		Engine:    s.opts.Engine,
 		Model:     s.opts.Model,
 		Workspace: s.workspaceRegistered,
+		WorkspaceDir: func(id string) string {
+			dir, ok := s.workspaceDir(id)
+			if !ok {
+				return ""
+			}
+			return dir
+		},
 		Employees: func() ([]session.Employee, error) {
 			listed, err := s.listEmployees()
 			if err != nil {
@@ -66,19 +79,26 @@ func (s *Server) newSessions() *session.Manager {
 			return s.opts.LoadEmployee(filepath.Join(s.opts.EmployeesDir, id))
 		},
 		DefaultEmployee: func() string { return settings.Read(s.opts.AppDir).DefaultEmployee },
-		Preflight: func() error {
-			if result := s.preflight(); !result.OK {
-				return &session.Error{Code: result.Error, Message: result.Message}
-			}
-			return nil
+		// 提交前检查按会话模型（Spec 0006“会话模型”）
+		Preflight: s.checkSessionModel,
+		// 会话里选过的模型、新会话沿用的缺省模型：每次都读设置文件（设置页保存后立即生效）
+		ModelSettings: func() contract.ModelSettings { return s.effectiveModels() },
+		SaveLastModel: func(ref contract.ModelRef) error {
+			_, err := settings.Update(s.opts.AppDir, func(doc *contract.SettingsDocument) {
+				copied := ref
+				doc.LastModel = &copied
+			})
+			return err
 		},
 		Execution: func() *contract.ExecutionSettings {
 			execution := settings.Read(s.opts.AppDir).Execution
 			return &execution
 		},
 		Knowledge: knowledge.WithTools(s.knowledge, nil),
-		Filing:    filingSource{server: s},
-		Now:       s.opts.Now,
+		// 前台 Agent 的 read_file 复用工具客户端的文件解析
+		Tools:  s.opts.ToolClient,
+		Filing: filingSource{server: s},
+		Now:    s.opts.Now,
 	})
 }
 
@@ -93,19 +113,128 @@ func (s *Server) sessionRoute(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// handleListSessions 列出会话；?workspaceId= 只列这个工作区的会话（不带时列全部工作区）。
+// handleListSessions 列出会话；?workspaceId= 只列这个工作区的会话（不带时列全部工作区）；
+// ?archived=1 连归档的会话一起列（默认不列）。
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspaceId"))
+	query := r.URL.Query()
+	workspaceID := strings.TrimSpace(query.Get("workspaceId"))
 	if workspaceID != "" && !s.workspaceRegistered(workspaceID) {
 		writeSessionError(w, &session.Error{Code: session.ErrWorkspaceUnknown, Message: "工作区不存在：" + workspaceID})
 		return
 	}
-	views, err := s.sessions.List(workspaceID)
+	views, err := s.sessions.List(workspaceID, truthy(query.Get("archived")))
 	if err != nil {
 		writeSessionError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, views)
+}
+
+// handlePatchSession 人改会话：重命名（title）、归档或取消归档（archived）。
+func (s *Server) handlePatchSession(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	id := r.PathValue("id")
+	var changed bool
+	if raw, present := body["title"]; present {
+		title, ok := raw.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "title 必须是字符串"))
+			return
+		}
+		if _, err := s.sessions.Rename(id, role, title); err != nil {
+			writeSessionError(w, err)
+			return
+		}
+		changed = true
+	}
+	if raw, present := body["archived"]; present {
+		archived, ok := raw.(bool)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "archived 必须是 true 或 false"))
+			return
+		}
+		if _, err := s.sessions.Archive(id, role, archived); err != nil {
+			writeSessionError(w, err)
+			return
+		}
+		changed = true
+	}
+	if !changed {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "没有要改的内容：可以改 title 或 archived"))
+		return
+	}
+	summary, err := s.sessions.SummaryOf(id, role)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session": summary, "statusDot": summary.StatusDot})
+}
+
+// handleRecords 侧栏“记录”tab：所有工作区里已开工的任务，按状态分组（每组都列出来，空的也列）。
+func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	// 状态点按读的人的角色现算（记录本身缓存的是任务和会话，不带角色）
+	records := s.sessions.Records()
+	for index := range records {
+		if records[index].SessionID != "" {
+			records[index].StatusDot = s.sessions.DotFor(records[index].SessionID, role)
+		}
+	}
+	writeJSON(w, http.StatusOK, s.recordsView(records))
+}
+
+// handleListWorkspaces GET /api/workspaces：每个工作区连同它的会话摘要，末尾是“未归属”分组。
+// ?archived=1 连归档的会话一起列。
+func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.workspaceView(role, truthy(r.URL.Query().Get("archived")), true))
+}
+
+// handleOpenWorkspaceFolder POST /api/workspaces/{id}/open：在资源管理器里打开工作区目录。
+func (s *Server) handleOpenWorkspaceFolder(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.workspaceMu.Lock()
+	s.workspaceMu.RLock()
+	dir, found := s.workspaces.dirs[id]
+	s.workspaceMu.RUnlock()
+	if !found {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, "工作区不存在："+id))
+		return
+	}
+	if err := s.opts.OpenFolder(dir); err != nil {
+		writeJSON(w, http.StatusInternalServerError, internalError("打开工作区失败："+err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": dir})
+}
+
+// sessionSummaryOf 会话详情 → 侧栏里的摘要；同时返回按发起人算的状态点。
+// 写操作之后回一份最新摘要，界面不用再读一次工作区列表。
+// truthy 查询参数里表示“是”的写法。
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // handleCreateSession 在某个工作区里开新会话：请求体必须带 workspaceId（单目录模式可以省略）。
@@ -141,6 +270,34 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, view)
+}
+
+// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型。
+// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务运行中再写一条“模型已切换”任务事件。
+func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	connection, _ := body["connection"].(string)
+	model, _ := body["model"].(string)
+	reply, err := s.sessions.SelectModel(r.PathValue("id"), role, connection, model)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleModelOptions GET /api/settings/models：会话里可以选的模型（只列有 Key 的连接和它们列出的模型）。
+func (s *Server) handleModelOptions(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.sessions.ModelOptions())
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -353,7 +510,71 @@ func (s *Server) handleSessionAttachments(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer uploads.cleanup()
-	reply, err := s.sessions.AddAttachments(r.PathValue("id"), role, uploads.attachments)
+	id := r.PathValue("id")
+	workspaceID, err := s.sessions.WorkspaceOf(id)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	reply, err := s.sessions.AddAttachments(id, role, uploads.attachments)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	// 对话里上传的文件同时写一份到 <工作区目录>/材料/，重名加序号；写不进去不影响这次上传，只记一条说明
+	if err := s.sessions.SaveWorkspaceMaterials(workspaceID, uploads.attachments); err != nil {
+		s.logf("warn", "上传的材料写进工作区目录失败：%v", err)
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleListFolderFiles GET /api/sessions/{id}/folder-files：@ 选择用的目录文件列表。
+func (s *Server) handleListFolderFiles(w http.ResponseWriter, r *http.Request) {
+	// 只读列表：任何角色都能看目录里有什么；确认（POST）才只有发起人能做
+	if _, ok := roleOf(r); !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	listing, err := s.sessions.FolderFiles(r.PathValue("id"))
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, listing)
+}
+
+// handleUseFolderFiles POST /api/sessions/{id}/folder-files：人确认（或 @ 选择）目录里的文件，复制进会话材料。
+func (s *Server) handleUseFolderFiles(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	raw, present := body["paths"]
+	if !present {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "缺少 paths：要用的目录文件路径列表"))
+		return
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "paths 必须是字符串数组"))
+		return
+	}
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "paths 必须是字符串数组"))
+			return
+		}
+		paths = append(paths, text)
+	}
+	reply, err := s.sessions.UseFolderFiles(r.PathValue("id"), role, paths)
 	if err != nil {
 		writeSessionError(w, err)
 		return

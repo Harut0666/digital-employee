@@ -112,6 +112,11 @@ var (
 		"query": stringSchema("搜索词"),
 	}, "query")
 
+	// 前台 Agent 的目录读取工具（T41）：路径相对工作区目录，越界由调用方拒绝
+	schemaReadFile = objectSchema(map[string]any{
+		"path": stringSchema("文件在工作区目录里的相对路径"),
+	}, "path")
+
 	schemaAdminSetFaults = objectSchema(map[string]any{
 		"tools": map[string]any{
 			"type":                 "object",

@@ -28,7 +28,9 @@ const (
 	KindToolDenied  = "tool_denied"
 	KindModelFailed = "model_failed"
 
-	kindCreated         = "created"
+	kindCreated = "created"
+	// kindModelSelected 人在会话里选了模型（Spec 0006“会话模型”）；Model 记下选的是哪个
+	kindModelSelected   = "model_selected"
 	kindEmployeeSet     = "employee_set"
 	kindDraftSet        = "draft_set"
 	kindAttachmentAdded = "attachment_added"
@@ -40,6 +42,12 @@ const (
 	// KindTurnText 前台 Agent 一轮里的文字增量：同一轮边到边追加进同一条。一轮结束时另写完整回复；
 	// 读取会话时把它们按轮次还回原来在对话里的位置，所以来晚的客户端也能逐字看到已经说出的部分。
 	KindTurnText = "turn_text"
+	// kindRename 人改了会话标题
+	kindRename = "rename"
+	// kindArchive 人归档或取消归档会话
+	kindArchive = "archive"
+	// kindRead 人打开了会话：写到最后一个已读的消息序号（UpTo）
+	kindRead = "read"
 )
 
 // Attachment 暂存在会话里的一份材料，提交时才复制进任务。
@@ -70,21 +78,33 @@ type Message struct {
 	// WorkspaceID 只在第一行（created）里：会话属于哪个工作区
 	WorkspaceID string         `json:"workspaceId,omitempty"`
 	Employee    string         `json:"employee,omitempty"`
-	TaskID     string         `json:"taskId,omitempty"`
-	Draft      map[string]any `json:"draft,omitempty"`
-	Attachment *Attachment    `json:"attachment,omitempty"`
+	TaskID      string         `json:"taskId,omitempty"`
+	Draft       map[string]any `json:"draft,omitempty"`
+	Attachment  *Attachment    `json:"attachment,omitempty"`
+	// ConfirmedPath 这份材料是人在哪张“使用目录文件”卡片上确认的（目录里的相对路径）
+	ConfirmedPath string `json:"confirmedPath,omitempty"`
 	// Item 开工清单项的 id
 	Item string `json:"item,omitempty"`
 	// Turn 前台 Agent 回复的轮次编号（T40）：一轮结束时写入的消息都带着它。
 	// 文字增量在事件流里推给前端，但会话读取按日志重画对话，所以增量也按轮次记一份，
 	// 来晚的客户端和重连之后的客户端能看到完整的那一轮。
 	Turn int64 `json:"turn,omitempty"`
+	// Model 会话模型：model_selected 选的是哪个；selected 为 true 表示会话里明确选过
+	Model    *contract.ModelRef `json:"model,omitempty"`
+	Selected bool               `json:"selected,omitempty"`
+	// Title 人给会话起的标题（rename）
+	Title string `json:"title,omitempty"`
+	// Archived 会话是否归档（archive）
+	Archived bool `json:"archived,omitempty"`
+	// UpTo 已读到哪一条消息（read）
+	UpTo int64 `json:"upTo,omitempty"`
 }
 
 // visible 读取历史时是否返回（状态变更已体现在会话字段上）。
 func (m Message) visible() bool {
 	switch m.Kind {
-	case kindCreated, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped, KindTurnText:
+	case kindCreated, kindModelSelected, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped,
+		kindRename, kindArchive, kindRead, KindTurnText:
 		return false
 	}
 	return true
@@ -107,6 +127,14 @@ type record struct {
 	filingFailed bool
 	// skipped 发起人确认跳过的清单项
 	skipped map[string]bool
+	// model 会话里最后一次选的模型；nil 表示没选过，沿用设置的 lastModel
+	model *contract.ModelRef
+	// title 人改过的标题；空串表示取第一句话
+	title string
+	// archived 归档的会话默认不在列表里出现
+	archived bool
+	// readUpTo 已读到哪一条消息：最后一条消息的序号比它大就是有新消息
+	readUpTo int64
 }
 
 func (r *record) apply(message Message) {
@@ -118,6 +146,8 @@ func (r *record) apply(message Message) {
 	switch message.Kind {
 	case kindCreated:
 		r.workspaceID = message.WorkspaceID
+	case kindModelSelected:
+		r.model = message.Model
 	case kindEmployeeSet:
 		r.employee = message.Employee
 	case kindDraftSet:
@@ -132,6 +162,17 @@ func (r *record) apply(message Message) {
 	case kindFilingDrafted:
 		r.filingDraft = message.Text
 		r.filingFailed = message.Text == ""
+	case kindRename:
+		r.title = message.Title
+	case kindArchive:
+		r.archived = message.Archived
+	case kindRead:
+		// 只有已读之后又来新消息，或者读的位置往前移（读取时补写的已读反过来），才动记录时间：
+		// 打开会话不该把会话排到最前面
+		if message.UpTo > r.lastSeq() || message.UpTo < r.readUpTo {
+			r.updatedAt = recentUpdatedAt(r.messages)
+		}
+		r.readUpTo = message.UpTo
 	case kindAttachmentAdded:
 		if message.Attachment == nil {
 			return
@@ -144,6 +185,24 @@ func (r *record) apply(message Message) {
 		}
 		r.attachments = append(r.attachments, *message.Attachment)
 	}
+}
+
+// recentUpdatedAt 不算已读的那条，最近一次有内容的更新时间。
+func recentUpdatedAt(messages []Message) string {
+	for index := len(messages) - 1; index >= 0; index-- {
+		if messages[index].Kind != kindRead {
+			return messages[index].TS
+		}
+	}
+	return ""
+}
+
+// lastSeq 最后一条消息的序号。
+func (r *record) lastSeq() int64 {
+	if len(r.messages) == 0 {
+		return 0
+	}
+	return r.messages[len(r.messages)-1].Seq
 }
 
 // spoken 是否已有人说过话。
@@ -372,17 +431,48 @@ func (s *store) saveAttachment(id string, file contract.AttachmentInput) (int64,
 	return io.Copy(out, source)
 }
 
-// ids 应用目录里全部会话的 ID。
-func (s *store) ids() []string {
-	entries, err := os.ReadDir(s.dir)
+// note 顺手在会话日志里留一条说明；会话不存在或写不进去时什么也不做。
+func (s *store) note(id string, text string) error {
+	current, err := s.read(id)
+	if err != nil || current == nil {
+		return err
+	}
+	_, err = s.append(id, Message{Kind: KindNotice, Text: text})
+	return err
+}
+
+// entry 应用目录里的一个会话。
+type entry struct {
+	ID string
+	// ModTime 会话目录的修改时间（列表时用来判断要不要重读）
+	ModTime time.Time
+}
+
+// entries 应用目录里全部会话。
+func (s *store) entries() []entry {
+	dirs, err := os.ReadDir(s.dir)
 	if err != nil {
 		return nil
 	}
-	out := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			out = append(out, entry.Name())
+	out := make([]entry, 0, len(dirs))
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
 		}
+		item := entry{ID: dir.Name()}
+		if info, err := dir.Info(); err == nil {
+			item.ModTime = info.ModTime()
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// ids 应用目录里全部会话的 ID。
+func (s *store) ids() []string {
+	out := []string{}
+	for _, item := range s.entries() {
+		out = append(out, item.ID)
 	}
 	return out
 }

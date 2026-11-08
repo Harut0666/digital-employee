@@ -304,6 +304,17 @@ func (r *Registry) Call(name string, args any) (contract.ToolCallResult, error) 
 		}
 		return contract.ToolCallResult{OK: true, Data: out}, nil
 
+	case contract.ToolReadFile:
+		var input contract.ReadFileInput
+		if err := decodeArgs(args, &input); err != nil {
+			return decodeFailure(name, err), nil
+		}
+		out, err := ReadFile(input.Path)
+		if err != nil {
+			return failure(name, err), nil
+		}
+		return contract.ToolCallResult{OK: true, Data: out}, nil
+
 	case contract.ToolRenderReportDocx:
 		var input contract.RenderReportInput
 		if err := decodeArgs(args, &input); err != nil {
@@ -362,6 +373,11 @@ func (r *Registry) ListTools() ([]contract.ToolDescriptor, error) {
 			Name:        contract.ToolRenderReportDocx,
 			Description: "生成 Word 周报（标题、章节、核心指标表、至少 2 张图）；同一幂等键的文件已存在则直接返回。",
 			InputSchema: schemaRenderReport,
+		},
+		{
+			Name:        contract.ToolReadFile,
+			Description: "把工作区目录里的一个文件读成文本（csv、xlsx、docx、txt、md），超过 2 万字截断。",
+			InputSchema: schemaReadFile,
 		},
 		{
 			Name:        contract.ToolWebSearch,

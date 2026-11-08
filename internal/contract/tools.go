@@ -18,13 +18,28 @@ const (
 	ToolKBSearch = "kb_search"
 	// ToolKBRead 按条目 ID 读知识库正文
 	ToolKBRead = "kb_read"
+	// ToolReadFile 读工作区目录里的一个文件（csv、xlsx、docx、txt、md），T41
+	ToolReadFile = "read_file"
 )
 
 // ToolNames 全部工具名。
 var ToolNames = []string{
 	ToolValidateSubmission, ToolLoadSales, ToolComputeMetrics, ToolDetectContradictions,
 	ToolParseMinutes, ToolRenderReportDocx, ToolQueryTask, ToolWebSearch, ToolAdminSetFaults,
-	ToolKBSearch, ToolKBRead,
+	ToolKBSearch, ToolKBRead, ToolReadFile,
+}
+
+// ---- read_file ----
+
+// ReadFileInput read_file 的入参：工作区目录里的相对路径。
+type ReadFileInput struct {
+	Path string `json:"path"`
+}
+
+// ReadFileOutput 读到的正文；超过 2 万字截断并标明。
+type ReadFileOutput struct {
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // AttachmentRef 工作区内的附件引用。

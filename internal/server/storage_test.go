@@ -123,8 +123,7 @@ func TestWorkspacesShareOneSetOfSettings(t *testing.T) {
 		doc.Connections = []contract.ModelConnection{{
 			Name: "测试连接", BaseURL: "http://127.0.0.1:9/v1", APIKey: "sk-t36-test", Models: []string{"m1"},
 		}}
-		doc.DefaultConnection = "测试连接"
-		doc.DefaultModel = "m1"
+		doc.LastModel = &contract.ModelRef{Connection: "测试连接", Model: "m1"}
 	}); err != nil {
 		t.Fatalf("写应用目录设置失败：%v", err)
 	}
@@ -138,8 +137,9 @@ func TestWorkspacesShareOneSetOfSettings(t *testing.T) {
 		if created.WorkspaceID != id {
 			t.Fatalf("会话应记下工作区 %s：%+v", id, created)
 		}
-		if !h.preflightOK() {
-			t.Fatalf("工作区 %s 应共用应用目录里的设置，提交前检查应通过", id)
+		// 设置里没选过模型、连接有 Key：提交前检查按缺省模型通过
+		if reply := h.preflight(); !reply.OK {
+			t.Fatalf("工作区 %s 应共用应用目录里的设置，提交前检查应通过：%+v", id, reply)
 		}
 	}
 	// 设置文件只在应用目录里
@@ -149,18 +149,6 @@ func TestWorkspacesShareOneSetOfSettings(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.workA, "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("工作区目录里不应有设置：%v", err)
 	}
-}
-
-// preflightOK GET /api/preflight 是否通过。
-func (h *harness) preflightOK() bool {
-	h.t.Helper()
-	status, data := h.send(http.MethodGet, "/api/preflight", "", "", nil)
-	if status != http.StatusOK {
-		h.t.Fatalf("提交前检查失败：%d %s", status, data)
-	}
-	return decode[struct {
-		OK bool `json:"ok"`
-	}](h.t, data).OK
 }
 
 func TestSessionsAreFilteredByWorkspace(t *testing.T) {
@@ -230,8 +218,7 @@ func TestTaskCreatedRecordsTheWorkspace(t *testing.T) {
 		doc.Connections = []contract.ModelConnection{{
 			Name: "测试连接", BaseURL: "http://127.0.0.1:9/v1", APIKey: "sk-t36-test", Models: []string{"m1"},
 		}}
-		doc.DefaultConnection = "测试连接"
-		doc.DefaultModel = "m1"
+		doc.LastModel = &contract.ModelRef{Connection: "测试连接", Model: "m1"}
 	}); err != nil {
 		t.Fatalf("写应用目录设置失败：%v", err)
 	}

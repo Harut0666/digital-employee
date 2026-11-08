@@ -151,6 +151,14 @@ func (p *ScriptedProvider) Requests() []ScriptedRequest {
 	return append([]ScriptedRequest(nil), p.requests...)
 }
 
+// SetScript 换一份剧本，游标从 0 开始（测试用：路径要等工作区建好才定得下来）。
+func (p *ScriptedProvider) SetScript(script ModelScript) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.script = script
+	p.cursors = map[string]int{}
+}
+
 // Resolve 取某个步骤的模型与 stream 函数。
 func (p *ScriptedProvider) Resolve(stepID string, ref *contract.ModelRef) (*ResolvedStepModel, error) {
 	thinking := ""

@@ -51,6 +51,15 @@ const defaultFactsStep = "compute_metrics"
 // contradictionsTool 用这个工具的计算步骤输出纪要矛盾，供“纪要矛盾覆盖”质检使用。
 const contradictionsTool = "detect_contradictions"
 
+// modelPointer 空的模型引用写成 nil（字段省略）。
+func modelPointer(ref contract.ModelRef) *contract.ModelRef {
+	if ref.Connection == "" && ref.Model == "" {
+		return nil
+	}
+	copied := ref
+	return &copied
+}
+
 // SimulatedCrash 模拟进程被杀：崩溃注入命中时返回。返回之后这个引擎实例不再写任何事件。
 type SimulatedCrash struct {
 	StepID string
@@ -81,6 +90,8 @@ type Deps struct {
 	EmployeesDir string
 	ToolClient   contract.ToolClient
 	Model        agent.ModelProvider
+	// DefaultModel 步骤没写死模型时的缺省模型（设置的 lastModel）；为空时由提供者自己的缺省值决定
+	DefaultModel contract.ModelRef
 	// Now 可注入的时钟（测试用）
 	Now func() time.Time
 	// Faults 运行时可变故障开关（服务端与引擎共享同一对象）
@@ -90,6 +101,10 @@ type Deps struct {
 	// ConfigFallback 任务目录里的员工配置副本读不出来时，按员工 id 另找一个配置目录（Spec 0006 应用目录模式
 	// 下，员工配置在应用目录的 employees/ 里，任务目录里的副本与之同名）。nil 时不找。
 	ConfigFallback func(employeeID string) (string, bool)
+	// Workspaces 工作区 ID → 目录（Spec 0006、T42）：每个版本送审时把交付物复制到
+	// <目录>/交付/ 下。nil，或者任务没有记下工作区、工作区也查不到目录时，不写交付文件夹。
+	// 单目录模式的目录同时是应用目录，不在这里登记，所以单目录模式也不写。
+	Workspaces func(workspaceID string) (string, bool)
 }
 
 // Options 测试可注入的内部实现；生产环境不传，使用 agent / qc 的默认实现。
@@ -105,6 +120,8 @@ type Engine struct {
 	tasksDir     string
 	toolClient   contract.ToolClient
 	model        agent.ModelProvider
+	// defaultModel 步骤没写死模型时的缺省模型（保存设置后的会话模型，Spec 0006）
+	defaultModel contract.ModelRef
 	now          func() time.Time
 	faults       *contract.FaultHooks
 	exitOnCrash  bool
@@ -113,6 +130,8 @@ type Engine struct {
 	qcEngine qcEngine
 	// configFallback 任务目录副本读不出来时的员工配置来源（见 Deps.ConfigFallback）
 	configFallback func(employeeID string) (string, bool)
+	// workspaces 工作区 ID → 目录，写交付文件夹用（见 Deps.Workspaces）
+	workspaces func(workspaceID string) (string, bool)
 
 	mu       sync.Mutex
 	runtimes map[string]*taskRuntime
@@ -161,6 +180,7 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		tasksDir:     filepath.Join(dir, "tasks"),
 		toolClient:   toolClient,
 		model:        deps.Model,
+		defaultModel: deps.DefaultModel,
 		now:          now,
 		faults:       faults,
 		exitOnCrash:  deps.ExitOnCrash,
@@ -169,6 +189,7 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		runtimes:     map[string]*taskRuntime{},
 
 		configFallback: deps.ConfigFallback,
+		workspaces:     deps.Workspaces,
 	}
 	if engine.judgment == nil {
 		engine.judgment = agent.NewJudgmentRunner(agent.RunnerOptions{Execution: engine.executionDefaults})
@@ -197,6 +218,61 @@ func (e *Engine) modelProvider() agent.ModelProvider {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.model
+}
+
+// SetDefaultModel 换掉步骤没写死模型时用的缺省模型（保存设置后的会话模型）。
+func (e *Engine) SetDefaultModel(ref contract.ModelRef) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.defaultModel = ref
+}
+
+func (e *Engine) defaultModelRef() contract.ModelRef {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.defaultModel
+}
+
+// SetTaskModel 换掉一个任务的会话模型（Spec 0006“会话模型”），从下一个判断步骤开始生效。
+//
+// 正在进行的模型调用不中断：判断步骤开始时才读任务当前的模型。
+// 只在任务还没结束、模型确实变了的时候写一条“模型已切换”事件；任务已结束或不存在时什么也不做。
+func (e *Engine) SetTaskModel(taskID string, ref contract.ModelRef) error {
+	rt := e.openRuntime(taskID)
+	if rt == nil {
+		return fmt.Errorf("任务 %s 不存在", taskID)
+	}
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.proj.Model != nil && *rt.proj.Model == ref {
+		return nil
+	}
+	if contract.IsTerminal(rt.proj.State) {
+		return nil
+	}
+	event := contract.TaskEvent{Type: contract.EventModelSwitched, Model: &ref}
+	if rt.proj.Model != nil && ref != (contract.ModelRef{}) {
+		from := *rt.proj.Model
+		event.FromModel = &from
+	}
+	return e.appendLocked(rt, event)
+}
+
+// SetWorkspaces 替换工作区表（工作区登记变化后调用，写交付物时据此找目录）。
+func (e *Engine) SetWorkspaces(resolve func(workspaceID string) (string, bool)) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.workspaces = resolve
+}
+
+func (e *Engine) workspaceDir(workspaceID string) (string, bool) {
+	e.mu.Lock()
+	resolve := e.workspaces
+	e.mu.Unlock()
+	if resolve == nil || workspaceID == "" {
+		return "", false
+	}
+	return resolve(workspaceID)
 }
 
 // ---------------------------------------------------------------- 运行时
@@ -1158,6 +1234,14 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 	}
 	deadline := time.UnixMilli(e.now().UnixMilli() + available)
 
+	// 任务当前的会话模型：每个判断步骤开始时读一次，运行中切换的模型从这里生效（Spec 0006）
+	taskModel := view(rt, func(p *projection) contract.ModelRef {
+		if p.Model != nil {
+			return *p.Model
+		}
+		return contract.ModelRef{}
+	})
+
 	var crashErr error
 	result, runErr := e.judgment.Run(agent.JudgmentInput{
 		TaskID:       rt.id,
@@ -1167,6 +1251,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		Corrections:  corrections,
 		ToolClient:   e.toolClient,
 		Model:        e.modelProvider(),
+		ModelRef:     &taskModel,
 		OutputSchema: outputSchema,
 		Budget:       agent.Budget{RemainingModelCalls: remaining, Deadline: deadline},
 		Replay:       replay,
@@ -1184,6 +1269,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 				if err := e.append(rt, contract.TaskEvent{
 					Type: contract.EventModelCalled, StepID: step.ID, Turn: contract.IntPtr(event.Turn),
 					Response: event.Response, Usage: event.Usage, DurationMS: contract.Int64Ptr(event.DurationMS),
+					Connection: event.Connection, ModelName: event.Model,
 				}); err != nil {
 					crashErr = err
 					return err
@@ -1496,11 +1582,16 @@ func (e *Engine) finishQcPassed(rt *taskRuntime, checks []contract.QcCheckResult
 		return err
 	}
 	// Options 写进事件后属于 A-01 对拍基准，这里保持原样；快照读取时按 availableActions 重算
-	return e.transition(rt, contract.TriggerQcPassed, contract.RoleSystem, &contract.PauseReason{
+	if err := e.transition(rt, contract.TriggerQcPassed, contract.RoleSystem, &contract.PauseReason{
 		Code:    contract.PauseAwaitingReview,
 		Message: "已通过质检，等待审核人决定。",
 		Options: []string{contract.CmdApprove, contract.CmdReturn},
-	})
+	}); err != nil {
+		return err
+	}
+	// 进入待审核后，这一版在所属工作区目录的“交付”文件夹里留一份（T42）。写不进去不影响任务，只记一条说明
+	e.fileDeliverables(rt)
+	return nil
 }
 
 type qcRecord struct {
@@ -1625,8 +1716,13 @@ func corruptFirstParagraph(output any) any {
 // ---------------------------------------------------------------- 任务目录与附件
 
 func uniquePath(dir, name string) string {
+	return uniquePathFrom(dir, name, 2)
+}
+
+// uniquePathFrom 同名文件已存在时，从 from 开始找 <名字>-<序号>.<扩展名>。
+func uniquePathFrom(dir, name string, from int) string {
 	candidate := filepath.Join(dir, name)
-	for index := 2; ; index++ {
+	for index := from; ; index++ {
 		if _, err := os.Stat(candidate); os.IsNotExist(err) {
 			return candidate
 		}
@@ -1756,9 +1852,17 @@ func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot,
 	if form == nil {
 		form = map[string]any{}
 	}
+	// 发起事件记下任务的会话模型：之后运行中换模型，从“模型已切换”事件接上。
+	// 调用方没给时（命令行等）用引擎的缺省模型；两个都为空就不写（剧本模式）。
+	model := input.Model
+	if model.Connection == "" && model.Model == "" {
+		model = e.defaultModel
+	}
+	rt.proj.Model = modelPointer(model)
 	if err := e.append(rt, contract.TaskEvent{
 		Type: contract.EventTaskCreated, Employee: input.Employee, ConfigHash: cfg.Hash,
 		Form: form, Attachments: refs, WorkspaceID: input.WorkspaceID,
+		Model: modelPointer(model),
 	}); err != nil {
 		return nil, err
 	}

@@ -176,11 +176,14 @@ type QCConfig struct {
 
 // 开工清单的判定来源。
 const (
-	ChecklistSourceUpload = "upload" // 会话里上传了扩展名符合 accept 的文件
-	ChecklistSourceField  = "field"  // 表单字段已填写
+	// ChecklistSourceMaterial “已提供材料”（T41）：会话材料里有扩展名符合 accept 的文件，上传的和从目录确认的都算
+	ChecklistSourceMaterial = "material"
+	// ChecklistSourceUpload 旧写法，与 material 等价（配置 source: upload 保持兼容）
+	ChecklistSourceUpload = "upload"
+	ChecklistSourceField  = "field" // 表单字段已填写
 )
 
-// ChecklistItem 开工清单的一项（checklist.yaml）。只判定“文件是否已上传、必填项是否已填写”，
+// ChecklistItem 开工清单的一项（checklist.yaml）。只判定“材料是否已提供、必填项是否已填写”，
 // 内容对不对（周次、工作表）由准入校验检查。
 type ChecklistItem struct {
 	ID    string `json:"id" yaml:"id"`
@@ -188,7 +191,7 @@ type ChecklistItem struct {
 	// Required 必需项不齐不能开工；否则是可跳过项，由人确认跳过
 	Required bool   `json:"required" yaml:"required"`
 	Source   string `json:"source" yaml:"source"`
-	// Accept source=upload 时认哪些扩展名，如 [".xlsx", ".csv"]
+	// Accept source=material（或旧的 upload）时认哪些扩展名，如 [".xlsx", ".csv"]
 	Accept []string `json:"accept,omitempty" yaml:"accept,omitempty"`
 	// Field source=field 时看哪个表单字段
 	Field string `json:"field,omitempty" yaml:"field,omitempty"`

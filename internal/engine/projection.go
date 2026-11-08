@@ -40,6 +40,8 @@ type projection struct {
 	Employee    string
 	// WorkspaceID 任务属于哪个工作区（取自发起事件）
 	WorkspaceID string
+	// Model 任务当前的会话模型（发起事件给出，之后由“模型已切换”更新，Spec 0006）；nil 表示没记录
+	Model *contract.ModelRef
 	ConfigHash  string
 	Form        map[string]any
 	Attachments []contract.AttachmentRef
@@ -193,10 +195,17 @@ func (p *projection) Apply(event contract.TaskEvent) {
 	case contract.EventTaskCreated:
 		p.Employee = event.Employee
 		p.WorkspaceID = event.WorkspaceID
+		if event.Model != nil {
+			p.Model = event.Model
+		}
 		p.ConfigHash = event.ConfigHash
 		p.Form = event.Form
 		p.Attachments = event.Attachments
 		p.CreatedTS = event.TS
+	case contract.EventModelSwitched:
+		if event.Model != nil {
+			p.Model = event.Model
+		}
 	case contract.EventFormUpdated:
 		p.Form = event.Form
 		p.Attachments = event.Attachments
@@ -403,6 +412,7 @@ func (p *projection) Snapshot(taskID string, nowMS int64) contract.TaskSnapshot 
 		QC:           p.QC,
 		Deliverables: deliverables,
 		LastSeq:      p.LastSeq,
+		Model:        p.Model,
 		Actions:      actions,
 		WaitingFor:   waitingForRoles(p.State, actions),
 		Versions:     p.Versions(),

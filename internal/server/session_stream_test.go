@@ -43,7 +43,9 @@ type agentStream struct {
 	mu     sync.Mutex
 	seen   []agentEvent
 	done   chan struct{}
-	cancel func()
+	// started 读的协程已经开始收事件
+	started chan struct{}
+	cancel  func()
 }
 
 func (s *agentStream) close() {
@@ -74,10 +76,13 @@ func (h *harness) openStream(id string) *agentStream {
 	}
 	stream := &agentStream{
 		t: h.t, session: id, events: make(chan agentEvent, 256), done: make(chan struct{}),
+		// 订阅之后服务端才开始补发和推送：读的协程起来之前事件先攒在这里，一条都不丢
+		started: make(chan struct{}),
 		cancel: func() { cancel(); response.Body.Close() },
 	}
 	go func() {
 		defer close(stream.done)
+		close(stream.started)
 		defer close(stream.events)
 		reader := bufio.NewReader(response.Body)
 		name := ""
@@ -118,6 +123,8 @@ func (h *harness) openStream(id string) *agentStream {
 // next 等下一条事件，超时算测试失败。
 func (s *agentStream) next() agentEvent {
 	s.t.Helper()
+	// 读的协程起来之前不收事件：这样发消息之后再调用 next 也能从这一轮的第一条读起
+	<-s.started
 
 	select {
 	case event, ok := <-s.events:
@@ -442,7 +449,7 @@ func TestStopKeepsWhatWasSaidAndCancelsTheRest(t *testing.T) {
 	), withModel(func(inner agent.ModelProvider) agent.ModelProvider {
 		held.inner = inner
 		return held
-	}))
+	}), withScriptedModel())
 	opened, _ := pausedSession(h)
 	stream := h.openStream(opened.ID)
 	defer stream.close()

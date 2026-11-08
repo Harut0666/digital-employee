@@ -19,6 +19,9 @@ const session = (messages: SessionMessage[], patch: Partial<SessionDetail> = {})
   createdAt: "2026-11-02T09:00:00.000Z",
   updatedAt: "2026-11-02T09:10:00.000Z",
   waitingFor: [],
+  statusDot: "waiting",
+  unread: false,
+  archived: false,
   messages,
   ...patch,
 });
@@ -185,6 +188,7 @@ describe("deriveChat", () => {
     const items = deriveChat(
       session([msg({ kind: "user", role: "initiator", text: "出周报" })], { status: "drafting", employee: "weekly-report" }),
       undefined,
+      [],
       {
         turn: 2,
         text: "先看看任务",
@@ -201,8 +205,8 @@ describe("deriveChat", () => {
 
   test("没在说的时候不显示空的行；只发了工具调用也照常列出", () => {
     const base = session([msg({ kind: "user", role: "initiator", text: "出周报" })], { status: "drafting", employee: "weekly-report" });
-    expect(deriveChat(base, undefined, { turn: 1, text: "", tools: [] }).map((i) => i.kind)).toEqual(["user"]);
+    expect(deriveChat(base, undefined, [], { turn: 1, text: "", tools: [] }).map((i) => i.kind)).toEqual(["user"]);
     expect(deriveChat(base).map((i) => i.kind)).toEqual(["user"]);
-    const calling = deriveChat(base, undefined, { turn: 1, text: "", tools: [{ id: "c1", tool: "fill_form_draft", ended: false }] });
+    const calling = deriveChat(base, undefined, [], { turn: 1, text: "", tools: [{ id: "c1", tool: "fill_form_draft", ended: false }] });
     expect(calling.map((i) => i.kind)).toEqual(["user", "tools"]);
   });});

@@ -35,7 +35,7 @@ func firstTextLine(t *testing.T, path string) string {
 	return ""
 }
 
-// 人在设置里把连接的模型换掉以后，任务要用新模型；“测试连接”能通过的模型，任务也必须能用。
+// 人在设置里把连接的模型换掉、在会话里选了它以后，任务要用新模型；“测试连接”能通过的模型，任务也必须能用。
 func TestRunUsesTheModelTheConnectionNowLists(t *testing.T) {
 	service := newFakeModelService(t, caseScript(t, "A-01"), 0, 0)
 	h := newHarness(t, nil, withModelConnection(connectionTo(service.server.URL, 0)))
@@ -45,8 +45,11 @@ func TestRunUsesTheModelTheConnectionNowLists(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("保存连接失败：%d %s", status, data)
 	}
-	task := h.createTask(a01Files(t))
-	expectState(t, h.command(task.ID, initiator, cmd(contract.CmdSubmit)), contract.StateAwaitingReview)
+	// T39：任务从会话发起，会话模型就是连接现在列出的 model-v2
+	session := h.openedSession()
+	h.setModel(session.ID, "fake", "model-v2")
+	reply := h.submit(session.ID, week44Form)
+	expectState(t, h.settled(reply.Session.TaskID), contract.StateAwaitingReview)
 
 	if len(service.bodies) == 0 {
 		t.Fatal("任务没有调用模型")

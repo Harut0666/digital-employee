@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createMockApi } from "../src/api/mock";
-import type { SessionAgentEvent, UiRole } from "../src/api/types";
+import type { MockWebApi, SessionAgentEvent, UiRole } from "../src/api/types";
 
 const asRole = (initial: UiRole) => {
   let role = initial;
@@ -164,6 +164,31 @@ describe("模拟数据模式的会话", () => {
     expect(await api.submitSession(created.id)).toMatchObject({ ok: false, error: "employee_required" });
     setRole("reviewer");
     expect(await api.confirmEmployee(created.id, "weekly-report")).toMatchObject({ ok: false, error: "forbidden_role" });
+  });
+
+  test("侧栏：会话带状态点，旧任务会话归到我的工作区；记录 tab 按状态分组", async () => {
+    const { api: web } = asRole("initiator");
+    const api = web as MockWebApi;
+    await api.createSession();
+    const summaries = await api.all();
+    const legacy = summaries.find((s) => s.id === "task-mock-43");
+    expect(legacy).toMatchObject({ workspaceId: "ws-demo", workspaceName: "我的工作区", statusDot: "idle", archived: false });
+    expect(summaries.every((s) => ["waiting", "running", "done", "idle"].includes(s.statusDot))).toBe(true);
+    const items = await api.records("initiator");
+    const group = (key: string) => items.filter((i) => i.group === key).map((i) => i.taskId);
+    expect(group("review")).toContain("mock-43");
+    expect(group("delivered")).toContain("mock-42");
+    expect(group("supplement")).toContain("mock-45");
+    expect(items.find((i) => i.taskId === "mock-43")?.workspaceName).toBe("我的工作区");
+  });
+
+  test("会话可以重命名、归档：归档后默认不列，带 archived 才列", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    expect((await api.updateSession(created.id, { title: "第 44 周华东周报" })).title).toBe("第 44 周华东周报");
+    await api.updateSession(created.id, { archived: true });
+    expect((await api.listSessions()).some((s) => s.id === created.id)).toBe(false);
+    expect((await api.listSessions(undefined, { archived: true })).find((s) => s.id === created.id)?.archived).toBe(true);
   });
 
   test("会话列表合并新会话和种子任务的只读会话，任务只出现一次", async () => {

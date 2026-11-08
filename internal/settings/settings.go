@@ -35,10 +35,11 @@ var DefaultConnections = []contract.ModelConnection{
 }
 
 // knownTopLevelKeys 由本模块认识的顶层键；其余键进 Extra 原样保留。
+// defaultConnection / defaultModel 是旧文档的键：读时换算成 lastModel，写出时不再出现。
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "revision": true, "connections": true, "defaultConnection": true,
-	"defaultModel": true, "defaultEmployee": true, "demo": true, "ui": true, "execution": true,
-	"diagnostics": true, "permissions": true,
+	"defaultModel": true, "lastModel": true, "defaultEmployee": true, "demo": true, "ui": true,
+	"execution": true, "diagnostics": true, "permissions": true,
 }
 
 var faultModes = map[string]bool{"timeout": true, "error": true, "invalid_output": true}
@@ -46,11 +47,31 @@ var faultModes = map[string]bool{"timeout": true, "error": true, "invalid_output
 // Env 读取环境变量（服务端/CLI 可注入）；nil 时用进程环境。
 type Env map[string]string
 
+// processEnv 进程环境在启动时读一份：之后按它查，不再去读（测试改了进程变量也不会串到别的测试）。
+var processEnv = os.Environ()
+
+// ResetProcessEnv 重新读进程环境（测试换了 DEEPSEEK_API_KEY 时用）。
+func ResetProcessEnv() { processEnv = os.Environ() }
+
 func (e Env) get(key string) string {
 	if e != nil {
-		return e[key]
+		// 注入的 Env 里没有这个变量时按进程环境算（服务端只注入 DE_*，DEEPSEEK_API_KEY 仍从进程读）
+		if value, ok := e[key]; ok {
+			return strings.TrimSpace(value)
+		}
+		return os.Getenv(key)
 	}
-	return os.Getenv(key)
+	// 有的平台把环境变量名写成大写，也按大写查一次
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	prefix := key + "="
+	for _, entry := range processEnv {
+		if strings.HasPrefix(entry, prefix) {
+			return strings.TrimPrefix(entry, prefix)
+		}
+	}
+	return ""
 }
 
 // Path settings.json 的完整路径（dir 是应用目录；单目录模式下它就是工作区目录）。
@@ -287,6 +308,33 @@ func normalizeModelOptions(v any) (map[string]contract.ModelOptions, bool) {
 	return out, true
 }
 
+// normalizeLastModel 读 lastModel；旧文档（有 defaultConnection / defaultModel、没有 lastModel）换算成它。
+// 两者都有时以 lastModel 为准；形状不完整（缺连接或模型）时忽略。
+func normalizeLastModel(raw map[string]any) *contract.ModelRef {
+	if m, ok := isRecord(raw["lastModel"]); ok {
+		connection, _ := m["connection"].(string)
+		model, _ := m["model"].(string)
+		if strings.TrimSpace(connection) != "" && strings.TrimSpace(model) != "" {
+			return &contract.ModelRef{Connection: connection, Model: model}
+		}
+	}
+	if model, ok := raw["defaultModel"].(string); ok && strings.TrimSpace(model) != "" {
+		// 旧文档没写默认连接时，它的语义就是第一个连接
+		connectionName, _ := raw["defaultConnection"].(string)
+		if strings.TrimSpace(connectionName) == "" {
+			if list, ok := raw["connections"].([]any); ok && len(list) > 0 {
+				if first, ok := normalizeConnection(list[0]); ok {
+					connectionName = first.Name
+				}
+			}
+		}
+		if strings.TrimSpace(connectionName) != "" {
+			return &contract.ModelRef{Connection: connectionName, Model: model}
+		}
+	}
+	return nil
+}
+
 func normalizeConnection(v any) (contract.ModelConnection, bool) {
 	m, ok := isRecord(v)
 	if !ok {
@@ -352,30 +400,6 @@ func normalizeDemo(v any) contract.DemoSettings {
 	return demo
 }
 
-// reconcileDefaults 让默认连接和默认模型始终指向真实存在的配置：
-// 默认连接不在列表里时取第一个连接；默认模型不在默认连接的模型列表里时取列表第一个。
-// 否则人改了连接的模型后，“测试连接”用的是新模型，任务却还用旧的默认模型。
-func reconcileDefaults(doc *contract.SettingsDocument) {
-	var current *contract.ModelConnection
-	for index := range doc.Connections {
-		if doc.Connections[index].Name == doc.DefaultConnection {
-			current = &doc.Connections[index]
-			break
-		}
-	}
-	if current == nil {
-		if len(doc.Connections) == 0 {
-			return
-		}
-		current = &doc.Connections[0]
-		doc.DefaultConnection = current.Name
-	}
-	if len(current.Models) == 0 || slices.Contains(current.Models, doc.DefaultModel) {
-		return
-	}
-	doc.DefaultModel = current.Models[0]
-}
-
 // Normalize 把任意形状的 settings.json 归一化成 v2 文档（v1 → v2 的迁移也在这里）。
 func Normalize(raw map[string]any) contract.SettingsDocument {
 	doc := contract.SettingsDocument{}
@@ -397,21 +421,7 @@ func Normalize(raw map[string]any) contract.SettingsDocument {
 	} else {
 		doc.Connections = cloneConnections(DefaultConnections)
 	}
-	if s, ok := raw["defaultConnection"].(string); ok {
-		doc.DefaultConnection = s
-	} else if len(doc.Connections) > 0 {
-		doc.DefaultConnection = doc.Connections[0].Name
-	} else {
-		doc.DefaultConnection = DefaultConnectionName
-	}
-	if s, ok := raw["defaultModel"].(string); ok {
-		doc.DefaultModel = s
-	} else if len(doc.Connections) > 0 && len(doc.Connections[0].Models) > 0 {
-		doc.DefaultModel = doc.Connections[0].Models[0]
-	} else {
-		doc.DefaultModel = DefaultDefaultModel
-	}
-	reconcileDefaults(&doc)
+	doc.LastModel = normalizeLastModel(raw)
 	if s, ok := raw["defaultEmployee"].(string); ok {
 		doc.DefaultEmployee = s
 	}
@@ -484,8 +494,9 @@ func Serialize(doc contract.SettingsDocument) map[string]any {
 	out["version"] = contract.SettingsVersion
 	out["revision"] = doc.Revision
 	out["connections"] = connections
-	out["defaultConnection"] = doc.DefaultConnection
-	out["defaultModel"] = doc.DefaultModel
+	if doc.LastModel != nil {
+		out["lastModel"] = map[string]any{"connection": doc.LastModel.Connection, "model": doc.LastModel.Model}
+	}
 	if doc.DefaultEmployee != "" {
 		out["defaultEmployee"] = doc.DefaultEmployee
 	}
@@ -540,28 +551,74 @@ func IsDeepSeekConnection(conn contract.ModelConnection) bool {
 	return strings.EqualFold(conn.Name, DefaultConnectionName) || strings.Contains(conn.BaseURL, "deepseek.com")
 }
 
-// ModelSettingsOf 文档里的连接三件套。
+// WithEnvKeys 环境变量里的 DEEPSEEK_API_KEY 优先于文件里的 Key。
+func WithEnvKeys(models contract.ModelSettings, env Env) contract.ModelSettings {
+	key := env.get("DEEPSEEK_API_KEY")
+	if key == "" {
+		return models
+	}
+	for i := range models.Connections {
+		if IsDeepSeekConnection(models.Connections[i]) {
+			models.Connections[i].APIKey = key
+		}
+	}
+	// 缺省模型要看补过 Key 之后的连接：还没选过模型时它是对“第一个有 Key 的连接”的快照，
+	// 在这里重新算一遍（否则只有环境变量 Key 的人永远选不出模型）
+	models.Default = defaultModelOf(models, models.Default)
+	return models
+}
+
+// ModelSettingsOf 文档里的连接，加上步骤没指定模型时的缺省模型。
+// 缺省模型优先用 lastModel；还没选过时用第一个有 Key 的连接的第一个模型（Spec 0006「会话模型」）。
 func ModelSettingsOf(doc contract.SettingsDocument) contract.ModelSettings {
 	return contract.ModelSettings{
-		Connections:       cloneConnections(doc.Connections),
-		DefaultConnection: doc.DefaultConnection,
-		DefaultModel:      doc.DefaultModel,
+		Connections: cloneConnections(doc.Connections),
+		Default:     DefaultModelOf(contract.ModelSettings{Connections: doc.Connections, Default: derefModel(doc.LastModel)}),
 	}
+}
+
+func derefModel(ref *contract.ModelRef) contract.ModelRef {
+	if ref == nil {
+		return contract.ModelRef{}
+	}
+	return *ref
+}
+
+// DefaultModelOf 缺省模型：lastModel 在连接列表里且连接有 Key 时用它，否则第一个有 Key 的连接的第一个模型。
+// 连接没配模型列表时，旧的 defaultModel 记下的模型仍可以用（那是人手工填的模型）。
+func DefaultModelOf(models contract.ModelSettings) contract.ModelRef {
+	return defaultModelOf(models, models.Default)
+}
+
+// defaultModelOf 同上，但 lastModel 由调用方给出（补环境变量里的 Key 之后要对连接重新算一遍）。
+func defaultModelOf(models contract.ModelSettings, last contract.ModelRef) contract.ModelRef {
+	if last.Connection != "" && last.Model != "" {
+		if connection, ok := FindConnection(models.Connections, last.Connection); ok && connection.APIKey != "" &&
+			(len(connection.Models) == 0 || slices.Contains(connection.Models, last.Model)) {
+			return last
+		}
+	}
+	for _, connection := range models.Connections {
+		if connection.APIKey != "" && len(connection.Models) > 0 {
+			return contract.ModelRef{Connection: connection.Name, Model: connection.Models[0]}
+		}
+	}
+	return contract.ModelRef{}
+}
+
+// FindConnection 按名字找连接。
+func FindConnection(connections []contract.ModelConnection, name string) (contract.ModelConnection, bool) {
+	for _, connection := range connections {
+		if connection.Name == name {
+			return connection, true
+		}
+	}
+	return contract.ModelConnection{}, false
 }
 
 // LoadModelSettings 读应用目录里的 settings.json；DEEPSEEK_API_KEY 优先于文件里的 Key。
 func LoadModelSettings(dir string, env Env) contract.ModelSettings {
-	ms := ModelSettingsOf(Read(dir))
-	key := env.get("DEEPSEEK_API_KEY")
-	if key == "" {
-		return ms
-	}
-	for i := range ms.Connections {
-		if IsDeepSeekConnection(ms.Connections[i]) {
-			ms.Connections[i].APIKey = key
-		}
-	}
-	return ms
+	return WithEnvKeys(ModelSettingsOf(Read(dir)), env)
 }
 
 // LoadDemo 读取演示开关。
@@ -601,7 +658,6 @@ type ConnectionView struct {
 	APIKeyLast4  *string                          `json:"apiKeyLast4"`
 	HasKey       bool                             `json:"hasKey"`
 	Source       string                           `json:"source"`
-	IsDefault    bool                             `json:"isDefault"`
 }
 
 // AppView GET /api/settings/app 的响应（v2 文档视图）。
@@ -613,10 +669,10 @@ type AppView struct {
 	Execution         contract.ExecutionSettings   `json:"execution"`
 	Diagnostics       contract.DiagnosticsSettings `json:"diagnostics"`
 	Permissions       contract.PermissionSettings  `json:"permissions"`
-	Connections       []ConnectionView             `json:"connections"`
-	DefaultConnection string                       `json:"defaultConnection"`
-	DefaultModel      string                       `json:"defaultModel"`
-	DefaultEmployee   string                       `json:"defaultEmployee"`
+	Connections []ConnectionView `json:"connections"`
+	// LastModel 最近一次在会话里选的模型；nil 表示还没选过
+	LastModel       *contract.ModelRef `json:"lastModel"`
+	DefaultEmployee string             `json:"defaultEmployee"`
 	Demo              contract.DemoSettings        `json:"demo"`
 	Extra             map[string]any               `json:"extra"`
 	EnvOverride       bool                         `json:"envOverride"`
@@ -633,14 +689,13 @@ func effectiveKey(conn contract.ModelConnection, env Env) (key, source string) {
 	return "", "none"
 }
 
-func connectionView(conn contract.ModelConnection, defaultConnection string, env Env) ConnectionView {
+func connectionView(conn contract.ModelConnection, env Env) ConnectionView {
 	key, source := effectiveKey(conn, env)
 	view := ConnectionView{
 		Name: conn.Name, BaseURL: conn.BaseURL,
-		Models:    append([]string{}, conn.Models...),
-		HasKey:    key != "",
-		Source:    source,
-		IsDefault: conn.Name == defaultConnection,
+		Models: append([]string{}, conn.Models...),
+		HasKey: key != "",
+		Source: source,
 	}
 	if view.Models == nil {
 		view.Models = []string{}
@@ -664,7 +719,7 @@ func connectionView(conn contract.ModelConnection, defaultConnection string, env
 func View(doc contract.SettingsDocument, env Env) AppView {
 	connections := make([]ConnectionView, 0, len(doc.Connections))
 	for _, conn := range doc.Connections {
-		connections = append(connections, connectionView(conn, doc.DefaultConnection, env))
+		connections = append(connections, connectionView(conn, env))
 	}
 	extra := map[string]any{}
 	for key, value := range doc.Extra {
@@ -681,7 +736,7 @@ func View(doc contract.SettingsDocument, env Env) AppView {
 	return AppView{
 		OK: true, Version: doc.Version, Revision: doc.Revision,
 		UI: doc.UI, Execution: execution, Diagnostics: doc.Diagnostics, Permissions: doc.Permissions,
-		Connections: connections, DefaultConnection: doc.DefaultConnection, DefaultModel: doc.DefaultModel,
+		Connections: connections, LastModel: doc.LastModel,
 		DefaultEmployee: doc.DefaultEmployee,
 		Demo:            demo, Extra: extra, EnvOverride: env.get("DEEPSEEK_API_KEY") != "",
 	}
@@ -1045,6 +1100,17 @@ func ValidateImport(value any) (migrated bool, err error) {
 		if raw, ok := doc[key]; ok {
 			if _, ok := raw.(string); !ok {
 				return false, fmt.Errorf("%s 必须是字符串", key)
+			}
+		}
+	}
+	if raw, ok := doc["lastModel"]; ok {
+		m, ok := isRecord(raw)
+		if !ok {
+			return false, fmt.Errorf("lastModel 必须是 {connection, model} 对象")
+		}
+		for _, key := range []string{"connection", "model"} {
+			if _, ok := m[key].(string); !ok {
+				return false, fmt.Errorf("lastModel.%s 必须是字符串", key)
 			}
 		}
 	}

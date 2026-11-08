@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -187,6 +188,8 @@ type heldTools struct {
 	tool    string
 	entered chan struct{}
 	release chan struct{}
+	// once 测试中途提前放行（延迟执行，此时没法再 defer）
+	once sync.Once
 }
 
 func holdTool(tool string) (*heldTools, harnessOption) {
@@ -199,7 +202,11 @@ func holdTool(tool string) (*heldTools, harnessOption) {
 
 func (c *heldTools) Call(name string, args any) (contract.ToolCallResult, error) {
 	if name == c.tool {
-		close(c.entered)
+		select {
+		case <-c.entered:
+		default:
+			close(c.entered)
+		}
 		<-c.release
 	}
 	return c.ToolClient.Call(name, args)
@@ -394,8 +401,7 @@ func TestStopAbortsRealModelRequest(t *testing.T) {
 
 	retries := 3
 	real := agent.NewModelProvider(contract.ModelSettings{
-		DefaultConnection: "fake",
-		DefaultModel:      "fake-model",
+		Default: contract.ModelRef{Connection: "fake", Model: "fake-model"},
 		Connections: []contract.ModelConnection{{
 			Name: "fake", BaseURL: fake.URL, APIKey: "test-key", Models: []string{"fake-model"}, MaxRetries: &retries,
 		}},

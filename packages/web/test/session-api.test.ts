@@ -104,6 +104,55 @@ describe("会话接口", () => {
     expect(calls[1]?.url).toBe("http://local/api/sessions");
   });
 
+  test("目录文件：列文件、确认后用目录里的文件，路径放在请求体里", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/sessions/s-1/folder-files": [200, { entries: [{ path: "资料/销售明细.xlsx", name: "销售明细.xlsx", size: 10 }], truncated: false }],
+      "POST /api/sessions/s-1/folder-files": [200, { ok: true, messages: [], session }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.listFolderFiles("s-1")).entries[0]).toEqual({ path: "资料/销售明细.xlsx", name: "销售明细.xlsx", size: 10 });
+    expect((await api.useFolderFiles("s-1", ["资料/销售明细.xlsx", "资料/周会纪要_2026W44.docx"])).ok).toBe(true);
+    expect(JSON.parse(String(calls[1]?.body))).toEqual({ paths: ["资料/销售明细.xlsx", "资料/周会纪要_2026W44.docx"] });
+    expect(calls[1]?.headers["x-role"]).toBe("initiator");
+  });
+
+  test("会话模型：读可选模型、PUT 选模型（带当前角色），提交前检查可以带任务", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/settings/models": [200, [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }]],
+      "PUT /api/sessions/s-1/model": [200, { ok: true, messages: [], session }],
+      "GET /api/preflight": [200, { ok: true }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.modelOptions())[0]?.models).toEqual(["deepseek-chat", "deepseek-reasoner"]);
+    expect((await api.selectModel("s-1", "DeepSeek", "deepseek-reasoner")).ok).toBe(true);
+    expect(calls[1]?.method).toBe("PUT");
+    expect(calls[1]?.headers["x-role"]).toBe("initiator");
+    expect(JSON.parse(String(calls[1]?.body))).toEqual({ connection: "DeepSeek", model: "deepseek-reasoner" });
+    await api.preflight("t-1");
+    expect(calls[2]?.url).toBe("http://local/api/preflight?taskId=t-1");
+  });
+
+  test("会话列表带上归档开关；PATCH 重命名和归档，返回新的会话摘要", async () => {
+    const { calls, impl } = fakeFetch({
+      "GET /api/sessions": [200, [session]],
+      "PATCH /api/sessions/s-1": [200, { ok: true, session: { ...session, title: "新的标题", archived: true }, statusDot: "idle" }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    await api.listSessions(undefined, { archived: true });
+    expect(calls[0]?.url).toBe("http://local/api/sessions?archived=1");
+    await api.listSessions("ws-1", { archived: true });
+    expect(calls[1]?.url).toBe("http://local/api/sessions?workspaceId=ws-1&archived=1");
+    const updated = await api.updateSession("s-1", { title: "新的标题" });
+    expect(updated).toMatchObject({ id: "s-1", title: "新的标题", archived: true });
+    expect(calls[2]).toMatchObject({ method: "PATCH", body: JSON.stringify({ title: "新的标题" }) });
+    expect(calls[2]?.headers["x-role"]).toBe("initiator");
+  });
+
+  test("重命名被拒时抛错并带原因", async () => {
+    const { impl } = fakeFetch({ "PATCH /api/sessions/s-1": [400, { ok: false, error: "invalid_input", message: "标题不能为空" }] });
+    await expect(createSessionApi("http://local", () => "initiator", impl).updateSession("s-1", { title: " " })).rejects.toThrow("标题不能为空");
+  });
+
   test("提交前检查和会话读取", async () => {
     const { impl } = fakeFetch({
       "GET /api/preflight": [200, { ok: true }],

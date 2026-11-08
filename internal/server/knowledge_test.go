@@ -168,7 +168,7 @@ func stepRequests(h *harness, stepID string) []agent.ScriptedRequest {
 func TestWeeklyReportJudgeStepsCannotUseTheKnowledgeBase(t *testing.T) {
 	script := caseScript(t, "A-01")
 	script["match_causes"] = append([]agent.ScriptedTurn{kbCall(contract.ToolKBSearch, map[string]any{"query": "周报"})}, script["match_causes"]...)
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 
 	task := h.reviewedTask(week44FormJSON)
 
@@ -249,7 +249,7 @@ func TestWeeklyReportFrontdeskCannotUseTheKnowledgeBase(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls(contract.ToolKBSearch, map[string]any{"query": "周报"}),
 		modelSays("我查不了知识库。"),
-	))
+	), withScriptedModel())
 	opened, _ := pausedSession(h)
 
 	h.say(opened.ID, initiator, "上周的周报怎么说")
@@ -258,7 +258,7 @@ func TestWeeklyReportFrontdeskCannotUseTheKnowledgeBase(t *testing.T) {
 	if len(refused) != 1 || refused[0].Tool != contract.ToolKBSearch || refused[0].Reason == "" {
 		t.Fatalf("越权调用的留痕：%+v", refused)
 	}
-	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[query_task propose_card]" {
+	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[query_task propose_card list_files read_file use_folder_file]" {
 		t.Fatalf("开放的工具：%s", names)
 	}
 }
@@ -278,7 +278,7 @@ func (h *harness) tickFrontdeskTools(tools ...string) {
 
 func TestTickedFrontdeskSearchesThenReadsTheKnowledgeBase(t *testing.T) {
 	script := caseScript(t, "A-01")
-	h := newHarness(t, script)
+	h := newHarness(t, script, withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。"})
 	h.tickFrontdeskTools(contract.ToolQueryTask, contract.ToolKBSearch, contract.ToolKBRead)
 	// 条目 ID 入库后才知道：前台 Agent 的剧本这时再写（剧本模型按调用时的剧本取轮次）
@@ -292,7 +292,7 @@ func TestTickedFrontdeskSearchesThenReadsTheKnowledgeBase(t *testing.T) {
 
 	h.say(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
 
-	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[fill_form_draft propose_card kb_search kb_read]" {
+	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[fill_form_draft propose_card list_files read_file use_folder_file kb_search kb_read]" {
 		t.Fatalf("开放的工具：%s", names)
 	}
 	// 两次读取都写进会话日志：搜索只有索引字段，读取有正文

@@ -17,6 +17,7 @@ import (
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
+	"digital-employee/internal/settings"
 )
 
 // MaxToolRounds 单条回复的工具轮次上限，超过就停下说明。
@@ -244,12 +245,20 @@ func (loop *turnLoop) resolveModel() (*agent.ResolvedStepModel, error) {
 	if provider == nil {
 		return fail("没有可用的模型提供者")
 	}
-	resolved, err := provider.Resolve(agent.FrontdeskStepID, nil)
+	// 前台 Agent 也用会话模型（Spec 0006）；绑定任务时是任务当前的模型
+	t := loop.turn
+	model := t.manager.taskModel(t.current)
+	if model.Connection != "" && model.Model != "" {
+		if connection, found := settings.FindConnection(t.manager.effectiveModelSettings().Connections, model.Connection); found && connection.APIKey == "" {
+			return fail("模型连接「" + model.Connection + "」没有配置 API Key")
+		}
+	}
+	resolved, err := provider.Resolve(agent.FrontdeskStepID, &model)
 	if err != nil {
 		return fail(err.Error())
 	}
 	if provider.Kind() == "real" && resolved.APIKey == "" {
-		return fail("默认模型连接没有配置 API Key")
+		return fail("模型连接没有配置 API Key")
 	}
 	return resolved, nil
 }
@@ -617,7 +626,7 @@ func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
 		for _, attachment := range t.current.attachments {
 			names = append(names, attachment.Name)
 		}
-		lines = append(lines, "- 已上传的材料："+strings.Join(names, "、"))
+		lines = append(lines, "- 已提供的材料："+strings.Join(names, "、"))
 		lines = append(lines, checklistLines(config, t.current)...)
 	}
 	return strings.Join(lines, "\n") + "\n"
@@ -651,7 +660,8 @@ func (loop *turnLoop) assistantTools(config *contract.EmployeeConfig) ([]tool, e
 	if err != nil {
 		return nil, err
 	}
-	return append(tools, knowledge...), nil
+	// 目录读取工具对所有员工都开放：工作区就是目录，Agent 要能看见里面有什么
+	return append(append(tools, t.folderTools()...), knowledge...), nil
 }
 
 // unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。

@@ -54,7 +54,7 @@ func streamProvider(t *testing.T, url string) *agent.ResolvedStepModel {
 		Connections: []contract.ModelConnection{{
 			Name: "fake", BaseURL: url, APIKey: "test-key", Models: []string{"m"}, MaxRetries: &retries,
 		}},
-		DefaultConnection: "fake", DefaultModel: "m",
+		Default: contract.ModelRef{Connection: "fake", Model: "m"},
 	})
 	resolved, err := provider.Resolve(agent.FrontdeskStepID, nil)
 	if err != nil {

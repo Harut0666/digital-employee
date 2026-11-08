@@ -4,12 +4,13 @@ import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
-import { createApi, IS_MOCK, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
+import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
-import { createMockWorkspaceApi, createWorkspaceApi, type WorkspaceItem } from "./api/workspaces";
-import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useSessionStream, useTask } from "./hooks/data";
+import { createWorkspaces } from "./api";
+import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask } from "./hooks/data";
+import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
-import { Sidebar, type Selection } from "./components/Sidebar";
+import { flattenSessions, Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
 import { NewConversation, SessionChat } from "./components/Chat";
 import { ChecklistPanel } from "./components/Checklist";
 import { LaunchPanel } from "./components/LaunchPanel";
@@ -36,7 +37,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const api = useApi();
   const { message } = AntApp.useApp();
   const employees = useEmployees();
-  const { sessions, refresh } = useSessionList();
   const [role, setRoleState] = useState<UiRole>(roleRef.current);
   roleRef.current = role;
 
@@ -46,19 +46,51 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const [panelKey, setPanelKey] = useState(0);
   const windowWidth = useWindowWidth();
   const drawerMode = windowWidth < DRAWER_BELOW;
-  /** 登记的工作区：新对话开在第一个工作区里（Spec 0006；侧栏分组是 T38） */
-  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>();
-  const workspaceApi = useMemo(() => (IS_MOCK ? createMockWorkspaceApi() : createWorkspaceApi()), []);
-  useEffect(() => {
-    workspaceApi.list().then((list) => setWorkspaces(list.workspaces), () => {});
-  }, [workspaceApi]);
+  // 侧栏两个 tab（T38）：工作区列表带会话摘要和未归属，记录 tab 按状态分组；状态点都由后端算
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>("workspaces");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const workspaceApi = useMemo(() => createWorkspaces(api), [api]);
+  const workspaceState = useWorkspaceList(workspaceApi);
+  const recordsState = useRecords(workspaceApi, sidebarTab === "records");
+  const refreshSidebar = useCallback(() => {
+    workspaceState.refresh();
+    recordsState.refresh();
+  }, [workspaceState.refresh, recordsState.refresh]);
+  const sidebarWorkspace: SidebarWorkspace = useMemo(
+    () => ({
+      list: workspaceState.list,
+      renameSession: (id, title) => api.updateSession(id, { title }),
+      archiveSession: (id, archived) => api.updateSession(id, { archived }),
+    }),
+    [api, workspaceState.list],
+  );
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 材料有变化（确认目录文件、上传）时让 @ 选择重读目录 */
+  const [folderVersion, setFolderVersion] = useState(0);
   const { preflight, reload: reloadPreflight } = usePreflight();
+  /** 会话可选的模型（输入框右下角的下拉，T39）：设置里变了就重读 */
+  const [modelOptions, setModelOptions] = useState<ModelConnectionOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api.modelOptions().then(
+      (options) => alive && setModelOptions(options),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [api, selection.kind]);
 
   const sessionId = selection.kind === "session" ? selection.id : undefined;
   const session = useSession(sessionId);
   const detail = session.detail;
+  // @ 选目录文件：员工接手、还没提交时才有；每次会话读出来（材料变化时重读）刷新一次
+  const folderFiles = useFolderFiles(
+    sessionId,
+    detail?.status === "drafting" && !detail.readOnly,
+    `${detail?.status}:${detail?.attachments.length}:${folderVersion}:${detail?.updatedAt}`,
+  );
   const taskId = detail?.taskId;
   const task = useTask(taskId);
   // 服务端快照里的 state 最权威（草稿任务没有 state_changed 事件，视图里可能还是空）
@@ -93,11 +125,11 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       } catch (e) {
         fail(e, "操作失败");
       }
-      refresh();
+      refreshSidebar();
       task.reload();
       session.reload();
     },
-    [api, taskId, message, refresh, task, session, fail],
+    [api, taskId, message, refreshSidebar, task, session, fail],
   );
 
   /** 会话层操作的统一收尾：失败提示，成功后重读会话和列表 */
@@ -109,19 +141,29 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       res = { ok: false, error: "internal", message: e instanceof Error ? e.message : "操作失败" };
     }
     session.reload();
-    refresh();
+    refreshSidebar();
     return res;
+  };
+
+  /** 在会话里换模型（T39）：写进会话日志；任务运行中从下一个判断步骤生效。切换说明由视图按前后两次插进对话。 */
+  const selectModel = async (connection: string, model: string): Promise<boolean> => {
+    if (!sessionId) return false;
+    const res = await settle(api.selectModel(sessionId, connection, model));
+    if (!res.ok) message.error(res.message);
+    return res.ok;
   };
 
   const startConversation = async (text: string): Promise<boolean> => {
     try {
-      // 新对话在哪个工作区开：侧栏按工作区分组是 T38，现在用第一个登记的工作区；
+      // 新对话开在哪个工作区：从选中的“新对话”或第一个登记的工作区来；
       // 还没读到登记时交服务端取唯一的工作区（单目录模式）
-      const created = await api.createSession(workspaces?.[0]?.id);
+      const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
+      const created = await api.createSession(targetWorkspace);
+      // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现
       setSelection({ kind: "session", id: created.id });
       const res = await api.sendMessage(created.id, text);
       if (!res.ok) message.error(res.message);
-      refresh();
+      refreshSidebar();
       return res.ok;
     } catch (e) {
       fail(e, "开始对话失败");
@@ -140,6 +182,14 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       if (!sessionId) return;
       const res = await settle(api.uploadAttachments(sessionId, files));
       if (!res.ok) message.error(res.message);
+      setFolderVersion((n) => n + 1);
+    },
+    // 卡片上的“用这个文件”和输入框里的 @ 选择都走这里：人确认后复制进会话，与上传等效
+    async useFolderFiles(paths) {
+      if (!sessionId) return;
+      const res = await settle(api.useFolderFiles(sessionId, paths));
+      if (!res.ok) message.error(res.message);
+      setFolderVersion((n) => n + 1);
     },
     submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
     async draftFiling() {
@@ -171,7 +221,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     if (!sessionId) return false;
     const res = await api.sendMessage(sessionId, text).catch((e: unknown) => ({ ok: false as const, error: "internal", message: e instanceof Error ? e.message : "发送失败" }));
     if (!res.ok) message.error(res.message);
-    refresh();
+    refreshSidebar();
     return res.ok;
   };
 
@@ -180,7 +230,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     const res = await api.stopTurn(sessionId);
     if (!res.ok) message.error(res.message);
     session.reload();
-    refresh();
+    refreshSidebar();
   };
 
   // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件），
@@ -188,9 +238,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const loadSample = async () => {
     try {
       const snap = await api.loadPublicSample();
-      const listed = await api.listSessions();
-      refresh();
-      const bound = listed.find((s) => s.taskId === snap.id);
+      // 样例任务没有会话，以旧任务的只读会话出现在侧栏里（和记录 tab 的会话对应）
+      refreshSidebar();
+      const bound = flattenSessions(workspaceState.list).find((s) => s.taskId === snap.id);
       if (bound) setSelection({ kind: "session", id: bound.id });
       message.success("已载入公开样例，提交后开始生成周报");
     } catch (e) {
@@ -220,10 +270,22 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const items = useMemo(
     () =>
       detail
-        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, stream.live)
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live)
         : [],
-    [detail, task.snapshot, stream.live],
+    [detail, task.snapshot, stream.live, task.events],
   );
+  /** 新会话沿用的模型：设置的 lastModel（T39） */
+  const [lastModel, setLastModel] = useState<ModelRef | undefined>();
+  useEffect(() => {
+    let alive = true;
+    settingsApi.getAppSettings().then(
+      (view) => alive && setLastModel(view.lastModel ?? undefined),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [settingsApi, selection.kind]);
 
   let center: React.ReactNode;
   let panel: React.ReactNode = null;
@@ -245,6 +307,8 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         openSettings={actions.openSettings}
         onStart={startConversation}
         onSample={() => void loadSample()}
+        modelOptions={modelOptions}
+        defaultModel={lastModel}
       />
     );
   } else if (!detail) {
@@ -262,6 +326,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
         attachments={(task.snapshot?.attachments ?? []).map((a) => a.name)}
+        folderFiles={folderFiles}
         artifacts={artifactsOf(task.snapshot, actions.downloadUrl)}
         headerExtra={
           drawerMode && taskId ? (
@@ -275,6 +340,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
             <ChecklistPanel checklist={detail.checklist} started={Boolean(detail.taskId)} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
           )
         }
+        modelOptions={modelOptions}
+        onSelectModel={selectModel}
+        openSettings={actions.openSettings}
         onSend={send}
         live={stream.live}
         onStop={stopTurn}
@@ -329,7 +397,22 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   );
   return (
     <div className={`shell ${columnPanel ? (layout.wide ? "wide" : "") : "no-panel"} ${drawer ? "narrow" : ""}`}>
-      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} />
+      <Sidebar
+        role={role}
+        onRole={setRoleState}
+        selection={selection}
+        onSelect={setSelection}
+        api={workspaceApi}
+        workspace={sidebarWorkspace}
+        onRefresh={refreshSidebar}
+        includeArchived={includeArchived}
+        onIncludeArchived={setIncludeArchived}
+        tab={sidebarTab}
+        onTab={setSidebarTab}
+        groups={recordsState.groups}
+        error={workspaceState.error ?? (sidebarTab === "records" ? recordsState.error : undefined)}
+        onStartChat={(workspaceId) => setSelection({ kind: "new", workspaceId })}
+      />
       <div className="col surface chat">{center}</div>
       {columnPanel && (
         <div className={`col panel ${titled ? "" : "panel-review"}`} ref={panelRef}>

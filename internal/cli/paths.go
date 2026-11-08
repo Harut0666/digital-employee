@@ -26,6 +26,7 @@ func ResolveEmployeesDir(env map[string]string, repoRoot string) string {
 }
 
 // ResolveSamplesDir 样例目录：应用目录（单目录模式下就是工作区目录）里的副本 > 仓库里的 samples。
+// “载入公开样例”、评测用例和命令行都从这里取；工作区目录里不再释放样例（T41）。
 func ResolveSamplesDir(env map[string]string, repoRoot string) string {
 	appSamples := filepath.Join(app.ResolveAppDir(env), "samples")
 	if dirExists(filepath.Join(appSamples, "scenario-a")) {

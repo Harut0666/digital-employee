@@ -1,8 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
-import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, SessionSummary, TaskSnapshot, WebApi } from "../api";
+import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, TaskSnapshot, WebApi } from "../api";
 import { deriveSessionView, type SessionView } from "../view/session-view";
-
 export const ApiContext = createContext<WebApi | null>(null);
 export function useApi(): WebApi {
   const api = useContext(ApiContext);
@@ -21,24 +20,6 @@ export function useEmployees(): EmployeeInfo[] {
     };
   }, [api]);
   return list;
-}
-
-/** 会话列表（新会话和旧任务的只读会话）：定时刷新，另外暴露 refresh 供操作后立即刷新。 */
-export function useSessionList(intervalMs = 2000): { sessions: SessionSummary[]; refresh: () => void } {
-  const api = useApi();
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [tick, refresh] = useReducer((n: number) => n + 1, 0);
-  useEffect(() => {
-    let alive = true;
-    const load = () => api.listSessions().then((l) => alive && setSessions(l), () => {});
-    void load();
-    const timer = setInterval(load, intervalMs);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [api, intervalMs, tick]);
-  return { sessions, refresh };
 }
 
 export interface SessionState {
@@ -131,6 +112,26 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
   return { live };
 }
 
+/** 会话工作区目录里可选的文件（@ 选择）：打开输入框时读一次，员工接手后（目录里多了上传的“材料”）重读。 */
+export function useFolderFiles(id: string | undefined, enabled: boolean, status: string | undefined): string[] {
+  const api = useApi();
+  const [paths, setPaths] = useState<string[]>([]);
+  useEffect(() => {
+    if (!id || !enabled) {
+      setPaths([]);
+      return;
+    }
+    let alive = true;
+    api
+      .listFolderFiles(id)
+      .then((listing) => alive && setPaths(listing.entries.filter((e) => !e.dir).map((e) => e.path)), () => alive && setPaths([]));
+    return () => {
+      alive = false;
+    };
+  }, [api, id, enabled, status]);
+  return paths;
+}
+
 /** 提交前检查：新对话首屏用它提示配置 Key。reload 在设置保存后重查。 */
 export function usePreflight(): { preflight: PreflightResult | undefined; reload: () => void } {
   const api = useApi();
@@ -201,5 +202,6 @@ export function useTask(id: string | undefined): TaskState {
   const view = useMemo(() => deriveSessionView(events, snapshot?.steps ?? []), [events, snapshot?.steps]);
   return { snapshot, view, events, loading, reload };
 }
+
 
 

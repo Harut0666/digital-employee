@@ -51,10 +51,10 @@ type workspaceRuntime struct {
 	ownsTool bool
 }
 
-// ServeHTTP /api/workspaces 由宿主处理，其余转给服务端。
+// ServeHTTP /api/workspaces 的 POST 和 PATCH、DELETE 由宿主处理（登记），其余（含 GET 工作区列表和会话摘要）转给服务端。
 func (h *workspaceHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimRight(r.URL.Path, "/")
-	if r.Method != http.MethodOptions && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
+	if r.Method != http.MethodOptions && r.Method != http.MethodGet && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
 		setHostCORS(w)
 		h.route(w, r, path)
 		return
@@ -95,9 +95,6 @@ const stampLayout = "2006-01-02T15:04:05.000Z07:00"
 func (h *workspaceHost) route(w http.ResponseWriter, r *http.Request, path string) {
 	if path == "/api/workspaces" {
 		switch r.Method {
-		case http.MethodGet:
-			h.handleList(w)
-			return
 		case http.MethodPost:
 			h.handleCreate(w, r)
 			return
@@ -152,13 +149,21 @@ func (w Workspace) view() workspaceView {
 	return out
 }
 
+// readOnlyReason 登记只读的原因：单目录模式下工作区由环境变量指定；否则为空（可改）。
+func (h *workspaceHost) readOnlyReason() string {
+	if h.single {
+		return "工作区由环境变量 DE_WORKSPACE 指定，不能在界面上添加或取消登记"
+	}
+	return ""
+}
+
 func (h *workspaceHost) listView() workspaceListView {
 	if h.single {
 		dir := h.singleDir()
 		only := Workspace{ID: h.singleID, Name: workspaceBaseName(dir), Path: dir}
 		return workspaceListView{
 			ReadOnly: true, Workspaces: []workspaceView{only.view()},
-			Reason: "工作区由环境变量 DE_WORKSPACE 指定，不能在界面上添加或取消登记",
+			Reason: h.readOnlyReason(),
 		}
 	}
 	items := make([]workspaceView, 0, len(h.registry.Workspaces))
@@ -224,8 +229,8 @@ func (h *workspaceHost) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeHostError(w, http.StatusBadRequest, contract.ErrInvalidInput, fmt.Sprintf("无法创建工作区目录：%v", err))
 		return
 	}
-	// 工作区目录里只放样例和“交付”文件夹；出错不影响登记
-	if _, err := PrepareWorkspaceDir(dir, h.repoRoot); err != nil {
+	// 工作区目录里只放“交付”文件夹（样例在应用目录）；出错不影响登记
+	if _, err := PrepareWorkspaceDir(dir); err != nil {
 		h.logger.Warnf("准备工作区目录 %s 失败：%v", dir, err)
 	}
 	created := h.registry.add(name, dir, h.nowTime().UTC())
@@ -343,7 +348,7 @@ func (h *workspaceHost) prepare(layout Layout, doc contract.SettingsDocument) (*
 	if err := registry.save(); err != nil {
 		return nil, fmt.Errorf("保存工作区登记失败：%w", err)
 	}
-	// 登记的目录里补样例和“交付”文件夹；目录缺失的不重建、不补东西，登记保留，界面上标“目录缺失”。
+	// 登记的目录里补“交付”文件夹（不释放样例）；目录缺失的不重建、不补东西，登记保留，界面上标“目录缺失”。
 	// 只补“我的工作区”：迁移来的其他工作区在启动时不往里面写东西（它们只是保留登记）。
 	for _, item := range registry.Workspaces {
 		if item.Name != myWorkspaceName {
@@ -356,7 +361,7 @@ func (h *workspaceHost) prepare(layout Layout, doc contract.SettingsDocument) (*
 		if h.options.SkipPrepare {
 			continue
 		}
-		if _, err := PrepareWorkspaceDir(item.Path, h.repoRoot); err != nil {
+		if _, err := PrepareWorkspaceDir(item.Path); err != nil {
 			h.logger.Warnf("准备工作区目录 %s 失败：%v", item.Path, err)
 		}
 	}
@@ -474,7 +479,9 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 				return dir, true
 			},
 			EmployeesDir: employeesDir,
-			ToolClient:   toolClient, Faults: faults, ScriptFile: h.scriptFile,
+			// 登记的工作区：每个版本送审时把交付物写进它的“交付”文件夹（T42）；单目录模式不写
+			Workspaces: h.workspaces(),
+			ToolClient: toolClient, Faults: faults, ScriptFile: h.scriptFile,
 			ModelSettings: modelSettings,
 		})
 		if err != nil {
@@ -492,8 +499,10 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 		Engine: engine,
 		AppDir: appDir,
 		// 登记的工作区：服务端据此校验 workspaceId，新建的工作区马上可用
-		Workspaces:     h.workspaces(),
-		ListWorkspaces: h.ListWorkspaces,
+		Workspaces:          h.workspaces(),
+		ListWorkspaces:      h.ListWorkspaces,
+		WorkspaceWritable:   !h.single,
+		WorkspaceReadOnlyReason: h.readOnlyReason(),
 		WorkspaceDir:        layout.Workspace.Path,
 		EmployeesDir:        employeesDir,
 		DefaultEmployeesDir: defaultEmployeesDir,

@@ -2,8 +2,9 @@
 // 消息和卡片都来自后端的会话接口，这里只决定显示成什么、哪张卡片还能操作。
 // 任务卡片上的按钮由后端在读取时配上（只配给当前暂停的卡片），前端不推算。
 
-import type { DeliverableRef, QcCheckResult, TaskState } from "@de/core/contract";
+import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
 import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
+import { modelNotices, selectedModelNotice } from "./session-model";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -14,6 +15,7 @@ interface ItemBase {
 export type ChatItem =
   | (ItemBase & { kind: "user"; text: string; role?: UiRole })
   | (ItemBase & { kind: "agent"; text: string })
+  // 模型切换说明（T39）不用单独的 kind：是程序说明，按 kind: "notice" 显示
   | (ItemBase & { kind: "notice"; text: string })
   | (ItemBase & {
       kind: "employee_confirm";
@@ -35,6 +37,8 @@ export type ChatItem =
   | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
   /** 送审提示：审核在右栏进行，对话里只说一句 */
   | (ItemBase & { kind: "review_notice"; pause?: PauseView; active: boolean })
+  /** 使用目录文件：前台 Agent 提议把人工作区目录里的文件当材料，人确认后才复制进会话 */
+  | (ItemBase & { kind: "use_file"; path: string; name: string; size?: number; reason?: string; confirmed: boolean; actions: TaskAction[]; active: boolean })
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
   | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
@@ -70,22 +74,37 @@ export interface LiveTurn {
   running?: boolean;
 }
 
-export function deriveChat(session: SessionDetail, task?: ChatTask, live?: LiveTurn): ChatItem[] {
-  const items = deriveMessages(session, task);
+function noticeItem(notice: { key: string; ts: string; text: string }): ChatItem {
+  return { key: notice.key, ts: notice.ts, kind: "notice", text: notice.text };
+}
+
+/** 一条说明按时间插进前面：同一时间点的插在已有消息之后。 */
+function insertByTime(items: ChatItem[], item: ChatItem): void {
+  const at = Date.parse(item.ts);
+  let start = 0;
+  let end = items.length;
+  while (start < end) {
+    const middle = (start + end) >> 1;
+    if (Date.parse(items[middle]?.ts ?? "") <= at) start = middle + 1;
+    else end = middle;
+  }
+  items.splice(start, 0, item);
+}
+
+export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn): ChatItem[] {
+  const items = deriveMessages(session, task, events);
   if (!live || (!live.text && live.tools.length === 0)) return items;
   // 还没写成消息的这一轮排在最后一条之后
   const ts = session.updatedAt;
-  let key = 0;
   if (live.tools.length > 0) {
     // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
     items.push({ key: `tools-${live.turn}-${live.tools.length}`, ts, kind: "tools", turn: live.turn, items: live.tools });
   }
-  if (live.text) items.push({ key: `streaming-${live.turn}-${key++}`, ts, kind: "streaming", turn: live.turn, text: live.text });
+  if (live.text) items.push({ key: `streaming-${live.turn}-${live.text.length}`, ts, kind: "streaming", turn: live.turn, text: live.text });
   return items;
 }
 
-function deriveMessages(session: SessionDetail, task?: ChatTask): ChatItem[] {
-  const items: ChatItem[] = [];
+function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[]): ChatItem[] {  const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const card = session.messages[i]?.card;
@@ -125,6 +144,11 @@ function deriveMessages(session: SessionDetail, task?: ChatTask): ChatItem[] {
     items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
   }
   items.push(...filings);
+
+  // 模型切换说明（T39）：会话里选的模型、任务运行中的切换，按时间插进对话
+  const selected = selectedModelNotice(session);
+  if (selected) items.push(noticeItem(selected));
+  for (const notice of modelNotices(events)) insertByTime(items, noticeItem(notice));
   return items;
 
   function filingItem(base: ItemBase, card: SessionCard): ChatItem {
@@ -177,6 +201,19 @@ function deriveMessages(session: SessionDetail, task?: ChatTask): ChatItem[] {
       }
       case "knowledge_filing":
         return filingItem(base, card);
+      case "folder_file":
+        return {
+          ...base,
+          kind: "use_file",
+          path: card.path ?? "",
+          name: card.name ?? card.path?.split("/").at(-1) ?? "",
+          size: card.size,
+          reason: card.reason,
+          confirmed: card.confirmed ?? false,
+          actions,
+          // 按钮由后端按“还没开工、文件还在、人还没确认”配好；确认过、开工后都没有
+          active: writable && session.status === "drafting" && !card.confirmed && actions.length > 0,
+        };
     }
   }
 }
