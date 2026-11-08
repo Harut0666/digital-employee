@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/settings"
 )
@@ -720,6 +721,69 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		response["error"] = redactAPIKey(result.Error, connection.APIKey)
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// handleFetchModels 拉取某个连接的模型列表（Spec 0006「模型列表与会话模型」）。
+// 请求体可带未保存的 baseUrl、apiKey，方便新建连接时先拉取；连接不存在但给了 baseUrl 也能用。
+// 只读：结果不写设置，由人勾选后随连接保存；失败返回原因，Key 已脱敏。
+func (s *Server) handleFetchModels(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	fields, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+
+	// 已有连接按设置页看到的同一个来源取 Key（DEEPSEEK_API_KEY 优先于文件）
+	effective := settings.LoadModelSettings(s.opts.WorkspaceDir, s.settingsEnv())
+	var existing *contract.ModelConnection
+	for index := range effective.Connections {
+		if effective.Connections[index].Name == name {
+			connection := effective.Connections[index]
+			existing = &connection
+			break
+		}
+	}
+
+	baseURL := existingURL(existing)
+	if raw, present := fields["baseUrl"]; present {
+		text, ok := raw.(string)
+		if !ok || !isValidHTTPURL(text) {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "Base URL 必须是 http(s) 地址"))
+			return
+		}
+		baseURL = strings.TrimSpace(text)
+	} else if existing == nil {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("连接不存在：%s（新建连接时请先填写 Base URL）", name)))
+		return
+	}
+
+	apiKey := ""
+	if existing != nil {
+		apiKey = existing.APIKey
+	}
+	if raw, present := fields["apiKey"]; present {
+		text, ok := raw.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "apiKey 必须是字符串"))
+			return
+		}
+		if text != "" {
+			apiKey = text
+		}
+	}
+
+	timeout := agent.ModelListTimeout
+	if s.opts.ModelListTimeout > 0 {
+		timeout = s.opts.ModelListTimeout
+	}
+	models, err := agent.FetchModels(r.Context(), baseURL, apiKey, timeout)
+	if err != nil {
+		s.log.Debugf("拉取模型失败：连接 %s，%s", name, err.Error())
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "models": models})
 }
 
 func (s *Server) handleGetAppSettings(w http.ResponseWriter, r *http.Request) {
