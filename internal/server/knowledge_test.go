@@ -288,7 +288,7 @@ func TestTickedFrontdeskSearchesThenReadsTheKnowledgeBase(t *testing.T) {
 		modelSays("上周周报提到杭州湖滨店停业三天。"),
 	}
 	created := h.createSession()
-	h.confirm(created.ID, initiator, harnessEmployee)
+	h.confirmed(created.ID, harnessEmployee)
 
 	h.say(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
 

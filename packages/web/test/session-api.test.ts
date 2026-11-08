@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSessionApi, type FetchLike } from "../src/api/sessions";
+import type { SessionAgentEvent } from "../src/api/types";
 
 interface Call {
   url: string;
@@ -22,16 +23,45 @@ function fakeFetch(routes: Record<string, [number, unknown]>) {
 
 const session = { id: "s-1", workspaceId: "ws-1", status: "drafting", readOnly: false, title: "出周报", attachments: [], createdAt: "", updatedAt: "", waitingFor: [] };
 
-describe("会话接口", () => {
-  test("发消息带上当前角色，返回这次新写入的消息", async () => {
-    const { calls, impl } = fakeFetch({
-      "POST /api/sessions/s-1/messages": [200, { ok: true, messages: [{ id: "s2", seq: 2, ts: "", kind: "assistant", text: "好的" }], session }],
-    });
-    const api = createSessionApi("http://local", () => "reviewer", impl);
-    const res = await api.sendMessage("s-1", "摘要太长");
-    expect(res.ok && res.messages.map((m) => m.text)).toEqual(["好的"]);
-    expect(calls[0]?.headers["x-role"]).toBe("reviewer");
+  test("发消息立即受理：返回这一轮的编号，不等回复", async () => {
+    const { calls, impl } = fakeFetch({ "POST /api/sessions/s-1/messages": [202, { ok: true, turn: 3 }] });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect(await api.sendMessage("s-1", "摘要太长")).toEqual({ ok: true, turn: 3 });
+    expect(calls[0]?.headers["x-role"]).toBe("initiator");
     expect(JSON.parse(String(calls[0]?.body))).toEqual({ text: "摘要太长" });
+  });
+
+  test("停止这一轮：没有在回复时 stopped 为 false", async () => {
+    const { calls, impl } = fakeFetch({ "POST /api/sessions/s-1/stop": [200, { ok: true, stopped: false }] });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect(await api.stopTurn("s-1")).toEqual({ ok: true, stopped: false });
+    expect(calls[0]?.method).toBe("POST");
+  });
+
+  test("订阅会话事件流：按事件名逐个接，收到的是解析后的事件", () => {
+    const events: SessionAgentEvent[] = [];
+    const real = globalThis.EventSource;
+    const api = createSessionApi("http://local", () => "initiator", (async () => new Response("{}")) as FetchLike);
+    const opened: string[] = [];
+    globalThis.EventSource = class {
+      constructor(public url: string) {
+        opened.push(url);
+      }
+      addEventListener() {}
+      close() {}
+    } as unknown as typeof EventSource;
+    const stop = api.subscribeSession("s-1", (event) => events.push(event));
+    expect(opened).toEqual(["http://local/api/sessions/s-1/stream"]);
+    expect(events).toEqual([]);
+    stop();
+    globalThis.EventSource = real;
+  });
+describe("会话接口", () => {
+  test("没被受理时是业务错误：连同说明一起返回", async () => {
+    const refused = { ok: false as const, error: "session_busy", message: "上一条消息还在处理，请稍候" };
+    const { impl } = fakeFetch({ "POST /api/sessions/s-1/messages": [409, refused] });
+    const api = createSessionApi("http://local", () => "reviewer", impl);
+    expect(await api.sendMessage("s-1", "摘要太长")).toEqual(refused);
   });
 
   test("没配 Key 时提交被拒，结果里带设置入口而不是抛错", async () => {

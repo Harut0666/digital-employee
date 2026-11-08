@@ -1285,3 +1285,76 @@ button.checklist-line {
   white-space: nowrap;
   min-width: 0;
 }
+
+/* 正在说话的一轮（T40）：说完之前逐字出现，工具调用折成一行 */
+.streaming .caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--primary);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+.streaming .caret.steady {
+  animation: none;
+}
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+.tool-calls {
+  margin-left: 48px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.tool-calls .ant-collapse-header {
+  padding: 6px 10px !important;
+}
+.tool-calls-label {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 1px);
+}
+.tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tool .tool-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+.tool.ok .tool-head {
+  color: var(--primary);
+}
+.tool.bad .tool-head {
+  color: var(--danger, #c0392b);
+}
+.tool code {
+  color: var(--text);
+  background: var(--card);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+.tool-args {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--font-size) - 2px);
+}
+.tool .tool-result {
+  margin: 4px 0 0 22px !important;
+  font-size: calc(var(--font-size) - 1px);
+  color: var(--muted);
+}
+.chat-foot .stop-button {
+  color: var(--danger, #c0392b);
+}

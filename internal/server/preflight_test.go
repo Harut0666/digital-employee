@@ -85,7 +85,7 @@ func TestSubmitWithoutKeyIsBlockedAndWritesNothing(t *testing.T) {
 func TestSessionSubmitWithoutKeyIsBlockedBeforeATaskExists(t *testing.T) {
 	h := newHarness(t, nil, withModelConnection(keylessConnection()))
 	view := h.createSession()
-	h.confirm(view.ID, initiator, harnessEmployee)
+	h.confirmed(view.ID, harnessEmployee)
 	if status, data := h.uploadTo(view.ID, a01Files(t)); status != http.StatusOK {
 		t.Fatalf("上传失败：%d %s", status, data)
 	}

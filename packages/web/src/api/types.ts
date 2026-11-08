@@ -181,6 +181,8 @@ export interface SessionMessage {
   text?: string;
   card?: SessionCard;
   tool?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
   reason?: string;
 }
 
@@ -272,6 +274,48 @@ export type KnowledgeResult = { ok: true; entry: KnowledgeEntry } | { ok: false;
 export type SessionResult =
   | { ok: true; messages: SessionMessage[]; session: SessionSummary }
   | { ok: false; error: string; message: string; settings?: SettingsEntry };
+
+// ---- 会话事件流（T40：说话逐字出现、工具调用可折叠、随时可以停止） ----
+
+/** 发消息的受理结果：接口立即返回，回复在会话事件流里逐字出现 */
+export interface TurnAccepted {
+  ok: true;
+  /** 这一轮的编号；运行中再发的消息排进同一轮 */
+  turn: number;
+}
+
+/** 停止的结果：这一轮说过的部分照常保存，没开始的工具调用记“已取消” */
+export type StopResult = { ok: true; stopped: boolean; turn?: number } | { ok: false; error: string; message: string };
+
+/** 一轮怎么结束的 */
+export type TurnEndReason = "completed" | "stopped" | "error" | "round_limit";
+
+/** 一次工具调用（流里的样子） */
+export interface AgentToolView {
+  id: string;
+  tool: string;
+  args?: Record<string, unknown>;
+  ended: boolean;
+  result?: unknown;
+  reason?: string;
+  isErr?: boolean;
+}
+
+/** 会话事件流里的一件事 */
+export interface SessionAgentEvent {
+  type: "turn_start" | "text_delta" | "tool_start" | "tool_end" | "message" | "turn_end";
+  turn: number;
+  text?: string;
+  id?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  result?: unknown;
+  reason?: string;
+  isErr?: boolean;
+  error?: string;
+  /** message：写进会话的一条消息（卡片随它一起到） */
+  msg?: SessionMessage;
+}
 
 export interface WebApi extends SessionApi, KnowledgeApi {
   listEmployees(): Promise<EmployeeInfo[]>;

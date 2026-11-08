@@ -118,6 +118,7 @@ func (t *turn) proposeCardTool() tool {
 					return nil, fmt.Errorf("任务已经提交，不能再发表单卡片")
 				}
 				t.drafted = true
+
 				return map[string]any{"sent": kind}, nil
 			}
 			if t.current.taskID == "" {
@@ -234,6 +235,7 @@ func (t *turn) fillFormDraftTool(config *contract.EmployeeConfig) tool {
 				return nil, err
 			}
 			t.drafted = true
+
 			return map[string]any{"draft": next}, nil
 		},
 	}

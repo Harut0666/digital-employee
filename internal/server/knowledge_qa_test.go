@@ -28,9 +28,15 @@ func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T
 	}
 	created := h.createSession()
 
-	proposed := h.say(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
+	// 用事件流收：回复返回时这一轮可能刚开出来，还没结束（不能靠取消流来退出）
+	stream := h.openStream(created.ID)
+	defer stream.close()
+	turn := h.sayAsync(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
+	if events := h.waitTurn(stream, turn); events == nil {
+		t.Fatal("看不到这一轮的事件")
+	}
 
-	card := cardOf(t, proposed.Messages, session.CardEmployeeConfirm)
+	card := cardOf(t, h.readSession(created.ID).Messages, session.CardEmployeeConfirm)
 	if card.Proposed != qaEmployee || card.Source != session.SourceModel {
 		t.Fatalf("员工确认卡片 = %+v", card)
 	}
@@ -42,7 +48,8 @@ func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T
 		t.Fatalf("候选员工：%v", names)
 	}
 
-	answered := h.confirm(created.ID, initiator, qaEmployee)
+	// 确认员工：接口立即返回，填表那一轮在会话事件流里跑完
+	answered := h.confirmed(created.ID, qaEmployee)
 
 	if got := textOf(t, answered.Messages, session.KindAssistant); !strings.Contains(got, "停业三天") {
 		t.Fatalf("回答 = %q", got)
@@ -74,9 +81,14 @@ func TestChineseSentenceSearchFindsTheEntry(t *testing.T) {
 		modelSays("查到了。"),
 	}
 	created := h.createSession()
-	h.confirm(created.ID, initiator, qaEmployee)
+	h.confirmed(created.ID, qaEmployee)
 
-	h.say(created.ID, initiator, "华南区域上周有什么异常")
+	stream := h.openStream(created.ID)
+	defer stream.close()
+	turn := h.sayAsync(created.ID, initiator, "华南区域上周有什么异常")
+	if events := h.waitTurn(stream, turn); events == nil {
+		t.Fatal("看不到这一轮的事件")
+	}
 
 	calls := entriesOf(h.readSession(created.ID).Messages, session.KindToolCalled)
 	if len(calls) != 2 {
@@ -166,7 +178,7 @@ func TestQATaskIsOneJudgeStepWithOnlyKnowledgeTools(t *testing.T) {
 		}),
 	}
 	created := h.createSession()
-	h.confirm(created.ID, initiator, qaEmployee)
+	h.confirmed(created.ID, qaEmployee)
 
 	h.submit(created.ID, map[string]any{"question": "第 44 周周报里杭州湖滨店怎么了"})
 

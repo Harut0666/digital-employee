@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,12 +20,17 @@ type ScriptedToolCall struct {
 }
 
 // ScriptedTurn 剧本式假模型的一轮：要么输出文本，要么发起工具调用，要么报错，要么先延迟再继续。
+//
+// ChunkSize 流式输出时每片几个字（按字符算，缺省 0 表示一次说完），方便测试逐字显示。
 type ScriptedTurn struct {
 	Text      *string
 	ToolCalls []ScriptedToolCall
 	Error     *string
 	DelayMS   *int
 	Then      *ScriptedTurn
+	ChunkSize int
+	// Chunks 流式输出时逐片给出的文字（比 ChunkSize 更细的写法）；给了就以它为准，拼起来应与 Text 相同
+	Chunks []string
 }
 
 // UnmarshalJSON 按字段名解析一“轮”剧本（{text} / {toolCalls} / {error} / {delayMs, then}）。
@@ -53,6 +59,20 @@ func (t *ScriptedTurn) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		t.ToolCalls = calls
+	}
+	if value, ok := raw["chunks"]; ok {
+		var pieces []string
+		if err := json.Unmarshal(value, &pieces); err != nil {
+			return err
+		}
+		t.Chunks = pieces
+	}
+	if value, ok := raw["chunkSize"]; ok {
+		var size int
+		if err := json.Unmarshal(value, &size); err != nil {
+			return err
+		}
+		t.ChunkSize = size
 	}
 	if value, ok := raw["delayMs"]; ok {
 		var delay int
@@ -142,6 +162,7 @@ func (p *ScriptedProvider) Resolve(stepID string, ref *contract.ModelRef) (*Reso
 	return &ResolvedStepModel{
 		Model:         p.model,
 		Stream:        p.streamFor(stepID),
+		StreamEvent:   p.streamEventsFor(stepID),
 		ThinkingLevel: thinking,
 		TimeoutMS:     p.options.TimeoutMS,
 		MaxRetries:    p.options.MaxRetries,
@@ -157,6 +178,15 @@ func (p *ScriptedProvider) nextCallID() string {
 
 func (p *ScriptedProvider) buildMessage(turn ScriptedTurn) AssistantMessage {
 	message := NewAssistantMessage(p.model)
+	// 先说话再调工具的轮次：文字和工具调用同时出现在这一条消息里
+	if turn.Text != nil && turn.ToolCalls != nil {
+		message.StopReason = StopToolUse
+		message.Content = append(message.Content, TextBlock(*turn.Text))
+		for _, call := range turn.ToolCalls {
+			message.Content = append(message.Content, ToolCallBlock(p.nextCallID(), call.Name, call.Arguments))
+		}
+		return message
+	}
 	switch {
 	case turn.Error != nil:
 		message.StopReason = StopError
@@ -172,6 +202,81 @@ func (p *ScriptedProvider) buildMessage(turn ScriptedTurn) AssistantMessage {
 		message.Content = []ContentBlock{TextBlock(*turn.Text)}
 	}
 	return message
+}
+
+// streamEventsFor 流式版本：文字按 ChunkSize 分片逐段回调，与真实提供者的增量推送一致。
+func (p *ScriptedProvider) streamEventsFor(stepID string) EventStreamFunc {
+	return func(ctx context.Context, model Model, request StreamRequest, options EventStreamOptions) (*AssistantMessage, error) {
+		run := p.streamFor(stepID)
+		message, err := run(ctx, model, request, options.StreamOptions)
+
+		if err != nil || message == nil || message.StopReason == StopError || message.StopReason == StopAborted {
+			// 报错、中止的轮次不推文字
+			return message, err
+		}
+		// 文字先逐片推出（工具调用轮次也常有半句话），工具调用随整条消息一起交给调用方
+		text := PartialText(message)
+
+		pieces, preset := p.chunksOf(stepID)
+		if !preset {
+			pieces = splitText(text, p.chunkSizeOf(stepID))
+		}
+		written := strings.Builder{}
+		for _, piece := range pieces {
+			if options.OnText != nil {
+
+				options.OnText(piece)
+			}
+			written.WriteString(piece)
+			// 每片之后都可能是停止：已经说出的部分留在消息里
+			if ctx.Err() != nil {
+				partial := NewAssistantMessage(model)
+				partial.StopReason = StopAborted
+				partial.Content = []ContentBlock{TextBlock(written.String())}
+				return &partial, nil
+			}
+		}
+		return message, nil
+	}
+}
+
+// chunksOf 最近一轮剧本逐片给出的文字（没有写时 preset 为 false）。
+func (p *ScriptedProvider) chunksOf(stepID string) ([]string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	index := p.cursors[stepID] - 1
+	if turns, ok := p.script[stepID]; ok && index >= 0 && index < len(turns) && len(turns[index].Chunks) > 0 {
+		return turns[index].Chunks, true
+	}
+	return nil, false
+}
+
+// chunkSizeOf 最近一轮剧本的分片大小。
+func (p *ScriptedProvider) chunkSizeOf(stepID string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	index := p.cursors[stepID] - 1
+	if turns, ok := p.script[stepID]; ok && index >= 0 && index < len(turns) {
+		return turns[index].ChunkSize
+	}
+	return 0
+}
+
+// splitText 按字符把文字切成若干片；size 不大于 0 时整段一片。
+func splitText(text string, size int) []string {
+	if text == "" {
+		return nil
+	}
+	runes := []rune(text)
+	if size <= 0 {
+		size = len(runes)
+	}
+	pieces := make([]string, 0, (len(runes)+size-1)/size)
+	for start := 0; start < len(runes); start += size {
+		end := min(start+size, len(runes))
+		pieces = append(pieces, string(runes[start:end]))
+	}
+	return pieces
 }
 
 func (p *ScriptedProvider) streamFor(stepID string) StreamFunc {
@@ -219,6 +324,7 @@ func (p *ScriptedProvider) streamFor(stepID string) StreamFunc {
 				fmt.Sprintf("剧本已用完：步骤 %s 第 %d 轮没有预设响应", stepID, index+1))
 			return &failed, nil
 		}
+
 		message := p.buildMessage(*turn)
 		return &message, nil
 	}

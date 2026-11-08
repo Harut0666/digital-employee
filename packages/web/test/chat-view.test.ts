@@ -180,4 +180,29 @@ describe("deriveChat", () => {
     const legacy = deriveChat(session([notice, filing({ draftFailed: true })], { status: "closed", taskId: "t1", readOnly: true }), deliveredTask).at(-1);
     expect(legacy?.kind === "filing" && [legacy.active, legacy.canDraft, legacy.draftFailed]).toEqual([true, false, true]);
   });
-});
+
+  test("正在说的一轮：逐字出现的文字跟在最后一条之后，工具调用单独列出", () => {
+    const items = deriveChat(
+      session([msg({ kind: "user", role: "initiator", text: "出周报" })], { status: "drafting", employee: "weekly-report" }),
+      undefined,
+      {
+        turn: 2,
+        text: "先看看任务",
+        tools: [{ id: "c1", tool: "query_task", args: { taskId: "t1" }, ended: true, result: { state: "awaiting_initiator" } }],
+      },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools", "streaming"]);
+    const tools = items[1];
+    expect(tools?.kind === "tools" && tools.turn).toBe(2);
+    expect(tools?.kind === "tools" && tools.items.map((t) => [t.tool, t.ended, t.isErr ?? false])).toEqual([["query_task", true, false]]);
+    const streaming = items[2];
+    expect(streaming?.kind === "streaming" && [streaming.turn, streaming.text]).toEqual([2, "先看看任务"]);
+  });
+
+  test("没在说的时候不显示空的行；只发了工具调用也照常列出", () => {
+    const base = session([msg({ kind: "user", role: "initiator", text: "出周报" })], { status: "drafting", employee: "weekly-report" });
+    expect(deriveChat(base, undefined, { turn: 1, text: "", tools: [] }).map((i) => i.kind)).toEqual(["user"]);
+    expect(deriveChat(base).map((i) => i.kind)).toEqual(["user"]);
+    const calling = deriveChat(base, undefined, { turn: 1, text: "", tools: [{ id: "c1", tool: "fill_form_draft", ended: false }] });
+    expect(calling.map((i) => i.kind)).toEqual(["user", "tools"]);
+  });});

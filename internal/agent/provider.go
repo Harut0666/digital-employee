@@ -40,8 +40,10 @@ type StreamFunc func(ctx context.Context, model Model, request StreamRequest, op
 
 // ResolvedStepModel 一个步骤实际使用的模型与参数。
 type ResolvedStepModel struct {
-	Model         Model
-	Stream        StreamFunc
+	Model  Model
+	Stream StreamFunc
+	// StreamEvent 流式调用（前台 Agent 逐字推送）；为 nil 时 EventStream 退回到 Stream
+	StreamEvent   EventStreamFunc
 	APIKey        string
 	ThinkingLevel string
 	TimeoutMS     *int

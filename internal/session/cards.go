@@ -136,8 +136,45 @@ func (m *Manager) withTask(messages []Message, taskID string, current *record) (
 			}
 		}
 	}
-	sort.SliceStable(merged, func(i, j int) bool { return parseTime(merged[i].TS).Before(parseTime(merged[j].TS)) })
-	return merged, m.attachActions(merged, taskID, events)
+	return orderMessages(merged), m.attachActions(merged, taskID, events)
+}
+
+// orderMessages 按时间排好会话消息，再把一轮里已经说出的部分放回 Agent 的回复之后：
+// 一轮的文字增量与这一轮的卡片、工具留痕、最后那条完整回复时间交错，但显示时它们都是那条回复的一部分。
+func orderMessages(messages []Message) []Message {
+	sort.SliceStable(messages, func(i, j int) bool { return parseTime(messages[i].TS).Before(parseTime(messages[j].TS)) })
+	deltas := map[int64][]Message{}
+	final := map[int64]bool{}
+	for _, message := range messages {
+		switch {
+		case message.Kind == KindTurnText:
+			deltas[message.Turn] = append(deltas[message.Turn], message)
+		case message.Kind == KindAssistant && message.Turn != 0:
+			final[message.Turn] = true
+		}
+	}
+	// 已经写完完整回复的轮次：增量放在这条回复之后；还没写完的：放在原来的位置，边说边显示
+	out := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if message.Kind != KindTurnText {
+			out = append(out, message)
+			continue
+		}
+		if !final[message.Turn] {
+			out = append(out, message)
+		}
+	}
+	if len(final) == 0 {
+		return out
+	}
+	merged := make([]Message, 0, len(messages))
+	for _, message := range out {
+		merged = append(merged, message)
+		if message.Kind == KindAssistant && message.Turn != 0 {
+			merged = append(merged, deltas[message.Turn]...)
+		}
+	}
+	return merged
 }
 
 // filingMessage 交付之后的入库确认卡片：紧跟在“任务已交付”之后。

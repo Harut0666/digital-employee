@@ -5,7 +5,6 @@
 package session
 
 import (
-	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -84,7 +83,12 @@ type Manager struct {
 	deps  Deps
 	store *store
 	mu    sync.Mutex
-	turns map[string]*sync.Mutex
+
+	// jobs 每个会话正在跑的那一轮；buses 每个会话的事件订阅
+	jobs  map[string]*turnJob
+	buses map[string]*bus
+	// turnSeq 每个会话已经开到第几轮
+	turnSeq map[string]int64
 }
 
 // New 组装会话模块。
@@ -92,7 +96,10 @@ func New(deps Deps) *Manager {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Manager{deps: deps, store: newStore(deps.Dir, deps.Now), turns: map[string]*sync.Mutex{}}
+	return &Manager{
+		deps: deps, store: newStore(deps.Dir, deps.Now),
+		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
+	}
 }
 
 // ErrWorkspaceUnknown 会话所属的工作区没有登记过，也查不到它的目录。
@@ -117,6 +124,8 @@ type View struct {
 	WaitingFor []contract.Role    `json:"waitingFor"`
 	// Checklist 开工清单，读单个会话时才有；没有员工或员工没有清单时为空
 	Checklist *Checklist `json:"checklist,omitempty"`
+	// AgentRunning 前台 Agent 正在回复：列表的状态点显示“运行中”，发送按钮变成停止按钮（Spec 0006）
+	AgentRunning bool `json:"agentRunning,omitempty"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -163,6 +172,8 @@ func (m *Manager) Get(id string) (*Detail, error) {
 		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
 			return nil, err
 		}
+	} else {
+		messages = orderMessages(messages)
 	}
 	view, err := m.fullView(current)
 	if err != nil {
@@ -178,30 +189,43 @@ type Reply struct {
 	Session  *View     `json:"session"`
 }
 
-// begin 占住会话：同一时间只处理一条回复，避免两次模型循环同时改草稿。
+// begin 占住会话的写锁：Agent 正在回复时人的操作会被拒绝，避免两边同时改草稿。
+// 确认员工、提交、上传材料和给清单项打勾都是人的操作，模型调用不占这把锁。
+//
+// 写锁不可重入：这一轮的循环（turnLoop）自己已经拿着它，写日志时用无锁的 beginUnlocked。
 func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
+	return m.beginLocked(id, role, false)
+}
+
+// beginUnlocked 不用写锁、也不检查忙：只给发消息和已经占着这一轮写锁的循环用。
+func (m *Manager) beginUnlocked(id string, role contract.Role) (*turn, func(), error) {
+	return m.beginLocked(id, role, true)
+}
+
+func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*turn, func(), error) {
 	if _, err := m.load(id); err != nil {
 		return nil, nil, err
 	}
-	m.mu.Lock()
-	lock := m.turns[id]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		m.turns[id] = lock
+	lock := m.store.lockOf(id)
+	if unlocked {
+		current, err := m.load(id)
+		if err != nil {
+			return nil, nil, err
+		}
+		return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, func() {}, nil
 	}
-	m.mu.Unlock()
-	if !lock.TryLock() {
+	// 写锁被别人拿着：前台 Agent 正在这一轮里干活，人的操作（确认员工、提交、给清单项打勾）要等它说完
+	if !lock.TryLock(0) {
 		return nil, nil, failure(ErrSessionBusy, "上一条消息还在处理，请稍候")
 	}
 	// 拿到锁之后才读，看到的才是上一条回复写完的状态
 	current, err := m.load(id)
 	if err != nil {
-		lock.Unlock()
+		lock.Unlock(0)
 		return nil, nil, err
 	}
-	return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, lock.Unlock, nil
+	return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, func() { lock.Unlock(0) }, nil
 }
-
 func (m *Manager) reply(t *turn) (*Reply, error) {
 	messages := visibleMessages(t.out)
 	if taskID := t.current.taskID; taskID != "" {
@@ -231,47 +255,53 @@ func (m *Manager) fullView(current *record) (*View, error) {
 	return view, nil
 }
 
-// Send 收一条人的消息，等前台 Agent 回复完。
-func (m *Manager) Send(ctx context.Context, id string, role contract.Role, text string) (*Reply, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, failure(contract.ErrInvalidInput, "消息不能为空")
-	}
-	t, done, err := m.begin(id, role)
-	if err != nil {
-		return nil, err
-	}
-	defer done()
-	if err := t.write(Message{Kind: KindUser, Role: role, Text: text}); err != nil {
-		return nil, err
-	}
-	if t.current.employee == "" {
-		err = t.route(ctx)
-	} else if err = t.assist(ctx, t.history()); err == nil {
-		err = t.flushCards()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return m.reply(t)
-}
-
 // Confirm 人在卡片上确认由哪个员工接手。这是人的动作，Agent 没有对应的工具。
-func (m *Manager) Confirm(ctx context.Context, id string, role contract.Role, employee string) (*Reply, error) {
+// 人说过话时紧接着开一轮，让 Agent 据此填表（这就是“下一步”）。
+func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以确认员工")
 	}
 	t, done, err := m.begin(id, role)
 	if err != nil {
+	
 		return nil, err
 	}
-	defer done()
+	err = m.confirmLocked(t, employee)
+
+	if err != nil {
+		if _, ok := err.(*handoverPending); !ok {
+			done()
+			return nil, err
+		}
+		// 写锁还拿着就把填表那轮登记上：从这一刻起它就算在跑，紧接着发来的消息按插话送进这一轮。
+		// 这一轮自己放锁后再去调模型，由它在下一步之前接着填表。
+		var job *turnJob
+		job, err = m.startTurnLocked(id)
+		if err == nil {
+			noteSteer(job)
+		}
+		done()
+		if err != nil {
+			return nil, err
+		}
+	}
+	done()
+	return m.reply(t)
+}
+
+// handoverPending 确认员工时人说过话：填表交给下一轮，不在这次请求里等模型。
+type handoverPending struct{}
+
+func (*handoverPending) Error() string { return "handover pending" }
+
+// confirmLocked 写确认员工和接手说明；人说过话时返回 handoverPending。
+func (m *Manager) confirmLocked(t *turn, employee string) error {
 	if t.current.employee != "" {
-		return nil, failure(contract.ErrIllegalTransition, "这个会话已由员工接手")
+		return failure(contract.ErrIllegalTransition, "这个会话已由员工接手")
 	}
 	employees, err := m.deps.Employees()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	name := ""
 	for _, candidate := range employees {
@@ -280,28 +310,20 @@ func (m *Manager) Confirm(ctx context.Context, id string, role contract.Role, em
 		}
 	}
 	if name == "" {
-		return nil, failure(contract.ErrInvalidInput, "没有这个员工：%s", employee)
+		return failure(contract.ErrInvalidInput, "没有这个员工：%s", employee)
 	}
 	if err := t.write(Message{Kind: kindEmployeeSet, Employee: employee}); err != nil {
-		return nil, err
+		return err
 	}
 	if err := t.write(Message{Kind: KindNotice, Text: name + "已接手。"}); err != nil {
-		return nil, err
+		return err
 	}
 	if t.current.spoken() {
-		// 人说过的话不用再说一遍：让 Agent 据此填表
-		conversation := append(t.history(), textMessage("user", handoverNote))
-		if err := t.assist(ctx, conversation); err != nil {
-			return nil, err
-		}
+		// 人说过的话不用再说一遍：让 Agent 据此填表（这算一条插话，由新一轮在下一步之前送达）
+		return &handoverPending{}
 	}
-	if !t.drafted {
-		t.cards = append(t.cards, t.formCard())
-	}
-	if err := t.flushCards(); err != nil {
-		return nil, err
-	}
-	return m.reply(t)
+	t.cards = append(t.cards, t.formCard())
+	return t.flushCards()
 }
 
 // AddAttachments 把人上传的材料暂存进会话，提交时才进任务。
@@ -496,7 +518,16 @@ func (m *Manager) view(current *record) *View {
 		view.Status = StatusTask
 		m.applyTask(view, current.taskID)
 	}
+	// 前台 Agent 正在回复：列表上的状态点显示“运行中”（Spec 0006）
+	view.AgentRunning = m.runningOf(current.id)
 	return view
+}
+
+// runningOf 会话现在有没有一轮在跑。
+func (m *Manager) runningOf(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.jobs[id] != nil
 }
 
 // applyTask 把任务摘要投影到会话上。

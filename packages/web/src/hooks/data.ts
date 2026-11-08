@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
-import type { EmployeeInfo, PreflightResult, SessionDetail, SessionSummary, TaskSnapshot, WebApi } from "../api";
+import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, SessionSummary, TaskSnapshot, WebApi } from "../api";
 import { deriveSessionView, type SessionView } from "../view/session-view";
 
 export const ApiContext = createContext<WebApi | null>(null);
@@ -75,6 +75,60 @@ export function useSession(id: string | undefined): SessionState {
   // 切换会话时先清空，避免短暂显示上一个会话
   useEffect(() => setDetail(undefined), [id]);
   return { detail: detail?.id === id ? detail : undefined, error, reload };
+}
+
+export interface LiveState {
+  /** 正在说的一轮：逐字出现的文字和已经调用的工具（说完会变成会话里的消息） */
+  live?: { turn: number; text: string; tools: AgentToolView[]; running: boolean };
+}
+
+/**
+ * 订阅一个会话的事件流（T40）：说的话逐字出现，工具调用逐个列出，一轮结束时让调用方重读会话。
+ * 切走会话时断开；正在说的那一轮在切回来时会重读会话补上。
+ */
+export function useSessionStream(id: string | undefined, onTurnEnd: () => void): LiveState {
+  const api = useApi();
+  const [live, setLive] = useState<LiveState["live"]>();
+  const ended = useRef(onTurnEnd);
+  ended.current = onTurnEnd;
+  useEffect(() => {
+    setLive(undefined);
+    if (!id) return;
+    const apply = (event: SessionAgentEvent) => {
+      setLive((prev) => {
+        switch (event.type) {
+          case "turn_start":
+            return { turn: event.turn, text: "", tools: [], running: true };
+          case "text_delta":
+            if (prev && prev.turn === event.turn) return { ...prev, running: true, text: prev.text + (event.text ?? "") };
+            return { turn: event.turn, text: event.text ?? "", tools: [], running: true };
+          case "tool_start": {
+            const base = prev && prev.turn === event.turn ? prev : { turn: event.turn, text: "", tools: [], running: true };
+            const tool: AgentToolView = { id: event.id ?? "", tool: event.tool ?? "", args: event.args, ended: false };
+            return { ...base, running: true, tools: [...base.tools.filter((t) => t.id !== tool.id), tool] };
+          }
+          case "tool_end": {
+            if (!prev || prev.turn !== event.turn) return prev;
+            return {
+              ...prev,
+              tools: prev.tools.map((t) =>
+                t.id === event.id ? { ...t, ended: true, result: event.result, reason: event.reason, isErr: event.isErr } : t,
+              ),
+            };
+          }
+          case "turn_end":
+            if (prev && prev.turn === event.turn) return { ...prev, running: false };
+            return prev;
+          default:
+            // message：写进会话的卡片和其它消息，由一轮结束时重读会话补齐
+            return prev;
+        }
+      });
+      if (event.type === "turn_end") ended.current();
+    };
+    return api.subscribeSession(id, apply);
+  }, [api, id]);
+  return { live };
 }
 
 /** 提交前检查：新对话首屏用它提示配置 Key。reload 在设置保存后重查。 */

@@ -69,6 +69,8 @@ func a01Files(t *testing.T) []upload {
 
 type harnessConfig struct {
 	workflowEdits [][2]string
+	// system 默认模型连接：引擎（任务步骤、判断步骤）走它；不给就用剧本模型
+	system *contract.ModelConnection
 	connection    *contract.ModelConnection
 	env           map[string]string
 	wrapModel     func(agent.ModelProvider) agent.ModelProvider
@@ -102,6 +104,11 @@ func withWorkflowEdit(old, replacement string) harnessOption {
 // withModelConnection 不用剧本：引擎走真实模型提供者，这条连接写进工作区设置并设为默认。
 func withModelConnection(connection contract.ModelConnection) harnessOption {
 	return func(config *harnessConfig) { config.connection = &connection }
+}
+
+// withSystemConnection 引擎走这条真实连接，前台 Agent 仍然用剧本模型（各自给各自的模型）。
+func withSystemConnection(connection contract.ModelConnection) harnessOption {
+	return func(config *harnessConfig) { config.system = &connection }
 }
 
 // withEnv 注入服务端看到的环境变量。
@@ -194,6 +201,20 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		}
 		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
 	}
+	var frontdesk agent.ModelProvider = provider
+	if config.connection == nil && config.system != nil {
+		// 引擎的模型写进设置并设为默认：读设置得到的就是它
+		connection := *config.system
+		if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
+			doc.Connections = []contract.ModelConnection{connection}
+			doc.DefaultConnection = connection.Name
+			doc.DefaultModel = connection.Models[0]
+		}); err != nil {
+			t.Fatalf("写模型设置失败：%v", err)
+		}
+		model = agent.NewModelProvider(settings.LoadModelSettings(workspace, settings.Env(env)))
+		frontdesk = model
+	}
 	if config.wrapModel != nil {
 		model = config.wrapModel(model)
 	}
@@ -218,6 +239,9 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	h := &harness{
 		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
+	}
+	if config.connection == nil && config.system != nil {
+		h.frontdesk = frontdesk
 	}
 	h.baseURL = h.serve()
 	return h

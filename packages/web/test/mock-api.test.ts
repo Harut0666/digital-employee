@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createMockApi } from "../src/api/mock";
-import type { UiRole } from "../src/api/types";
+import type { SessionAgentEvent, UiRole } from "../src/api/types";
 
 const asRole = (initial: UiRole) => {
   let role = initial;
@@ -64,14 +64,36 @@ describe("模拟数据模式", () => {
 describe("模拟数据模式的会话", () => {
   const cards = (messages: { card?: { type: string } }[]) => messages.flatMap((m) => (m.card ? [m.card.type] : []));
 
+  /** 收一个会话的事件，等到这一轮说完（收到 turn_end） */
+  async function turnOf(api: { subscribeSession(id: string, onEvent: (e: SessionAgentEvent) => void): () => void }, id: string, turn: number) {
+    const events: SessionAgentEvent[] = [];
+    const stop = api.subscribeSession(id, (e) => events.push(e));
+    const deadline = Date.now() + 3000;
+    while (!events.some((e) => e.type === "turn_end" && e.turn === turn)) {
+      if (Date.now() > deadline) throw new Error(`等不到第 ${turn} 轮的结束：${JSON.stringify(events)}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    stop();
+    return events;
+  }
+
   test("说一句话 → 确认员工 → 表单草稿 → 上传 → 提交，会话绑定任务", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
     expect(created.status).toBe("reception");
 
+    // 接口立即受理；说的话在事件流里逐字出现，说完才写进消息
     const said = await api.sendMessage(created.id, "帮我出第 44 周的周报");
-    expect(said.ok && cards(said.messages)).toEqual(["employee_confirm"]);
-    const proposal = said.ok ? said.messages.find((m) => m.card)?.card : undefined;
+    expect(said).toEqual({ ok: true, turn: 1 });
+    const events = await turnOf(api, created.id, 1);
+    expect(events.map((e) => e.type)).toContain("text_delta");
+    expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "completed" });
+    // 先订阅、后发消息：最早的字可能已经先到，这里只核对收得全的部分\n    const streamed = events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");\n    expect("这项工作适合由经营周报员工接手，请确认。".endsWith(streamed)).toBe(true);\n    expect(streamed.length).toBeGreaterThan(0);
+    expect(events.filter((e) => e.type === "tool_start").map((e) => e.tool)).toEqual(["propose_employee"]);
+
+    const first = await api.getSession(created.id);
+    expect(cards(first.messages)).toEqual(["employee_confirm"]);
+    const proposal = first.messages.find((m) => m.card)?.card;
     expect(proposal?.proposed).toBe("weekly-report");
 
     const confirmed = await api.confirmEmployee(created.id, "weekly-report");
@@ -114,6 +136,26 @@ describe("模拟数据模式的会话", () => {
     const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 } });
     const taskId = submitted.ok ? submitted.session.taskId : undefined;
     expect((await api.getTask(taskId!))?.form).toMatchObject({ allowMissingMinutes: true });
+  });
+
+  test("正在说的时候发的话排进这一轮；点停止，已说的部分以“已中断”保存", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    const first = await api.sendMessage(created.id, "出周报");
+    expect(first).toEqual({ ok: true, turn: 1 });
+    // 还没说完就再发一句、再点停止
+    const events = turnOf(api, created.id, 1);
+    expect(await api.sendMessage(created.id, "顺便看看华南")).toEqual({ ok: true, turn: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 12));
+    expect(await api.stopTurn(created.id)).toMatchObject({ ok: true, stopped: true, turn: 1 });
+    const seen = await events;
+    expect(seen.at(-1)).toMatchObject({ type: "turn_end", reason: "stopped" });
+    const detail = await api.getSession(created.id);
+    const last = detail.messages.at(-1);
+    expect(last?.kind).toBe("assistant");
+    expect(last?.text).toContain("（已中断）");
+    // 没在说的时候停止什么也不做
+    expect(await api.stopTurn(created.id)).toEqual({ ok: true, stopped: false });
   });
 
   test("只有发起人能确认员工和提交；没确认员工不能提交", async () => {

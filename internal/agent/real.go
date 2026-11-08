@@ -6,6 +6,7 @@
 package agent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -112,6 +113,9 @@ func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepM
 		Stream: func(ctx context.Context, model Model, request StreamRequest, streamOptions StreamOptions) (*AssistantMessage, error) {
 			return streamOpenAICompatible(ctx, model, request, streamOptions, thinkingLevel)
 		},
+		StreamEvent: func(ctx context.Context, model Model, request StreamRequest, streamOptions EventStreamOptions) (*AssistantMessage, error) {
+			return streamOpenAICompatibleEvents(ctx, model, request, streamOptions, thinkingLevel)
+		},
 		APIKey:        connectionCopy.APIKey,
 		ThinkingLevel: thinkingLevel,
 		TimeoutMS:     connection.TimeoutMS,
@@ -141,7 +145,7 @@ func contractModelToAgent(connection contract.ModelConnection, modelID string, r
 
 type openAIChatRequest struct {
 	Model string `json:"model"`
-	// Stream 恒为 false：Go 版一次调用取完整响应，SSE 只用于把事件推给前端
+	// Stream 判断步骤为 false（一次取完整响应），前台 Agent 为 true（逐字推送）
 	Stream    bool             `json:"stream"`
 	Messages  []map[string]any `json:"messages"`
 	Tools     []map[string]any `json:"tools,omitempty"`
@@ -179,10 +183,11 @@ type openAIChatResponse struct {
 	} `json:"error"`
 }
 
-func streamOpenAICompatible(ctx context.Context, model Model, request StreamRequest, options StreamOptions, thinkingLevel string) (*AssistantMessage, error) {
+// openAIBody 组装请求体；stream 决定用一次性响应还是 SSE。
+func openAIBody(model Model, request StreamRequest, options StreamOptions, thinkingLevel string, stream bool) ([]byte, error) {
 	body := openAIChatRequest{
 		Model:     model.ID,
-		Stream:    false,
+		Stream:    stream,
 		MaxTokens: model.MaxTokens,
 	}
 	if options.MaxTokens > 0 {
@@ -204,22 +209,34 @@ func streamOpenAICompatible(ctx context.Context, model Model, request StreamRequ
 	if thinkingLevel != "" && thinkingLevel != contract.ThinkingOff {
 		body.ReasoningEffort = thinkingLevel
 	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
+	return json.Marshal(body)
+}
 
+// callTimeout 一次调用的超时：选项里的优先，否则步骤内置值。
+func callTimeout(options StreamOptions) time.Duration {
 	timeout := time.Duration(BuiltinStepTimeoutMS) * time.Millisecond
 	if options.TimeoutMS != nil && *options.TimeoutMS > 0 {
 		timeout = time.Duration(*options.TimeoutMS) * time.Millisecond
 	}
-	attempts := 1
-	if options.MaxRetries > 0 {
-		attempts += options.MaxRetries
-	}
+	return timeout
+}
 
+// attemptsOf 一次调用最多试几次（1 + 重试次数）。
+func attemptsOf(options StreamOptions) int {
+	if options.MaxRetries > 0 {
+		return 1 + options.MaxRetries
+	}
+	return 1
+}
+
+func streamOpenAICompatible(ctx context.Context, model Model, request StreamRequest, options StreamOptions, thinkingLevel string) (*AssistantMessage, error) {
+	raw, err := openAIBody(model, request, options, thinkingLevel, false)
+	if err != nil {
+		return nil, err
+	}
+	timeout := callTimeout(options)
 	var lastError error
-	for attempt := 1; attempt <= attempts; attempt++ {
+	for attempt := 1; attempt <= attemptsOf(options); attempt++ {
 		response, err := postChatCompletion(ctx, model, raw, options.APIKey, timeout)
 		if err != nil {
 			lastError = err
@@ -276,6 +293,333 @@ func postChatCompletion(ctx context.Context, model Model, body []byte, apiKey st
 		return nil, newModelCallError(contract.ModelErrorServer, apiKey, "模型接口报错：%s", parsed.Error.Message)
 	}
 	return &parsed, nil
+}
+
+// openAIStreamAnswer 把一次性返回的完整回答拆成“流”：响应体是整段 JSON（服务不支持流式，或回了错误体）。
+// 按增量逐段交出文字，调用方看到的效果和真流式一样。
+type openAIStreamAnswer struct {
+	answer openAIChatResponse
+	raw    []byte
+}
+
+// streamAsEvents 逐段交出文字以后，按整条消息收尾。
+func (a *openAIStreamAnswer) streamAsEvents(model Model, onText func(string)) *AssistantMessage {
+	message := responseToAssistantMessage(model, &a.answer)
+	for _, block := range message.Content {
+		if block.Type == ContentText && block.Text != "" && onText != nil {
+			onText(block.Text)
+		}
+	}
+	return &message
+}
+
+// streamOpenAICompatibleEvents 前台 Agent 的流式调用：文字增量边到边回调，工具调用参数拼齐。
+//
+// 只在还没有任何输出时才重试（连不上、接口拒绝请求）：已经开始输出之后重试会让人看到两遍开头。
+// 中途断流不算 Go 错误，按“以 error 结束、保留已输出部分”返回，由调用方写进会话日志。
+func streamOpenAICompatibleEvents(ctx context.Context, model Model, request StreamRequest, options EventStreamOptions, thinkingLevel string) (*AssistantMessage, error) {
+	raw, err := openAIBody(model, request, options.StreamOptions, thinkingLevel, true)
+	if err != nil {
+		return nil, err
+	}
+	timeout := callTimeout(options.StreamOptions)
+	var lastError error
+	for attempt := 1; attempt <= attemptsOf(options.StreamOptions); attempt++ {
+		message, err := postChatCompletionStream(ctx, model, raw, options, timeout)
+		if err == nil {
+			return message, nil
+		}
+		lastError = err
+		if ctx.Err() != nil || !retriesCanHelp(err) {
+			break
+		}
+	}
+	if lastError == nil {
+		lastError = fmt.Errorf("模型调用失败")
+	}
+	return nil, lastError
+}
+
+// postSSE 发请求并返回 SSE 响应；状态码不对时返回错误（由调用方决定重试）。
+// 正文开头的几行先看一眼：有的服务在 200 里回一个错误体，或者整段回答（不支持流式）。
+// 两种情况都从看过的地方接着读，正文一个字节不丢。
+func postSSE(ctx context.Context, model Model, body []byte, apiKey string, timeout time.Duration, onOpen func()) (*http.Response, context.CancelFunc, error) {
+	callCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	url := strings.TrimRight(model.BaseURL, "/") + "/chat/completions"
+	request, err := http.NewRequestWithContext(callCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		cancel()
+		return nil, nil, newModelCallError(contract.ModelErrorNetwork, apiKey, "%v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "text/event-stream")
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	response, err := (&http.Client{}).Do(request)
+	if err != nil {
+		cancel()
+		return nil, nil, newModelCallError(contract.ModelErrorNetwork, apiKey, "%v", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		response.Body.Close()
+		cancel()
+		return nil, nil, newModelCallError(modelErrorKindOf(response.StatusCode), apiKey,
+			"模型接口返回 %d：%s", response.StatusCode, truncate(string(raw), 500))
+	}
+	response.Body = &bufferedBody{Reader: bufio.NewReader(response.Body), closer: response.Body}
+	if onOpen != nil {
+		onOpen()
+	}
+	return response, cancel, nil
+}
+
+// bufferedBody 正文前面多包一层缓冲：看过开头的几行之后还能接着读。
+type bufferedBody struct {
+	*bufio.Reader
+	closer io.Closer
+}
+
+func (b *bufferedBody) Close() error { return b.closer.Close() }
+// SSE 分片里出现的字段（只取用得到的部分）。
+type openAIStreamChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				// Index 并行工具调用的序号；有的服务不带，按出现顺序追加
+				Index    *int   `json:"index"`
+				ID       string `json:"id"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *openAIStreamChunkUsage `json:"usage"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// streamCall 一个正在拼的工具调用。
+type streamCall struct {
+	index int
+	id    string
+	name  string
+	args  strings.Builder
+}
+
+// sseParser 把 SSE 的 data 帧拼成一条完整的助手消息。
+type sseParser struct {
+	message   AssistantMessage
+	text      strings.Builder
+	calls     []*streamCall
+	finish    string
+	usage     *openAIStreamChunkUsage
+	onText    func(string)
+	lastError string
+}
+
+// openAIStreamChunkUsage 流式分片里的用量。
+type openAIStreamChunkUsage struct {
+	PromptTokens        int `json:"prompt_tokens"`
+	CompletionTokens    int `json:"completion_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+	PromptTokensDetails struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+}
+
+func newSSEParser(model Model, onText func(string)) *sseParser {
+	return &sseParser{message: NewAssistantMessage(model), onText: onText}
+}
+
+// feed 处理一帧；返回 true 表示收到了 [DONE]。
+func (p *sseParser) feed(data string) bool {
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return false
+	}
+	if data == "[DONE]" {
+		return true
+	}
+	var chunk openAIStreamChunk
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		// 不认识的分片不影响已经收到的内容
+		return false
+	}
+	if chunk.Error != nil && chunk.Error.Message != "" {
+		p.lastError = chunk.Error.Message
+	}
+	if chunk.Usage != nil {
+		p.usage = chunk.Usage
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != "" {
+			p.text.WriteString(choice.Delta.Content)
+			if p.onText != nil {
+				p.onText(choice.Delta.Content)
+			}
+		}
+		for _, fragment := range choice.Delta.ToolCalls {
+			p.call(fragment.Index, fragment.ID, fragment.Function.Name, fragment.Function.Arguments)
+		}
+		if choice.FinishReason != nil && *choice.FinishReason != "" {
+			p.finish = *choice.FinishReason
+		}
+	}
+	return false
+}
+
+// call 收下一段工具调用：同名同序号的后续分片追加参数。
+func (p *sseParser) call(index *int, id, name, arguments string) {
+	var target *streamCall
+	if index != nil {
+		for _, existing := range p.calls {
+			if existing.index == *index {
+				target = existing
+			}
+		}
+	}
+	if target == nil && index == nil && len(p.calls) > 0 {
+		// 不带序号的增量：属于上一个调用
+		last := p.calls[len(p.calls)-1]
+		if last.id == id || id == "" {
+			target = last
+		}
+	}
+	if target == nil {
+		next := 0
+		if index != nil {
+			next = *index
+		} else if len(p.calls) > 0 {
+			next = p.calls[len(p.calls)-1].index + 1
+		}
+		target = &streamCall{index: next}
+		p.calls = append(p.calls, target)
+	}
+	if id != "" {
+		target.id = id
+	}
+	if name != "" {
+		target.name = name
+	}
+	target.args.WriteString(arguments)
+}
+
+// done 拼成完整的助手消息：文字在前，工具调用在后（与一次性响应一致）。
+func (p *sseParser) done(model Model) *AssistantMessage {
+	message := p.message
+	message.Model = model.ID
+	blocks := make([]ContentBlock, 0, len(p.calls)+1)
+	if p.text.Len() > 0 {
+		blocks = append(blocks, TextBlock(p.text.String()))
+	}
+	toolCalls := 0
+	for _, call := range p.calls {
+		if call.name == "" {
+			continue
+		}
+		toolCalls++
+		blocks = append(blocks, ToolCallBlock(call.id, call.name, parseArguments(call.args.String())))
+	}
+	message.Content = blocks
+	if p.usage != nil {
+		message.Usage.Input = p.usage.PromptTokens
+		message.Usage.Output = p.usage.CompletionTokens
+		message.Usage.TotalTokens = p.usage.TotalTokens
+		if message.Usage.TotalTokens == 0 {
+			message.Usage.TotalTokens = message.Usage.Input + message.Usage.Output
+		}
+		message.Usage.CacheRead = p.usage.PromptTokensDetails.CachedTokens
+	}
+	switch {
+	case toolCalls > 0 || p.finish == "tool_calls":
+		message.StopReason = StopToolUse
+	default:
+		message.StopReason = StopStop
+	}
+	return &message
+}
+
+// parseArguments 工具参数是整段 JSON 时解析成对象；拆坏的按原文保留，交给模型自己纠正。
+func parseArguments(raw string) map[string]any {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]any{}
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		return parsed
+	}
+	return map[string]any{"_raw": raw}
+}
+
+// postChatCompletionStream 发一次流式请求并读完事件流。
+// 已开始输出之后不再重试：断流、取消都以消息（而不是 error）结束。
+func postChatCompletionStream(ctx context.Context, model Model, body []byte, options EventStreamOptions, timeout time.Duration) (*AssistantMessage, error) {
+	response, cancel, err := postSSE(ctx, model, body, options.APIKey, timeout, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		response.Body.Close()
+		cancel()
+	}()
+
+	reader := bufio.NewReaderSize(response.Body, 64<<10)
+	// 正文开头不是 data: 行也不是 JSON 帧：有的服务回的是整段 JSON（不支持流式），或者 200 里的错误体
+	if head := strings.TrimLeft(string(mustPeek(reader, 512)), " \r\n\t"); !strings.HasPrefix(head, "data:") && !strings.HasPrefix(head, "{") {
+		raw, readErr := io.ReadAll(io.LimitReader(reader, 8<<20))
+		if readErr != nil {
+			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readErr)
+		}
+		return nil, newModelCallError(contract.ModelErrorServer, options.APIKey, "模型接口没有返回事件流：%s", truncate(string(raw), 500))
+	}
+	// 整段 JSON 回答：每一行都是 JSON 帧，收齐以后按一条完整的回答交回
+
+	parser := newSSEParser(model, options.OnText)
+	for {
+		line, readErr := reader.ReadString('\n')
+		line = strings.TrimRight(line, "\r\n")
+		// 标准的事件流每帧一行 data:；有的服务直接给 JSON 行，也认
+		frame := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "data:"))
+		if (strings.HasPrefix(strings.TrimSpace(line), "data:") || strings.HasPrefix(frame, "{")) && parser.feed(frame) {
+			return parser.done(model), nil
+		}
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return interruptedMessage(model, parser), nil
+			}
+			// 没收到 [DONE] 就断了：已经说出口的不作废，但这一轮算没说完
+			message := interruptedMessage(model, parser)
+			message.StopReason = StopError
+			message.ErrorMessage = "连接中途断开"
+			if parser.lastError != "" {
+				message.ErrorMessage = parser.lastError
+			}
+			return message, nil
+		}
+	}
+}
+// mustPeek 看一眼正文开头（有多少算多少，不看满也不当错误）：正文太短、读不到都照常往下读。
+func mustPeek(reader *bufio.Reader, size int) []byte {
+	peeked, _ := reader.Peek(size)
+	return peeked
+}
+
+// interruptedMessage 取消或断流时返回：已输出的部分原样保留，以 aborted 结束。
+func interruptedMessage(model Model, parser *sseParser) *AssistantMessage {
+	message := parser.done(model)
+	message.StopReason = StopAborted
+	return message
 }
 
 func convertMessage(message Message) map[string]any {
