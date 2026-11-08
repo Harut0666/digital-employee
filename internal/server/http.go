@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -224,6 +225,15 @@ func saveUploads(files []*multipart.FileHeader) (*savedUploads, error) {
 		result.attachments = append(result.attachments, contract.AttachmentInput{Name: name, SourcePath: sourcePath})
 	}
 	return result, nil
+}
+
+// sameFilePath 两个路径是否同一个文件（Windows 不区分大小写）。
+func sameFilePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func sanitizeUploadName(raw string, index int) string {

@@ -75,8 +75,9 @@ func hashConfigFiles(files map[string]string) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func versionsDirFor(workspaceDir, employeeID string) string {
-	return filepath.Join(filepath.Clean(workspaceDir), "config-versions", employeeID)
+// versionsDirFor 员工配置版本存放处：<应用目录>/config-versions/<员工 id>。所有工作区共用。
+func versionsDirFor(appDir, employeeID string) string {
+	return filepath.Join(filepath.Clean(appDir), "config-versions", employeeID)
 }
 
 // compactVersionStamp ISO 时间 → 目录名用的紧凑格式（不含冒号、点，Windows 也能当目录名）。
@@ -107,8 +108,8 @@ func readVersionMeta(dir string) (*versionMeta, bool) {
 }
 
 // createConfigVersion 给当前配置拍一个版本快照。
-func createConfigVersion(workspaceDir, employeeID, employeeDir string, now func() time.Time) (configVersion, error) {
-	root := versionsDirFor(workspaceDir, employeeID)
+func createConfigVersion(appDir, employeeID, employeeDir string, now func() time.Time) (configVersion, error) {
+	root := versionsDirFor(appDir, employeeID)
 	files := readConfigFiles(employeeDir)
 	hash := hashConfigFiles(files)
 	at := now()
@@ -144,8 +145,8 @@ func createConfigVersion(workspaceDir, employeeID, employeeDir string, now func(
 }
 
 // listConfigVersions 列出版本，新的在前。
-func listConfigVersions(workspaceDir, employeeID string) []configVersion {
-	root := versionsDirFor(workspaceDir, employeeID)
+func listConfigVersions(appDir, employeeID string) []configVersion {
+	root := versionsDirFor(appDir, employeeID)
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return []configVersion{}
@@ -170,11 +171,11 @@ func listConfigVersions(workspaceDir, employeeID string) []configVersion {
 
 var versionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-func versionDir(workspaceDir, employeeID, versionID string) (string, bool) {
+func versionDir(appDir, employeeID, versionID string) (string, bool) {
 	if !versionIDPattern.MatchString(versionID) {
 		return "", false
 	}
-	root := versionsDirFor(workspaceDir, employeeID)
+	root := versionsDirFor(appDir, employeeID)
 	dir := filepath.Join(root, versionID)
 	if filepath.Clean(dir) != filepath.Join(root, versionID) {
 		return "", false
@@ -187,8 +188,8 @@ func versionDir(workspaceDir, employeeID, versionID string) (string, bool) {
 }
 
 // removeConfigVersion 删除一个版本目录（保存写盘后整体校验失败时回滚用）。
-func removeConfigVersion(workspaceDir, employeeID, versionID string) bool {
-	dir, ok := versionDir(workspaceDir, employeeID, versionID)
+func removeConfigVersion(appDir, employeeID, versionID string) bool {
+	dir, ok := versionDir(appDir, employeeID, versionID)
 	if !ok {
 		return false
 	}
@@ -196,8 +197,8 @@ func removeConfigVersion(workspaceDir, employeeID, versionID string) bool {
 }
 
 // readConfigVersion 读回一个版本的全部文件内容；版本不存在时返回 false。
-func readConfigVersion(workspaceDir, employeeID, versionID string) (map[string]string, bool) {
-	dir, ok := versionDir(workspaceDir, employeeID, versionID)
+func readConfigVersion(appDir, employeeID, versionID string) (map[string]string, bool) {
+	dir, ok := versionDir(appDir, employeeID, versionID)
 	if !ok {
 		return nil, false
 	}
@@ -309,8 +310,8 @@ func lineDiff(before, after string) []string {
 }
 
 // diffConfigVersion 版本与当前配置的差异；版本不存在时返回 false。
-func diffConfigVersion(workspaceDir, employeeID, employeeDir, versionID string) (configDiff, bool) {
-	dir, ok := versionDir(workspaceDir, employeeID, versionID)
+func diffConfigVersion(appDir, employeeID, employeeDir, versionID string) (configDiff, bool) {
+	dir, ok := versionDir(appDir, employeeID, versionID)
 	if !ok {
 		return configDiff{}, false
 	}
@@ -318,7 +319,7 @@ func diffConfigVersion(workspaceDir, employeeID, employeeDir, versionID string) 
 	if !ok {
 		return configDiff{}, false
 	}
-	before, _ := readConfigVersion(workspaceDir, employeeID, meta.ID)
+	before, _ := readConfigVersion(appDir, employeeID, meta.ID)
 	if before == nil {
 		before = map[string]string{}
 	}
@@ -352,8 +353,8 @@ func diffConfigVersion(workspaceDir, employeeID, employeeDir, versionID string) 
 }
 
 // restoreConfigVersion 回滚：先给当前配置留快照，再把版本内容复制回来（版本里没有的配置文件会删掉）。
-func restoreConfigVersion(workspaceDir, employeeID, employeeDir, versionID string, now func() time.Time) (restoreResult, bool) {
-	dir, ok := versionDir(workspaceDir, employeeID, versionID)
+func restoreConfigVersion(appDir, employeeID, employeeDir, versionID string, now func() time.Time) (restoreResult, bool) {
+	dir, ok := versionDir(appDir, employeeID, versionID)
 	if !ok {
 		return restoreResult{}, false
 	}
@@ -361,11 +362,11 @@ func restoreConfigVersion(workspaceDir, employeeID, employeeDir, versionID strin
 	if !ok {
 		return restoreResult{}, false
 	}
-	files, ok := readConfigVersion(workspaceDir, employeeID, meta.ID)
+	files, ok := readConfigVersion(appDir, employeeID, meta.ID)
 	if !ok {
 		return restoreResult{}, false
 	}
-	snapshot, err := createConfigVersion(workspaceDir, employeeID, employeeDir, now)
+	snapshot, err := createConfigVersion(appDir, employeeID, employeeDir, now)
 	if err != nil {
 		return restoreResult{}, false
 	}

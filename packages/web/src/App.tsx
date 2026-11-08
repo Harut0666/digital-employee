@@ -6,6 +6,7 @@ import { LeftOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
 import { createApi, IS_MOCK, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
+import { createMockWorkspaceApi, createWorkspaceApi, type WorkspaceItem } from "./api/workspaces";
 import { ApiContext, useApi, useEmployees, usePreflight, useSession, useSessionList, useTask } from "./hooks/data";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection } from "./components/Sidebar";
@@ -45,10 +46,12 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const [panelKey, setPanelKey] = useState(0);
   const windowWidth = useWindowWidth();
   const drawerMode = windowWidth < DRAWER_BELOW;
-  const [workspaceDir, setWorkspaceDir] = useState<string>();
+  /** 登记的工作区：新对话开在第一个工作区里（Spec 0006；侧栏分组是 T38） */
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>();
+  const workspaceApi = useMemo(() => (IS_MOCK ? createMockWorkspaceApi() : createWorkspaceApi()), []);
   useEffect(() => {
-    settingsApi.getWorkspace().then((w) => setWorkspaceDir(w.workspaceDir), () => {});
-  }, [settingsApi]);
+    workspaceApi.list().then((list) => setWorkspaces(list.workspaces), () => {});
+  }, [workspaceApi]);
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const { preflight, reload: reloadPreflight } = usePreflight();
@@ -112,7 +115,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
 
   const startConversation = async (text: string): Promise<boolean> => {
     try {
-      const created = await api.createSession();
+      // 新对话在哪个工作区开：侧栏按工作区分组是 T38，现在用第一个登记的工作区；
+      // 还没读到登记时交服务端取唯一的工作区（单目录模式）
+      const created = await api.createSession(workspaces?.[0]?.id);
       const res = await api.sendMessage(created.id, text);
       if (!res.ok) message.error(res.message);
       refresh();
@@ -306,7 +311,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   );
   return (
     <div className={`shell ${columnPanel ? (layout.wide ? "wide" : "") : "no-panel"} ${drawer ? "narrow" : ""}`}>
-      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} workspaceDir={workspaceDir} />
+      <Sidebar sessions={sessions} role={role} onRole={setRoleState} selection={selection} onSelect={setSelection} />
       <div className="col surface chat">{center}</div>
       {columnPanel && (
         <div className={`col panel ${titled ? "" : "panel-review"}`} ref={panelRef}>

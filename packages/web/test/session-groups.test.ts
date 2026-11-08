@@ -5,6 +5,7 @@ import { groupSessions, groupTodos } from "../src/view/session-groups";
 const s = (id: string, status: SessionStatus, updatedAt: string, waitingFor: UiRole[], statusText?: string, patch: Partial<SessionSummary> = {}) =>
   ({
     id,
+    workspaceId: "ws-1",
     status,
     readOnly: false,
     title: id,

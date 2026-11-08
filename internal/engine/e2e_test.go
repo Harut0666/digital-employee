@@ -45,7 +45,7 @@ func newA01Engine(t *testing.T) (*engine.Engine, *agent.ScriptedProvider) {
 	registry := tools.NewRegistry()
 	t.Cleanup(func() { _ = registry.Close() })
 	eng, err := engine.New(engine.Deps{
-		WorkspaceDir: t.TempDir(),
+		Dir:          t.TempDir(),
 		EmployeesDir: filepath.Join(root, "employees"),
 		ToolClient:   registry,
 		Model:        provider,

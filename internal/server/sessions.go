@@ -4,6 +4,7 @@ package server
 import (
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"digital-employee/internal/contract"
 	"digital-employee/internal/knowledge"
@@ -19,6 +20,8 @@ var sessionErrorStatus = map[string]int{
 	session.ErrEmployeeMissing: http.StatusConflict,
 	// 必需项不齐：会话的现状不允许开工
 	session.ErrChecklistIncomplete: http.StatusConflict,
+	// 工作区没有登记过，也查不到它的目录
+	session.ErrWorkspaceUnknown: http.StatusNotFound,
 }
 
 func writeSessionError(w http.ResponseWriter, err error) {
@@ -41,9 +44,10 @@ func writeSessionError(w http.ResponseWriter, err error) {
 // newSessions 组装会话模块：员工和设置都按需读，配置改动立即生效。
 func (s *Server) newSessions() *session.Manager {
 	return session.New(session.Deps{
-		WorkspaceDir: s.opts.WorkspaceDir,
-		Engine:       s.opts.Engine,
-		Model:        s.opts.Model,
+		Dir:       s.opts.AppDir,
+		Engine:    s.opts.Engine,
+		Model:     s.opts.Model,
+		Workspace: s.workspaceRegistered,
 		Employees: func() ([]session.Employee, error) {
 			listed, err := s.listEmployees()
 			if err != nil {
@@ -58,7 +62,7 @@ func (s *Server) newSessions() *session.Manager {
 		LoadEmployee: func(id string) (*contract.EmployeeConfig, error) {
 			return s.opts.LoadEmployee(filepath.Join(s.opts.EmployeesDir, id))
 		},
-		DefaultEmployee: func() string { return settings.Read(s.opts.WorkspaceDir).DefaultEmployee },
+		DefaultEmployee: func() string { return settings.Read(s.opts.AppDir).DefaultEmployee },
 		Preflight: func() error {
 			if result := s.preflight(); !result.OK {
 				return &session.Error{Code: result.Error, Message: result.Message}
@@ -66,7 +70,7 @@ func (s *Server) newSessions() *session.Manager {
 			return nil
 		},
 		Execution: func() *contract.ExecutionSettings {
-			execution := settings.Read(s.opts.WorkspaceDir).Execution
+			execution := settings.Read(s.opts.AppDir).Execution
 			return &execution
 		},
 		Knowledge: knowledge.WithTools(s.knowledge, nil),
@@ -86,8 +90,14 @@ func (s *Server) sessionRoute(handler http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// handleListSessions 列出会话；?workspaceId= 只列这个工作区的会话（不带时列全部工作区）。
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	views, err := s.sessions.List()
+	workspaceID := strings.TrimSpace(r.URL.Query().Get("workspaceId"))
+	if workspaceID != "" && !s.workspaceRegistered(workspaceID) {
+		writeSessionError(w, &session.Error{Code: session.ErrWorkspaceUnknown, Message: "工作区不存在：" + workspaceID})
+		return
+	}
+	views, err := s.sessions.List(workspaceID)
 	if err != nil {
 		writeSessionError(w, err)
 		return
@@ -95,12 +105,34 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, views)
 }
 
+// handleCreateSession 在某个工作区里开新会话：请求体必须带 workspaceId（单目录模式可以省略）。
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if _, ok := roleOf(r); !ok {
 		writeAPIError(w, http.StatusForbidden, roleRequired)
 		return
 	}
-	view, err := s.sessions.Create()
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	workspaceID := ""
+	if raw, present := body["workspaceId"]; present {
+		text, ok := raw.(string)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "workspaceId 必须是字符串"))
+			return
+		}
+		workspaceID = strings.TrimSpace(text)
+	}
+	if workspaceID == "" {
+		workspaceID = s.onlyWorkspace()
+		if workspaceID == "" {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "新建会话要指定工作区：请求体缺少 workspaceId"))
+			return
+		}
+	}
+	view, err := s.sessions.Create(workspaceID)
 	if err != nil {
 		writeSessionError(w, err)
 		return

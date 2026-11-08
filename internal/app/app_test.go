@@ -19,17 +19,19 @@ func TestChoosePort(t *testing.T) {
 	}
 }
 
+// Spec 0006：设置、员工、知识库在应用目录里，不再回落到旧的 %APPDATA%/digital-employee 工作区。
 func TestResolveWorkspace(t *testing.T) {
 	if got := ResolveWorkspace(map[string]string{"DE_WORKSPACE": `D:\tmp\de`}); got != `D:\tmp\de` {
 		t.Fatalf("DE_WORKSPACE 应优先：%q", got)
 	}
 	got := ResolveWorkspace(map[string]string{"APPDATA": `C:\AppData`})
-	if got != filepath.Join(`C:\AppData`, "digital-employee") {
-		t.Fatalf("应回落到 APPDATA：%q", got)
+	if got != filepath.Join(`C:\AppData`, "digital-employee-app") {
+		t.Fatalf("应回落到 APPDATA 下的应用目录：%q", got)
 	}
 }
 
-func TestPrepareWorkspace(t *testing.T) {
+// PrepareAppDir 准备应用目录：员工配置、样例、前端产物、设置都放在这里（Spec 0006）。
+func TestPrepareAppDir(t *testing.T) {
 	repo := t.TempDir()
 	// 假仓库：employees/mini（含 workflow.yaml）、samples/scenario-a、packages/web/dist
 	employeeDir := filepath.Join(repo, "employees", "mini")
@@ -47,7 +49,7 @@ func TestPrepareWorkspace(t *testing.T) {
 	}
 
 	workspace := filepath.Join(t.TempDir(), "ws")
-	prepared, err := PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace, RepoRoot: repo})
+	prepared, err := PrepareAppDir(PrepareOptions{AppDir: workspace, RepoRoot: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +82,7 @@ func TestPrepareWorkspace(t *testing.T) {
 	writeFile(t, filepath.Join(workspace, "employees", "mini", "SKILL.md"), "# 用户改过\n")
 	writeFile(t, filepath.Join(workspace, "settings.json"), `{"custom": true}`)
 	writeFile(t, filepath.Join(repo, "packages", "web", "dist", "index.html"), "<html>v2</html>")
-	prepared, err = PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace, RepoRoot: repo})
+	prepared, err = PrepareAppDir(PrepareOptions{AppDir: workspace, RepoRoot: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +106,7 @@ func TestPrepareWorkspace(t *testing.T) {
 func TestPrepareWorkspaceEmbeddedFallback(t *testing.T) {
 	// 没有仓库目录（单 exe 被复制到任意目录）时，从 go:embed 的内嵌资源释放。
 	workspace := filepath.Join(t.TempDir(), "ws")
-	prepared, err := PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace})
+	prepared, err := PrepareAppDir(PrepareOptions{AppDir: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +143,7 @@ func TestPrepareWorkspaceEmbeddedFallback(t *testing.T) {
 
 	// 已有文件不覆盖：改一下员工配置再释放一次
 	writeFile(t, filepath.Join(workspace, "employees", "weekly-report", "SKILL.md"), "# 用户改过\n")
-	if _, err := PrepareWorkspace(PrepareOptions{WorkspaceDir: workspace}); err != nil {
+	if _, err := PrepareAppDir(PrepareOptions{AppDir: workspace}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := os.ReadFile(filepath.Join(workspace, "employees", "weekly-report", "SKILL.md"))

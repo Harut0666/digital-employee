@@ -30,7 +30,7 @@ func (s *Server) preflight() preflightResult {
 	if s.opts.Scripted {
 		return preflightResult{OK: true}
 	}
-	models := settings.LoadModelSettings(s.opts.WorkspaceDir, s.settingsEnv())
+	models := settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())
 	for _, connection := range models.Connections {
 		if connection.Name == models.DefaultConnection && strings.TrimSpace(connection.APIKey) != "" {
 			return preflightResult{OK: true}

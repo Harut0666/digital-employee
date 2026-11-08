@@ -302,7 +302,7 @@ func newDemoEngine(t *testing.T, options demoEmployeeOptions) *demoEngine {
 	qcEngine.results = passingChecks()
 
 	eng, err := NewWithOptions(Deps{
-		WorkspaceDir: filepath.Join(root, "workspace"),
+		Dir:          filepath.Join(root, "workspace"),
 		EmployeesDir: employeesDir,
 		ToolClient:   toolClient,
 		Model:        agent.NewScriptedModelProvider(agent.ModelScript{}, agent.ScriptedProviderOptions{}),
@@ -769,7 +769,7 @@ func newScriptedEngine(t *testing.T, workspace, employeesDir string, script agen
 	qcEngine := newFakeQC()
 	qcEngine.results = passingChecks()
 	eng, err := NewWithOptions(Deps{
-		WorkspaceDir: workspace,
+		Dir:          workspace,
 		EmployeesDir: employeesDir,
 		ToolClient:   toolClient,
 		Model:        provider,

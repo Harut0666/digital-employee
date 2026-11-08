@@ -18,6 +18,11 @@ build/
 artifacts/
 packages/desktop/assets/resvg.wasm
 
+# 本机工具缓存（go build cache、临时目录）与权限修复留下的恢复记录
+.gocache/
+.gotmp/
+.acl-recovery/
+
 # Go 迁移本地产物
 .parity-ws/
 parity-out/

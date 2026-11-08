@@ -49,7 +49,7 @@ export function WorkspaceSection({ api }: { api: SettingsApi }) {
     <div>
       <h2 style={{ margin: 0, fontSize: 24 }}>工作区</h2>
       <div style={{ color: "var(--muted)", margin: "4px 0 16px" }}>
-        工作区保存任务事件、附件、交付物、员工配置与配置版本。
+        工作区只是一个有名字的本机目录：会话、任务和交付物跟着它，设置、员工和知识库所有工作区共用（存在应用目录里）。
       </div>
 
       <div style={card}>
@@ -129,6 +129,8 @@ export function WorkspaceSection({ api }: { api: SettingsApi }) {
       </div>
 
       <div style={{ color: "var(--muted)", fontSize: 12 }}>
+        应用目录：<Text code>{view.appDir}</Text>
+        <br />
         配置版本目录：<Text code>{view.configVersionsDir}</Text>
       </div>
     </div>

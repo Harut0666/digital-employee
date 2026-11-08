@@ -37,7 +37,8 @@ const usageText = `用法：
   digital-employee mcp-server
 
 环境变量：DE_WORKSPACE / DE_PORT / PORT / DE_NO_OPEN=1 / DE_EMPLOYEES_DIR / DE_WEB_DIST / DE_SCRIPTED / DE_APP_DIR
-  DE_WORKSPACE 指定工作区时界面上不能切换工作区；工作区列表保存在 DE_APP_DIR（缺省 %APPDATA%\digital-employee-app）
+  DE_APP_DIR 是应用目录（缺省 %APPDATA%\digital-employee-app）：设置、员工、知识库和所有工作区的会话、任务都在这里
+  DE_WORKSPACE 指定单目录模式：这个目录同时是应用目录和唯一的工作区（命令行用例就是这种用法）
 `
 
 func main() {
@@ -78,10 +79,10 @@ func isReadOnlyCommand(name string) bool {
 }
 
 func initWorkspace() (string, error) {
-	workspace := app.ResolveWorkspace(nil)
-	prepared, err := app.PrepareWorkspace(app.PrepareOptions{
-		WorkspaceDir: workspace,
-		RepoRoot:     app.FindRepoRoot(""),
+	// 单目录模式（DE_WORKSPACE）准备这个目录；否则准备应用目录（DE_APP_DIR / %APPDATA%/digital-employee-app）
+	prepared, err := app.PrepareAppDir(app.PrepareOptions{
+		AppDir:   app.ResolveAppDir(nil),
+		RepoRoot: app.FindRepoRoot(""),
 	})
 	if err != nil {
 		return "", err
@@ -153,6 +154,7 @@ func serve(argv []string) int {
 			}
 			options.Hostname = raw
 		case "--workspace":
+			// 单目录模式：这个目录同时是应用目录和唯一的工作区（Spec 0006 之后没有切换）
 			raw := inlineValue
 			if !hasInline {
 				value, ok := takeValue()

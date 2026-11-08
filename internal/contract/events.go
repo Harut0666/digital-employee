@@ -17,6 +17,8 @@ type TaskEvent struct {
 	ConfigHash  string          `json:"configHash,omitempty"`
 	Form        map[string]any  `json:"form,omitempty"`
 	Attachments []AttachmentRef `json:"attachments,omitempty"`
+	// WorkspaceID 任务属于哪个工作区（Spec 0006）；旧日志里没有这个字段
+	WorkspaceID string `json:"workspaceId,omitempty"`
 
 	// form_updated / review_decision 之外的角色
 	Actor Role `json:"actor,omitempty"`

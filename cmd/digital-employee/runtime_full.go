@@ -77,13 +77,18 @@ func newEngine(options cli.EngineOptions, faults *contract.FaultHooks) (contract
 	if err != nil {
 		return nil, err
 	}
+	appDir := options.ApplicationDir
+	if appDir == "" {
+		appDir = options.WorkspaceDir
+	}
 	eng, err := engine.New(engine.Deps{
-		WorkspaceDir: options.WorkspaceDir,
-		EmployeesDir: options.EmployeesDir,
-		ToolClient:   toolClient,
-		Model:        model,
-		Faults:       faults,
-		ExitOnCrash:  true,
+		Dir:            appDir,
+		EmployeesDir:   options.EmployeesDir,
+		ToolClient:     toolClient,
+		Model:          model,
+		Faults:         faults,
+		ExitOnCrash:    true,
+		ConfigFallback: options.ConfigFallback,
 	})
 	if err != nil {
 		return nil, err
@@ -106,11 +111,13 @@ func frontdeskModel() agent.ModelProvider {
 // appEngineFactory 服务端模式的引擎工厂。
 func appEngineFactory(deps app.EngineDeps) (contract.Engine, error) {
 	return newEngine(cli.EngineOptions{
-		WorkspaceDir:  deps.WorkspaceDir,
-		EmployeesDir:  deps.EmployeesDir,
-		ToolClient:    deps.ToolClient,
-		ScriptFile:    deps.ScriptFile,
-		ModelSettings: deps.ModelSettings,
+		ApplicationDir: deps.ApplicationDir,
+		WorkspaceDir:   deps.WorkspaceDir,
+		EmployeesDir:   deps.EmployeesDir,
+		ToolClient:     deps.ToolClient,
+		ScriptFile:     deps.ScriptFile,
+		ModelSettings:  deps.ModelSettings,
+		ConfigFallback: deps.ConfigFallback,
 	}, deps.Faults)
 }
 

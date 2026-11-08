@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,12 +27,21 @@ import (
 
 // Options 服务端依赖。除 Engine 外都有默认实现，方便测试注入。
 type Options struct {
-	// Engine 任务引擎（唯一入口，契约见 internal/contract）。
+	// Engine 任务引擎（唯一入口，契约见 internal/contract）。整个进程只有一个。
 	Engine contract.Engine
-	// EmployeesDir 员工配置目录（工作区里的副本）。
-	EmployeesDir string
-	// WorkspaceDir 工作区根目录；缺省 DE_WORKSPACE / %APPDATA%/digital-employee。
+	// AppDir 应用目录：设置、员工、知识库、配置版本、会话和任务都在这里，所有工作区共用；
+	// 缺省 DE_WORKSPACE / DE_APP_DIR / %APPDATA%/digital-employee-app。
+	AppDir string
+	// Workspaces 登记过的工作区（ID 与目录，顺序即列样例时看哪个）。设置、员工、知识库不按工作区分，
+	// 工作区目录只用来列样例。为空时是单目录模式：唯一的工作区就是 AppDir。
+	// 与 WorkspaceDir 二选一（后者只指定单目录）。
+	Workspaces []Workspace
+	// ListWorkspaces 当前登记的工作区（宿主提供）；nil 时用启动时的快照 Workspaces。
+	ListWorkspaces func() []Workspace
+	// WorkspaceDir 单目录模式的工作区目录（同时是应用目录）；缺省 DE_WORKSPACE。
 	WorkspaceDir string
+	// EmployeesDir 员工配置目录（应用目录里的副本，所有工作区共用）。
+	EmployeesDir string
 	// DefaultEmployeesDir “恢复默认员工配置”的来源；缺省同 EmployeesDir。
 	DefaultEmployeesDir string
 	// WebDistDir 前端构建产物目录；为空时不托管静态资源。
@@ -64,21 +74,29 @@ type Options struct {
 	Model func() agent.ModelProvider
 }
 
+// Workspace 一个登记过的工作区：ID 与目录。
+type Workspace struct {
+	ID   string
+	Path string
+}
+
 // Server HTTP 服务端。
 type Server struct {
 	opts     Options
 	mux      *http.ServeMux
 	log      *Logger
 	sessions *session.Manager
-	// knowledge 本工作区的知识库
+	// knowledge 应用目录里的知识库，所有工作区共用
 	knowledge *knowledge.Store
+	// workspaces 登记过的工作区（ID → 目录）；单目录模式下只有一个
+	workspaces map[string]string
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
 func New(opts Options) *Server {
 	s := &Server{opts: opts}
 	s.resolveDefaults()
-	s.knowledge = knowledge.Open(s.opts.WorkspaceDir)
+	s.knowledge = knowledge.Open(s.opts.AppDir)
 	s.sessions = s.newSessions()
 	s.mux = http.NewServeMux()
 	s.routes()
@@ -100,16 +118,30 @@ func (s *Server) Handler() http.Handler {
 // Logger 暴露日志器（启动入口打印地址等用）。
 func (s *Server) Logger() *Logger { return s.log }
 
-// WorkspaceDir 工作区根目录。
-func (s *Server) WorkspaceDir() string { return s.opts.WorkspaceDir }
+// AppDir 应用目录。
+func (s *Server) AppDir() string { return s.opts.AppDir }
 
 func (s *Server) resolveDefaults() {
 	env := s.env()
-	if s.opts.WorkspaceDir == "" {
-		s.opts.WorkspaceDir = resolveWorkspace(env)
+	if s.opts.AppDir == "" {
+		s.opts.AppDir = resolveAppDir(env)
 	}
 	if s.opts.EmployeesDir == "" {
-		s.opts.EmployeesDir = filepath.Join(s.opts.WorkspaceDir, "employees")
+		s.opts.EmployeesDir = filepath.Join(s.opts.AppDir, "employees")
+	}
+	s.workspaces = map[string]string{}
+	for _, item := range s.opts.Workspaces {
+		if item.ID != "" && item.Path != "" {
+			s.workspaces[item.ID] = item.Path
+		}
+	}
+	if len(s.workspaces) == 0 {
+		// 单目录模式：唯一的工作区就是这个目录
+		single := s.opts.WorkspaceDir
+		if single == "" {
+			single = s.opts.AppDir
+		}
+		s.workspaces[SingleWorkspaceID] = single
 	}
 	if s.opts.DefaultEmployeesDir == "" {
 		s.opts.DefaultEmployeesDir = s.opts.EmployeesDir
@@ -138,9 +170,15 @@ func (s *Server) resolveDefaults() {
 	}
 }
 
-// resolveWorkspace 工作区：DE_WORKSPACE > %APPDATA%/digital-employee。
-func resolveWorkspace(env map[string]string) string {
+// SingleWorkspaceID 单目录模式里唯一工作区的 ID。
+const SingleWorkspaceID = "single"
+
+// resolveAppDir 应用目录：DE_WORKSPACE（单目录模式）> DE_APP_DIR > %APPDATA%/digital-employee-app。
+func resolveAppDir(env map[string]string) string {
 	if dir := env["DE_WORKSPACE"]; dir != "" {
+		return dir
+	}
+	if dir := env["DE_APP_DIR"]; dir != "" {
 		return dir
 	}
 	appData := env["APPDATA"]
@@ -152,7 +190,7 @@ func resolveWorkspace(env map[string]string) string {
 	if appData == "" {
 		appData = "."
 	}
-	return filepath.Join(appData, "digital-employee")
+	return filepath.Join(appData, "digital-employee-app")
 }
 
 func (s *Server) env() map[string]string {
@@ -179,6 +217,63 @@ func setCORS(w http.ResponseWriter) {
 	header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 	header.Set("Access-Control-Allow-Headers", "Content-Type, x-role, Last-Event-ID")
 	header.Set("Access-Control-Max-Age", "86400")
+}
+
+// registeredWorkspaces 登记过的工作区（ID 与目录）。
+//
+// 启动时传进来的是快照；宿主还提供了 ListWorkspaces 时以它为准：新建的工作区马上可用，
+// 取消登记的工作区不再接受新会话（它们已有的会话和任务照旧）。
+func (s *Server) registeredWorkspaces() []Workspace {
+	if s.opts.ListWorkspaces != nil {
+		return s.opts.ListWorkspaces()
+	}
+	out := make([]Workspace, 0, len(s.workspaces))
+	for id, dir := range s.workspaces {
+		out = append(out, Workspace{ID: id, Path: dir})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// workspaceDirs 工作区 ID → 目录，按 ID 排序（列表顺序稳定）。
+func (s *Server) workspaceDirs() []struct{ ID, Dir string } {
+	items := s.registeredWorkspaces()
+	out := make([]struct{ ID, Dir string }, 0, len(items))
+	for _, item := range items {
+		out = append(out, struct{ ID, Dir string }{ID: item.ID, Dir: item.Path})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// onlyWorkspace 只有登记着一个工作区时返回它的 ID；否则返回空串。
+func (s *Server) onlyWorkspace() string {
+	items := s.registeredWorkspaces()
+	if len(items) == 1 {
+		return items[0].ID
+	}
+	return ""
+}
+
+// workspaceRegistered 工作区 ID 是否登记过。
+func (s *Server) workspaceRegistered(id string) bool {
+	for _, item := range s.registeredWorkspaces() {
+		if item.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// workspaceSampleDir 列公开样例用哪个目录：单目录模式看工作区目录，应用目录模式看第一个登记的工作区。
+func (s *Server) workspaceSampleDir() string {
+	if s.opts.WorkspaceDir != "" {
+		return s.opts.WorkspaceDir
+	}
+	if dirs := s.registeredWorkspaces(); len(dirs) > 0 {
+		return dirs[0].Path
+	}
+	return s.opts.AppDir
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {

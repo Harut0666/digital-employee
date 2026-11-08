@@ -204,6 +204,8 @@ export interface SessionChecklist {
 
 export interface SessionSummary {
   id: string;
+  /** 会话属于哪个工作区（Spec 0006；侧栏按它分组是 T38） */
+  workspaceId: string;
   status: SessionStatus;
   /** 由旧任务推导出的只读会话 */
   readOnly: boolean;

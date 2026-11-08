@@ -1,39 +1,40 @@
-// 左上角的工作区选择：从工作区列表推出显示名称、菜单项和能不能切换、新建。
+// 侧栏“工作区”tab 的纯函数视图（Spec 0006）：分组标题、可折叠、目录缺失的提示。
+// 工作区只是目录，所有工作区同时可用；这里只负责把列表整理成界面要的形状，不涉及切换。
 
-import type { SwitchWorkspaceResult, WorkspaceItem, WorkspaceList } from "../api/workspaces";
+import type { WorkspaceItem, WorkspaceList } from "../api/workspaces";
 
-export interface WorkspacePickerView {
-  title: string;
-  tooltip: string;
-  items: (WorkspaceItem & { current: boolean })[];
-  canSwitch: boolean;
-  canCreate: boolean;
-  /** 只读时的原因 */
+export interface WorkspaceGroupView {
+  id: string;
+  name: string;
+  path: string;
+  /** 目录缺失：登记保留，会话仍可查看 */
+  missing: boolean;
+  hint: string;
+}
+
+export interface WorkspacesView {
+  groups: WorkspaceGroupView[];
+  /** 单目录模式：不能新建、重命名或取消登记 */
+  canManage: boolean;
   hint?: string;
+  empty: boolean;
 }
 
-/** 工作区名：取路径最后一段 */
-const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).at(-1) ?? dir;
+/** 目录名：取路径最后一段 */
+export const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).at(-1) ?? dir;
 
-/** fallbackDir：列表还没读到时显示的工作区目录 */
-export function workspacePicker(list: WorkspaceList | undefined, fallbackDir?: string): WorkspacePickerView {
-  const current = list?.workspaces.find((w) => w.id === list.current);
-  const path = current?.path ?? fallbackDir;
-  const editable = list !== undefined && !list.readOnly;
+export function workspaceGroups(list: WorkspaceList | undefined): WorkspacesView {
+  const items: WorkspaceItem[] = list?.workspaces ?? [];
   return {
-    title: current?.name ?? (fallbackDir ? baseName(fallbackDir) : "工作区"),
-    tooltip: path ? `当前工作区：${path}` : "当前工作区",
-    items: (list?.workspaces ?? []).map((w) => ({ ...w, current: w.id === list?.current })),
-    canSwitch: editable,
-    canCreate: editable,
+    groups: items.map((w) => ({
+      id: w.id,
+      name: w.name,
+      path: w.path,
+      missing: w.missing === true,
+      hint: w.missing === true ? w.missingText ?? "目录缺失" : w.path,
+    })),
+    canManage: list !== undefined && !list.readOnly,
     hint: list?.readOnly ? list.reason : undefined,
+    empty: list !== undefined && items.length === 0,
   };
-}
-
-export type SwitchOutcome = { kind: "reload" } | { kind: "none" } | { kind: "error"; message: string };
-
-/** 切换生效后整页重新加载：设置、员工、任务、会话都换成新工作区的。 */
-export function switchOutcome(result: SwitchWorkspaceResult): SwitchOutcome {
-  if (!result.ok) return { kind: "error", message: result.message };
-  return result.reload ? { kind: "reload" } : { kind: "none" };
 }

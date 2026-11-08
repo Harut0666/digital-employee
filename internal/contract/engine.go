@@ -156,6 +156,8 @@ type TaskSummary struct {
 	// StatusText 给人看的状态，WaitingFor 在等哪些角色：都是读取时算出的投影
 	StatusText string `json:"statusText"`
 	WaitingFor []Role `json:"waitingFor"`
+	// WorkspaceID 任务属于哪个工作区（取自发起事件；旧任务为空）
+	WorkspaceID string `json:"workspaceId,omitempty"`
 	// Error 事件日志损坏时的说明（任务仍以最后已知状态出现）
 	Error string `json:"error,omitempty"`
 }
@@ -238,7 +240,7 @@ type Engine interface {
 	ResumeAll() error
 }
 
-// EngineStopper 能停下的引擎（切换工作区时用）：停下后不再接受命令，也不再写入。
+// EngineStopper 能停下的引擎（进程退出时用）：停下后不再接受命令，也不再写入。
 // 有任务处于准入校验、执行中或质检中时拒绝停下，返回 *EngineBusyError，引擎照常工作。
 type EngineStopper interface {
 	Stop() error
@@ -253,10 +255,11 @@ func (e *EngineBusyError) Error() string {
 	return "有任务正在准入校验、执行中或质检中"
 }
 
-// CreateTaskInput 建草稿任务的入参。
+// CreateTaskInput 建草稿任务的入参。WorkspaceID 写进“发起”事件，说明任务属于哪个工作区。
 type CreateTaskInput struct {
 	Employee    string            `json:"employee"`
 	Form        map[string]any    `json:"form"`
 	Attachments []AttachmentInput `json:"attachments"`
 	Actor       Role              `json:"actor"`
+	WorkspaceID string            `json:"workspaceId,omitempty"`
 }

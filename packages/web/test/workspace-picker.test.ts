@@ -1,51 +1,37 @@
 import { describe, expect, test } from "bun:test";
-import { switchOutcome, workspacePicker } from "../src/view/workspace-picker";
+import { baseName, workspaceGroups } from "../src/view/workspace-picker";
 
 const huadong = { id: "ws-1", name: "华东区", path: "D:\\de\\华东区" };
-const huanan = { id: "ws-2", name: "华南区", path: "D:\\de\\华南区" };
+const huanan = { id: "ws-2", name: "华南区", path: "D:\\de\\华南区", missing: true, missingText: "目录缺失" };
 
-describe("左上角的工作区选择", () => {
-  test("显示当前工作区名称，列表里标出当前项，可以切换和新建", () => {
-    const view = workspacePicker({ current: "ws-2", readOnly: false, workspaces: [huadong, huanan] });
-    expect(view.title).toBe("华南区");
-    expect(view.tooltip).toBe("当前工作区：D:\\de\\华南区");
-    expect(view.items.map((i) => [i.name, i.current])).toEqual([
-      ["华东区", false],
-      ["华南区", true],
+describe("工作区分组（Spec 0006：工作区只是目录，没有切换）", () => {
+  test("每个工作区一组，带目录；目录缺失的标出来", () => {
+    const view = workspaceGroups({ readOnly: false, workspaces: [huadong, huanan] });
+    expect(view.groups.map((g) => [g.name, g.missing, g.hint])).toEqual([
+      ["华东区", false, "D:\\de\\华东区"],
+      ["华南区", true, "目录缺失"],
     ]);
-    expect(view.canSwitch).toBe(true);
-    expect(view.canCreate).toBe(true);
+    expect(view.canManage).toBe(true);
+    expect(view.empty).toBe(false);
   });
 
-  test("环境变量指定工作区时只读：不能切换也不能新建，并说明原因", () => {
-    const view = workspacePicker({ current: "env", readOnly: true, reason: "工作区由环境变量 DE_WORKSPACE 指定", workspaces: [{ id: "env", name: "演示", path: "D:\\demo\\演示" }] });
-    expect(view.title).toBe("演示");
-    expect(view.canSwitch).toBe(false);
-    expect(view.canCreate).toBe(false);
+  test("单目录模式只读：说明原因", () => {
+    const view = workspaceGroups({ readOnly: true, reason: "工作区由环境变量 DE_WORKSPACE 指定", workspaces: [{ id: "single", name: "演示", path: "D:\\demo\\演示" }] });
+    expect(view.canManage).toBe(false);
     expect(view.hint).toBe("工作区由环境变量 DE_WORKSPACE 指定");
+    expect(view.groups).toHaveLength(1);
   });
 
-  test("列表还没读到时先用工作区目录的最后一段", () => {
-    const view = workspacePicker(undefined, "C:\\Users\\a\\AppData\\Roaming\\digital-employee");
-    expect(view.title).toBe("digital-employee");
-    expect(view.items).toEqual([]);
-    expect(view.canSwitch).toBe(false);
-  });
-});
-
-describe("切换结果", () => {
-  test("切换生效时整页重新加载", () => {
-    expect(switchOutcome({ ok: true, current: huanan, reload: true })).toEqual({ kind: "reload" });
+  test("列表还没读到或为空", () => {
+    expect(workspaceGroups(undefined).groups).toEqual([]);
+    expect(workspaceGroups(undefined).empty).toBe(false);
+    const empty = workspaceGroups({ readOnly: false, workspaces: [] });
+    expect(empty.empty).toBe(true);
+    expect(empty.canManage).toBe(true);
   });
 
-  test("选的就是当前工作区时什么也不做", () => {
-    expect(switchOutcome({ ok: true, current: huanan, reload: false })).toEqual({ kind: "none" });
-  });
-
-  test("有任务在跑时被拒，提示后端给的原因", () => {
-    expect(switchOutcome({ ok: false, error: "workspace_busy", message: "有任务正在准入校验、执行中或质检中", taskIds: ["t-1"] })).toEqual({
-      kind: "error",
-      message: "有任务正在准入校验、执行中或质检中",
-    });
+  test("目录名取最后一段", () => {
+    expect(baseName("C:\\Users\\a\\Documents\\数字员工")).toBe("数字员工");
+    expect(baseName("/home/a/ws")).toBe("ws");
   });
 });

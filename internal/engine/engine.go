@@ -1,6 +1,7 @@
 // T1 实现：任务引擎（状态机、事件日志、编排器、断点恢复）。
 //
 // 移植自 packages/core/src/engine/index.ts。Go 版与 TS 版的行为约定逐条对齐：
+//   - 任务存在应用目录的 tasks/ 下，整个进程只有一个引擎（Spec 0006）；
 //   - 状态只能走 contract.Transitions 表里的流转，表外一律拒绝并写 transition_rejected；
 //   - 每条事件先落盘（fsync）再推进内存投影，seq 由投影的 LastSeq+1 得到；
 //   - 编排在独立 goroutine 里跑（drive），命令返回后由 WaitForSettled 等它停在暂停态或终态；
@@ -74,8 +75,8 @@ type qcEngine interface {
 
 // Deps 引擎依赖。
 type Deps struct {
-	// WorkspaceDir 工作区目录（tasks 在其下）
-	WorkspaceDir string
+	// Dir 应用目录：设置、知识库、任务都在它下面。单目录模式下这个目录同时是唯一的工作区
+	Dir string
 	// EmployeesDir 员工配置根目录
 	EmployeesDir string
 	ToolClient   contract.ToolClient
@@ -86,6 +87,9 @@ type Deps struct {
 	Faults *contract.FaultHooks
 	// ExitOnCrash 崩溃注入命中时真正退出进程（生产入口用）
 	ExitOnCrash bool
+	// ConfigFallback 任务目录里的员工配置副本读不出来时，按员工 id 另找一个配置目录（Spec 0006 应用目录模式
+	// 下，员工配置在应用目录的 employees/ 里，任务目录里的副本与之同名）。nil 时不找。
+	ConfigFallback func(employeeID string) (string, bool)
 }
 
 // Options 测试可注入的内部实现；生产环境不传，使用 agent / qc 的默认实现。
@@ -96,7 +100,7 @@ type Options struct {
 
 // Engine 任务引擎实现（contract.Engine）。
 type Engine struct {
-	workspaceDir string
+	dir          string
 	employeesDir string
 	tasksDir     string
 	toolClient   contract.ToolClient
@@ -107,6 +111,8 @@ type Engine struct {
 
 	judgment judgmentRunner
 	qcEngine qcEngine
+	// configFallback 任务目录副本读不出来时的员工配置来源（见 Deps.ConfigFallback）
+	configFallback func(employeeID string) (string, bool)
 
 	mu       sync.Mutex
 	runtimes map[string]*taskRuntime
@@ -114,6 +120,8 @@ type Engine struct {
 	// stopping 正在停下：不再接受命令；stopped 已停下：也不再写入（见 Stop）
 	stopping bool
 	stopped  bool
+	// stopErr 进程退出时停下引擎的原因；已经建好的任务照常执行
+	stopErr error
 }
 
 // New 创建任务引擎。
@@ -123,13 +131,13 @@ func New(deps Deps) (*Engine, error) {
 
 // NewWithOptions 创建任务引擎，可注入判断步骤执行器与质检引擎（测试用）。
 func NewWithOptions(deps Deps, options Options) (*Engine, error) {
-	if deps.WorkspaceDir == "" {
-		return nil, errors.New("引擎缺少 WorkspaceDir")
+	if deps.Dir == "" {
+		return nil, errors.New("引擎缺少 Dir（应用目录）")
 	}
 	if deps.EmployeesDir == "" {
 		return nil, errors.New("引擎缺少 EmployeesDir")
 	}
-	workspaceDir, err := filepath.Abs(deps.WorkspaceDir)
+	dir, err := filepath.Abs(deps.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -146,11 +154,11 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		now = time.Now
 	}
 	// 知识库工具对所有员工都注册，哪个步骤能用由步骤白名单决定
-	toolClient := knowledge.WithTools(knowledge.Open(workspaceDir), deps.ToolClient)
+	toolClient := knowledge.WithTools(knowledge.Open(dir), deps.ToolClient)
 	engine := &Engine{
-		workspaceDir: workspaceDir,
+		dir:          dir,
 		employeesDir: employeesDir,
-		tasksDir:     filepath.Join(workspaceDir, "tasks"),
+		tasksDir:     filepath.Join(dir, "tasks"),
 		toolClient:   toolClient,
 		model:        deps.Model,
 		now:          now,
@@ -159,6 +167,8 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 		judgment:     options.Judgment,
 		qcEngine:     options.QC,
 		runtimes:     map[string]*taskRuntime{},
+
+		configFallback: deps.ConfigFallback,
 	}
 	if engine.judgment == nil {
 		engine.judgment = agent.NewJudgmentRunner(agent.RunnerOptions{Execution: engine.executionDefaults})
@@ -172,8 +182,8 @@ func NewWithOptions(deps Deps, options Options) (*Engine, error) {
 	return engine, nil
 }
 
-// WorkspaceDir 工作区目录（服务端与命令行共用）。
-func (e *Engine) WorkspaceDir() string { return e.workspaceDir }
+// Dir 应用目录（任务在其下）。
+func (e *Engine) Dir() string { return e.dir }
 
 // SetModelProvider 热替换模型提供者（设置页保存模型连接后调用，无需重启）。
 // TS 版的 onSettingsSaved 同样是重建 provider 后交给引擎，这里用读锁保护。
@@ -192,12 +202,14 @@ func (e *Engine) modelProvider() agent.ModelProvider {
 // ---------------------------------------------------------------- 运行时
 
 type taskRuntime struct {
-	id      string
-	dir     string
-	config  *contract.EmployeeConfig
-	proj    *projection
-	events  []contract.TaskEvent
-	logPath string
+	id   string
+	dir  string
+	// workspaceID 任务所属的工作区：建任务时写进发起事件，之后每条事件都带上
+	workspaceID string
+	config      *contract.EmployeeConfig
+	proj        *projection
+	events      []contract.TaskEvent
+	logPath     string
 
 	mu        sync.Mutex
 	listeners []*listenerEntry
@@ -267,21 +279,38 @@ func (e *Engine) deadError() error {
 	return errEngineStopped
 }
 
-// errEngineStopped 引擎已停下（工作区已切换），不再写入。
-var errEngineStopped = errors.New("引擎已停止：工作区已切换")
+// errEngineStopped 引擎已停下，不再写入。
+var errEngineStopped = errors.New("引擎已停止")
 
-// refusesCommands 正在停下或已停下的引擎不接受命令。
+// refusesCommands 正在停下或已停下的引擎不接受新命令。
 func (e *Engine) refusesCommands() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.stopping || e.stopped
 }
 
-// Stop 停下引擎（切换工作区时用）：之后不接受命令、不建任务，也不再写任何事件。
+// errEngineStopping 正在停下：新命令一律拒绝。
+var errEngineStopping = errors.New("引擎正在停止")
+
+// stopRefusal 新命令被拒时的错误码与说明。停下只针对新命令：已经建好的任务照常执行，
+// 不会因为引擎停下而半路被打断。
+func (e *Engine) stopRefusal() (code, message string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopErr == nil {
+		return contract.ErrIllegalTransition, "引擎正在停止"
+	}
+	return codeOfEngineStop, "应用正在退出：已建好的任务会继续执行，不能再开新任务或发命令"
+}
+
+// codeOfEngineStop 应用退出时新命令的错误码。
+const codeOfEngineStop = "engine_stopping"
+
+// Stop 停下引擎（进程退出时用）：之后不接受新命令、不建任务。
 //
-// 有任务处于准入校验、执行中或质检中时拒绝，返回 *contract.EngineBusyError，引擎照常工作。
+// 有任务处于准入校验、执行中或质检中时拒绝，返回 *EngineBusyError，引擎照常工作。
 // 先挡住新命令再检查状态：命令在持有任务锁时检查 stopping，所以检查时读到的状态不会再变成活跃。
-func (e *Engine) Stop() error {
+func (e *Engine) Stop() (busy *contract.EngineBusyError) {
 	e.mu.Lock()
 	if e.stopped {
 		e.mu.Unlock()
@@ -289,20 +318,25 @@ func (e *Engine) Stop() error {
 	}
 	e.stopping = true
 	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.stopping = false
+		e.mu.Unlock()
+	}()
 
-	busy := []string{}
+	ids := []string{}
 	for _, summary := range e.List() {
 		if activeStates[summary.State] {
-			busy = append(busy, summary.ID)
+			ids = append(ids, summary.ID)
 		}
+	}
+	if len(ids) > 0 {
+		return &contract.EngineBusyError{TaskIDs: ids}
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.stopping = false
-	if len(busy) > 0 {
-		return &contract.EngineBusyError{TaskIDs: busy}
-	}
 	e.stopped = true
+	e.stopErr = errEngineStopping
 	return nil
 }
 
@@ -325,6 +359,8 @@ func (e *Engine) appendLocked(rt *taskRuntime, event contract.TaskEvent) error {
 	event.Seq = rt.proj.LastSeq + 1
 	event.TS = e.nowISO()
 	event.TaskID = rt.id
+	// 事件日志是给这个任务的所有读者看的：工作区每次都写全（只有一个标识，不影响对拍）
+	event.WorkspaceID = rt.workspaceID
 	if err := AppendEventLine(rt.logPath, event); err != nil {
 		return err
 	}
@@ -589,19 +625,19 @@ func decodeInto(value any, target any) error {
 // 每个判断步骤开始时读一次：设置页保存后对之后新建 / 新开始的步骤立即生效；
 // 设置文件缺失或损坏时返回 nil，由运行器退回内置值。
 func (e *Engine) executionDefaults() *contract.ExecutionSettings {
-	document := settings.Read(e.workspaceDir)
+	document := settings.Read(e.dir)
 	execution := document.Execution
 	return &execution
 }
 
 // persistedCrashArmed settings.json 里持久化的一次性崩溃标记；读取失败不影响任务执行。
 func (e *Engine) persistedCrashArmed() bool {
-	return settings.LoadDemo(e.workspaceDir).CrashOnNextStep
+	return settings.LoadDemo(e.dir).CrashOnNextStep
 }
 
 // persistFaultCleared 一次性开关命中后同步清除持久化标记（崩溃时必须在进程退出之前完成）。
 func (e *Engine) persistFaultCleared(patch contract.DemoSettings, setCrash, setCorrupt bool) {
-	if _, err := settings.SaveDemo(e.workspaceDir, patch, false, setCorrupt, setCrash); err != nil {
+	if _, err := settings.SaveDemo(e.dir, patch, false, setCorrupt, setCrash); err != nil {
 		// 演示开关的持久化失败不应影响任务本身
 		_ = err
 	}
@@ -1660,7 +1696,8 @@ func (e *Engine) copyAttachments(rt *taskRuntime, inputs []contract.AttachmentIn
 // Create 建草稿任务：校验员工目录、复制配置与附件、写 task_created。
 func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot, error) {
 	if e.refusesCommands() {
-		return nil, errors.New("工作区正在切换，任务没有创建")
+		_, message := e.stopRefusal()
+		return nil, errors.New(message + "，任务没有创建")
 	}
 	if input.Actor != contract.RoleInitiator && input.Actor != contract.RoleSystem {
 		return nil, fmt.Errorf("角色 %s 不能创建任务", input.Actor)
@@ -1705,6 +1742,8 @@ func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot,
 	}
 
 	rt := e.newRuntime(id, dir, cfg)
+	// 发起事件记下任务属于哪个工作区
+	rt.workspaceID = input.WorkspaceID
 	e.mu.Lock()
 	e.runtimes[id] = rt
 	e.mu.Unlock()
@@ -1719,7 +1758,7 @@ func (e *Engine) Create(input contract.CreateTaskInput) (*contract.TaskSnapshot,
 	}
 	if err := e.append(rt, contract.TaskEvent{
 		Type: contract.EventTaskCreated, Employee: input.Employee, ConfigHash: cfg.Hash,
-		Form: form, Attachments: refs,
+		Form: form, Attachments: refs, WorkspaceID: input.WorkspaceID,
 	}); err != nil {
 		return nil, err
 	}
@@ -1740,8 +1779,9 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 	rt.mu.Lock()
 	// 持有任务锁时检查，Stop 读到的任务状态因此不会再被这条命令改成活跃
 	if e.refusesCommands() {
+		code, message := e.stopRefusal()
 		rt.mu.Unlock()
-		return contract.CommandResult{OK: false, Error: contract.ErrIllegalTransition, Message: "工作区正在切换，命令没有执行"}
+		return contract.CommandResult{OK: false, Error: code, Message: message}
 	}
 	from := rt.proj.State
 	action, available := findAction(availableActions(from, rt.proj.Pause), command.Type)
@@ -2082,7 +2122,7 @@ func (e *Engine) loadRuntime(id string) (*taskRuntime, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}
-	cfg, err := config.Load(filepath.Join(dir, "config"))
+	cfg, err := e.configOf(dir, events)
 	if err != nil {
 		return nil, err
 	}
@@ -2091,7 +2131,34 @@ func (e *Engine) loadRuntime(id string) (*taskRuntime, error) {
 		rt.proj.Apply(event)
 	}
 	rt.events = events
+	rt.workspaceID = rt.proj.WorkspaceID
 	return rt, nil
+}
+
+// configOf 读任务目录里的员工配置副本；读不出来时按发起事件里的员工 id 找后备配置（见 Deps.ConfigFallback）。
+func (e *Engine) configOf(dir string, events []contract.TaskEvent) (*contract.EmployeeConfig, error) {
+	cfg, err := config.Load(filepath.Join(dir, "config"))
+	if err == nil || e.configFallback == nil {
+		return cfg, err
+	}
+	employee := ""
+	for _, event := range events {
+		if event.Type == contract.EventTaskCreated {
+			employee = event.Employee
+			break
+		}
+	}
+	if employee == "" || !config.IsEmployeeID(employee) {
+		return nil, err
+	}
+	fallbackDir, ok := e.configFallback(employee)
+	if !ok {
+		return nil, err
+	}
+	if cfg, fallbackErr := config.Load(fallbackDir); fallbackErr == nil {
+		return cfg, nil
+	}
+	return nil, err
 }
 
 func (e *Engine) titleOf(rt *taskRuntime) string {
@@ -2125,7 +2192,7 @@ func (e *Engine) titleOf(rt *taskRuntime) string {
 func (e *Engine) summaryOf(rt *taskRuntime) contract.TaskSummary {
 	summary := view(rt, func(p *projection) contract.TaskSummary {
 		return contract.TaskSummary{
-			ID: rt.id, Employee: p.Employee, State: p.State, UpdatedAt: p.LastTS,
+			ID: rt.id, Employee: p.Employee, WorkspaceID: p.WorkspaceID, State: p.State, UpdatedAt: p.LastTS,
 			StatusText: statusText(p.State, p.Pause),
 			WaitingFor: waitingForRoles(p.State, availableActions(p.State, p.Pause)),
 		}
@@ -2141,7 +2208,7 @@ func (e *Engine) salvagedSummary(id string, failure error) (contract.TaskSummary
 	if len(events) == 0 {
 		return contract.TaskSummary{}, false
 	}
-	cfg, err := config.Load(filepath.Join(dir, "config"))
+	cfg, err := e.configOf(dir, events)
 	if err != nil {
 		return contract.TaskSummary{}, false
 	}
@@ -2150,6 +2217,7 @@ func (e *Engine) salvagedSummary(id string, failure error) (contract.TaskSummary
 		rt.proj.Apply(event)
 	}
 	rt.events = events
+	rt.workspaceID = rt.proj.WorkspaceID
 	summary := e.summaryOf(rt)
 	if corruption != "" {
 		summary.Error = corruption

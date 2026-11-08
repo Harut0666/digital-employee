@@ -11,6 +11,7 @@ const msg = (input: Omit<SessionMessage, "id" | "seq" | "ts">, id?: string): Ses
 
 const session = (messages: SessionMessage[], patch: Partial<SessionDetail> = {}): SessionDetail => ({
   id: "s-1",
+  workspaceId: "ws-1",
   status: "reception",
   readOnly: false,
   title: "帮我出第 44 周的周报",

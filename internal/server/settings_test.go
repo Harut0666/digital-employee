@@ -16,9 +16,11 @@ import (
 // 生产环境不注入 Env：环境变量里的 Key 必须能被看到，否则只配环境变量的人提交不了任务。
 func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-process-env")
+	workspace := t.TempDir()
 	srv := New(Options{
 		Engine:       newFakeEngine(),
-		WorkspaceDir: t.TempDir(),
+		AppDir:       workspace,
+		WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join("..", "..", "employees"),
 		Logger:       NewLogger(LevelError, func(string, string) {}),
 	})
@@ -45,6 +47,10 @@ func newServerWith(t *testing.T, options Options) (*httptest.Server, *fakeEngine
 	options.Engine = engine
 	if options.WorkspaceDir == "" {
 		options.WorkspaceDir = t.TempDir()
+	}
+	// 设置、审计、诊断都写在应用目录里：没指定时按单目录模式用工作区目录，不碰真实的 %APPDATA%
+	if options.AppDir == "" {
+		options.AppDir = options.WorkspaceDir
 	}
 	if options.EmployeesDir == "" {
 		options.EmployeesDir = filepath.Join("..", "..", "employees")

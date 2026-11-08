@@ -129,7 +129,7 @@ func (s *Server) employeeConfigPayload(id, dir string) employeeConfigResponse {
 			FormParams:  formParamsView(),
 			QCTemplates: append([]string{}, qcTemplates...),
 		},
-		Versions: listConfigVersions(s.opts.WorkspaceDir, id),
+		Versions: listConfigVersions(s.opts.AppDir, id),
 	}
 	response.Name = id
 	if config, err := s.opts.LoadEmployee(dir); err != nil {
@@ -174,7 +174,7 @@ func (s *Server) handleListConfigVersions(w http.ResponseWriter, r *http.Request
 	if _, ok := s.lookupEmployee(w, id); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, listConfigVersions(s.opts.WorkspaceDir, id))
+	writeJSON(w, http.StatusOK, listConfigVersions(s.opts.AppDir, id))
 }
 
 func (s *Server) handleDiffConfigVersion(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +184,7 @@ func (s *Server) handleDiffConfigVersion(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	versionID := r.PathValue("version")
-	diff, found := diffConfigVersion(s.opts.WorkspaceDir, id, dir, versionID)
+	diff, found := diffConfigVersion(s.opts.AppDir, id, dir, versionID)
 	if !found {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("配置版本不存在：%s", versionID)))
 		return
@@ -199,14 +199,14 @@ func (s *Server) handleRestoreConfigVersion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	versionID := r.PathValue("version")
-	result, found := restoreConfigVersion(s.opts.WorkspaceDir, id, dir, versionID, s.now)
+	result, found := restoreConfigVersion(s.opts.AppDir, id, dir, versionID, s.now)
 	if !found {
 		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("配置版本不存在：%s", versionID)))
 		return
 	}
 	response := restoreConfigResponse{
 		OK: true, Version: result.Snapshot, RestoredFrom: result.RestoredFrom,
-		Versions: listConfigVersions(s.opts.WorkspaceDir, id),
+		Versions: listConfigVersions(s.opts.AppDir, id),
 	}
 	if config, err := s.opts.LoadEmployee(dir); err == nil {
 		response.Hash = config.Hash
@@ -274,7 +274,7 @@ func (s *Server) handleSaveConfigFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.opts.LoadEmployee(dir); err != nil {
 		loadedBefore = false
 	}
-	version, err := createConfigVersion(s.opts.WorkspaceDir, id, dir, s.now)
+	version, err := createConfigVersion(s.opts.AppDir, id, dir, s.now)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, internalError(err.Error()))
 		return
@@ -306,7 +306,7 @@ func (s *Server) handleSaveConfigFile(w http.ResponseWriter, r *http.Request) {
 		} else {
 			_ = os.WriteFile(target, []byte(*backup), 0o644)
 		}
-		removeConfigVersion(s.opts.WorkspaceDir, id, version.ID)
+		removeConfigVersion(s.opts.AppDir, id, version.ID)
 		writeSaveConfigError(w, http.StatusBadRequest, "配置保存后无法加载，已回滚", []string{loadError})
 		return
 	}

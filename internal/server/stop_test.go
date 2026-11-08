@@ -303,7 +303,7 @@ func (h *harness) restart(model agent.ModelProvider) *engine.Engine {
 	registry := tools.NewRegistry()
 	h.t.Cleanup(func() { _ = registry.Close() })
 	restarted, err := engine.New(engine.Deps{
-		WorkspaceDir: h.workspace,
+		Dir:          h.workspace,
 		EmployeesDir: h.employees,
 		ToolClient:   registry,
 		Model:        model,

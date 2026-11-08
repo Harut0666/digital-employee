@@ -1,5 +1,5 @@
-// 会话日志：每个会话一份 sessions/<id>/log.jsonl，追加写，每条落盘。
-// 会话的状态（员工、草稿、任务 ID）都由日志回放得到，没有第二份存储。
+// 会话日志：每个会话一份 <应用目录>/sessions/<id>/log.jsonl，追加写，每条落盘。
+// 会话的状态（工作区、员工、草稿、任务 ID）都由日志回放得到，没有第二份存储。
 package session
 
 import (
@@ -64,7 +64,9 @@ type Message struct {
 	Reason string `json:"reason,omitempty"`
 
 	// 状态变更
-	Employee   string         `json:"employee,omitempty"`
+	// WorkspaceID 只在第一行（created）里：会话属于哪个工作区
+	WorkspaceID string         `json:"workspaceId,omitempty"`
+	Employee    string         `json:"employee,omitempty"`
 	TaskID     string         `json:"taskId,omitempty"`
 	Draft      map[string]any `json:"draft,omitempty"`
 	Attachment *Attachment    `json:"attachment,omitempty"`
@@ -83,7 +85,9 @@ func (m Message) visible() bool {
 
 // record 一个会话回放后的完整状态。
 type record struct {
-	id          string
+	id string
+	// workspaceID 会话属于哪个工作区
+	workspaceID string
 	employee    string
 	taskID      string
 	draft       map[string]any
@@ -105,6 +109,8 @@ func (r *record) apply(message Message) {
 	}
 	r.updatedAt = message.TS
 	switch message.Kind {
+	case kindCreated:
+		r.workspaceID = message.WorkspaceID
 	case kindEmployeeSet:
 		r.employee = message.Employee
 	case kindDraftSet:
@@ -145,7 +151,7 @@ func (r *record) spoken() bool {
 
 var idPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
-// store 工作区里的会话日志。
+// store 应用目录里的会话日志：所有工作区的会话都在这里，各自在日志第一行记下工作区。
 type store struct {
 	dir   string
 	now   func() time.Time
@@ -153,8 +159,8 @@ type store struct {
 	locks map[string]*sync.Mutex
 }
 
-func newStore(workspace string, now func() time.Time) *store {
-	return &store{dir: filepath.Join(workspace, "sessions"), now: now, locks: map[string]*sync.Mutex{}}
+func newStore(dir string, now func() time.Time) *store {
+	return &store{dir: filepath.Join(dir, "sessions"), now: now, locks: map[string]*sync.Mutex{}}
 }
 
 func (s *store) sessionDir(id string) string { return filepath.Join(s.dir, id) }
@@ -276,7 +282,7 @@ func (s *store) saveAttachment(id string, file contract.AttachmentInput) (int64,
 	return io.Copy(out, source)
 }
 
-// ids 工作区里全部会话的 ID。
+// ids 应用目录里全部会话的 ID。
 func (s *store) ids() []string {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
