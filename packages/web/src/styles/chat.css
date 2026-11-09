@@ -374,31 +374,6 @@
   text-align: center;
 }
 
-/* 正在说话的一轮（T40）：说完之前逐字出现 */
-.streaming .caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  background: var(--primary);
-  animation: caret-blink 1s steps(2, start) infinite;
-}
-.streaming .caret.steady {
-  animation: none;
-}
-@keyframes caret-blink {
-  to {
-    visibility: hidden;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .streaming .caret,
-  .trace-child-caret {
-    animation: none;
-  }
-}
-
 /* ---------- 输入区：一个圆角容器，上方文本框，底栏左权限模式、右模型和发送 ---------- */
 .composer {
   flex: none;

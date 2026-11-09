@@ -1,0 +1,344 @@
+/* 消息正文与工具行。助手的话没有气泡和头像：14px / 24px，块间距 16px；用户是右对齐的浅色气泡。 */
+
+/* ---------- Markdown 正文 ---------- */
+.msg-row:not(.me) .bubble.md-bubble {
+  white-space: normal;
+  padding: 0;
+  width: 100%;
+  font-size: var(--fs-base);
+  line-height: 24px;
+}
+.md {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: var(--sp-4);
+}
+.md > *:first-child {
+  margin-top: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md pre,
+.md h1,
+.md h2,
+.md h3,
+.md h4,
+.md hr {
+  margin: 0;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 650;
+  line-height: 1.4;
+}
+.md h1 {
+  font-size: calc(var(--font-size) + 5px);
+}
+.md h2 {
+  font-size: calc(var(--font-size) + 3px);
+}
+.md h3 {
+  font-size: calc(var(--font-size) + 1px);
+}
+.md h4 {
+  font-size: var(--fs-base);
+}
+.md ul,
+.md ol {
+  padding-left: 1.5em;
+}
+.md li + li {
+  margin-top: 4px;
+}
+.md li > p {
+  display: inline;
+}
+.md li > ul,
+.md li > ol {
+  margin-top: 4px;
+}
+.md input[type="checkbox"] {
+  margin: 0 6px 0 -1.2em;
+  vertical-align: middle;
+}
+.md li.task-list-item {
+  list-style: none;
+}
+.md blockquote {
+  padding: 2px 0 2px var(--sp-3);
+  border-left: 3px solid var(--line-strong);
+  color: var(--text-2);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.md a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md del {
+  color: var(--muted);
+}
+.md :not(pre) > code {
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  background: var(--tone-idle-soft);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.md-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: var(--fs-md);
+  line-height: 20px;
+}
+.md th,
+.md td {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.md th {
+  background: var(--card-2);
+  font-weight: 600;
+}
+
+/* 代码块：语言标签 + 复制按钮 + 等宽正文 */
+.md-code {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+  overflow: hidden;
+}
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.md-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.md-code-copy:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.md-code pre {
+  margin: 0;
+  padding: var(--sp-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  white-space: pre;
+}
+.md-code code {
+  font-family: inherit;
+}
+
+/* 流式：末尾一个闪烁的光标；说完（或出错停下）后不闪 */
+.md-live > :last-child:not(.md-code)::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--primary);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-live > :last-child:not(.md-code)::after {
+    animation: none;
+  }
+}
+
+/* ---------- 工具调用行（DSH 风格）：24px 一行 = 图标 + 动词 + 摘要，点击展开输入 / 输出 ---------- */
+.tr-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: calc(var(--sp-2) * -1);
+}
+.tr-fold,
+.tr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  text-align: left;
+  cursor: pointer;
+}
+.tr-fold {
+  width: fit-content;
+}
+.tr-fold:hover,
+.tr-row:hover {
+  background: var(--hover);
+  color: var(--text-2);
+}
+.tr-caret {
+  flex: none;
+  display: inline-flex;
+  font-size: 9px;
+  opacity: 0.7;
+}
+.tr-row .tr-caret {
+  margin-left: auto;
+  opacity: 0;
+}
+.tr-row:hover .tr-caret,
+.tr-row:focus-visible .tr-caret,
+.tr-row[aria-expanded="true"] .tr-caret {
+  opacity: 0.7;
+}
+.tr-icon {
+  flex: none;
+  display: inline-flex;
+}
+.tr-verb {
+  flex: none;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.tr-dot {
+  flex: none;
+}
+.tr-sum {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.tr-delta {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.tr-add {
+  color: var(--tone-done);
+}
+.tr-del {
+  color: var(--tone-error);
+}
+.tr-err {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tone-error);
+  font-size: var(--fs-sm);
+}
+.tr.error .tr-sum {
+  color: var(--tone-error);
+}
+/* 准备 / 运行中：整行文字闪烁 */
+.tr.pending .tr-row,
+.tr.running .tr-row {
+  background-image: linear-gradient(90deg, var(--muted) 30%, var(--text) 50%, var(--muted) 70%);
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tr-shimmer 1.6s linear infinite;
+}
+.tr.pending .tr-row .tr-verb,
+.tr.running .tr-row .tr-verb {
+  color: inherit;
+}
+@keyframes tr-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tr.pending .tr-row,
+  .tr.running .tr-row {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+.tr-body {
+  margin: 2px 0 6px 22px;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+  font-size: var(--fs-sm);
+}
+.tr-label {
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.tr-pre {
+  margin: 0 0 var(--sp-2);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+}
+.tr-none {
+  color: var(--muted);
+}
+.tr-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}

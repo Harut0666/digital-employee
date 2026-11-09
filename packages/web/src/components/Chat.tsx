@@ -1,29 +1,22 @@
 import { Sender } from "@ant-design/x";
 import type { SenderRef } from "@ant-design/x/es/sender/interface";
-import { Alert, Button, Collapse, Dropdown, Tooltip, Typography } from "antd";
+import { Alert, Button, Dropdown, Tooltip } from "antd";
 import {
   BranchesOutlined,
-  CaretDownOutlined,
-  CaretRightOutlined,
-  CheckCircleFilled,
-  CloseCircleFilled,
   DownOutlined,
   FolderAddOutlined,
   FolderOutlined,
-  LoadingOutlined,
   LockOutlined,
   MessageOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   SettingOutlined,
   StopOutlined,
-  ToolOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { ModelConnectionOption, ModelRef, PermissionMode, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
-import type { AgentToolView } from "../api/types";
 import { modelLabel, modelMenuItems, newSessionModelMenu, parseModelValue } from "../view/session-model";
 import { permissionHint, permissionMenuItems, permissionModeLabel } from "../view/permission-mode";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
@@ -35,6 +28,9 @@ import { composerView, enterHint, STARTERS, type Starter } from "../view/compose
 import { stateTone } from "../view/session-row";
 import type { NewChatTarget } from "../view/new-chat";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
+import { Markdown } from "./Markdown";
+import { ToolTurn } from "./ToolRows";
+import { followAction, isNearBottom } from "../view/scroll-follow";
 import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
 import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
 import { StepList } from "./StepList";
@@ -56,76 +52,28 @@ export function StatusPill({ state }: { state: TaskState }) {
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
-/** 一轮里的一次工具调用：默认折成一行，点开看参数和结果 */
-function ToolCalls({ items }: { items: AgentToolView[] }) {
-  const busy = items.some((t) => !t.ended);
-  return (
-    <Collapse
-      className="tool-calls"
-      size="small"
-      bordered={false}
-      defaultActiveKey={busy ? ["tools"] : []}
-      expandIconPosition="start"
-      expandIcon={({ isActive }) => (isActive ? <CaretDownOutlined /> : <CaretRightOutlined />)}
-      items={[
-        {
-          key: "tools",
-          label: (
-            <span className="tool-calls-label">
-              {busy ? <LoadingOutlined /> : <ToolOutlined />} 调用了 {items.length} 次工具{busy ? "，还没结束" : ""}
-            </span>
-          ),
-          children: (
-            <ul className="tool-list">
-              {items.map((tool) => (
-                <li key={tool.id} className={`tool ${tool.ended ? (tool.isErr ? "bad" : "ok") : "busy"}`}>
-                  <div className="tool-head">
-                    {tool.ended ? tool.isErr ? <CloseCircleFilled /> : <CheckCircleFilled /> : <LoadingOutlined />}
-                    <code>{tool.tool}</code>
-                    {tool.args && Object.keys(tool.args).length > 0 && <span className="tool-args">{brief(tool.args)}</span>}
-                  </div>
-                  {tool.ended && (tool.reason || tool.result !== undefined) && (
-                    <Typography.Paragraph className="tool-result" ellipsis={{ rows: 3, expandable: true, symbol: "展开" }}>
-                      {tool.reason || brief(tool.result)}
-                    </Typography.Paragraph>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ),
-        },
-      ]}
-    />
-  );
-}
-
-/** 工具参数和结果压成一行 */
-function brief(value: unknown): string {
-  const text = typeof value === "string" ? value : JSON.stringify(value);
-  return text.length > 120 ? `${text.slice(0, 120)}…` : text;
-}
-
-/** 正在说的一段话：后到的字一段段接上，末尾闪一个光标 */
-function StreamingMessage({ text, running }: { text: string; running: boolean }) {
+/**
+ * 员工的一条回复：没有头像和气泡，文字铺满内容列，内容走 Markdown。
+ * 说话中（streaming）和说完后的正式消息是同一个组件、同一个 key，流式内容被正式消息整体覆盖，不会出现两份。
+ */
+function AgentMessage({ text, ts, streaming, running }: { text: string; ts?: string; streaming: boolean; running: boolean }) {
   return (
     <div className="msg-row">
       <div className="msg-col">
-        <div className="bubble streaming">
-          {text}
-          <span className={running ? "caret" : "caret steady"} />
+        <div className={`bubble md-bubble ${streaming ? "streaming" : ""} ${streaming && !running ? "settled" : ""}`}>
+          <Markdown text={text} streaming={streaming && running} />
         </div>
+        {ts && !streaming && <div className="msg-time">{clock(ts)}</div>}
       </div>
     </div>
   );
 }
 
-function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }> }) {
-  const me = item.kind === "user";
+function Message({ item }: { item: Extract<ChatItem, { kind: "user" }> }) {
   // 不是发起人说的话，标出是谁说的（审核人、操作员也会在对话里说话）
-  const other = me && item.role && item.role !== "initiator" ? item.role : undefined;
+  const other = item.role && item.role !== "initiator" ? item.role : undefined;
   return (
-    <div className={`msg-row ${me ? "me" : ""}`}>
-      {/* 发起人自己的话靠右、套浅色气泡；员工的话没有头像和气泡，文字铺满内容列 */}
+    <div className="msg-row me">
       <div className="msg-col">
         {other && (
           <div className="msg-who">
@@ -138,7 +86,6 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }>
     </div>
   );
 }
-
 /**
  * 输入框右下角的模型下拉（T39）：显示“连接 / 模型”，点开按连接分组列出可选模型。
  * 没有可用模型时按钮变成提醒色，菜单里给“去设置”入口。
@@ -471,10 +418,23 @@ export function SessionChat({
     setFocusedStep(stepId);
     setTraceOpen(true);
   };
-  const lastKey = items.at(-1)?.key;
+  // 自动滚动：在底部 24px 内就跟随，用户向上滚就释放，回到底部再恢复；用户自己发了话也回到底部
+  const following = useRef(true);
+  const seen = useRef({ count: 0, lastUser: "" });
+  const onScroll = () => {
+    if (bodyRef.current) following.current = isNearBottom(bodyRef.current);
+  };
   useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [lastKey, items.length]);
+    const body = bodyRef.current;
+    if (!body) return;
+    const lastUser = items.filter((i) => i.kind === "user").at(-1)?.key ?? "";
+    if (lastUser !== seen.current.lastUser) following.current = true;
+    const grewOnly = items.length === seen.current.count;
+    seen.current = { count: items.length, lastUser };
+    const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const action = followAction({ following: following.current, reducedMotion: reduced, grewOnly });
+    if (action !== "none") body.scrollTo({ top: body.scrollHeight, behavior: action === "smooth" ? "smooth" : "auto" });
+  }, [items]);
   const showStages = Boolean(detail.taskId);
   const composer = composerView({
     readOnly: detail.readOnly,
@@ -525,7 +485,7 @@ export function SessionChat({
           focusStepId={focusedStep}
         />
       )}
-      <div className="chat-body thread" ref={bodyRef}>
+      <div className="chat-body thread" ref={bodyRef} onScroll={onScroll}>
         {items.length === 0 && (
           <StateBlock
             icon={<MessageOutlined />}
@@ -535,12 +495,14 @@ export function SessionChat({
           />
         )}
         {items.map((item) =>
-          item.kind === "user" || item.kind === "agent" ? (
+          item.kind === "user" ? (
             <Message key={item.key} item={item} />
-          ) : item.kind === "tools" ? (
-            <ToolCalls key={item.key} items={item.items} />
+          ) : item.kind === "agent" ? (
+            <AgentMessage key={item.key} text={item.text} ts={item.ts} streaming={false} running={false} />
           ) : item.kind === "streaming" ? (
-            <StreamingMessage key={item.key} text={item.text} running={live?.running ?? false} />
+            <AgentMessage key={item.key} text={item.text} streaming running={item.running} />
+          ) : item.kind === "tools" ? (
+            <ToolTurn key={item.key} item={item} />
           ) : (
             renderCard(item, actions, session)
           ),
