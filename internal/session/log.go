@@ -219,10 +219,14 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 
 // store 应用目录里的会话日志：所有工作区的会话都在这里，各自在日志第一行记下工作区。
 type store struct {
-	dir   string
-	now   func() time.Time
-	mu    sync.Mutex
-	locks map[string]*sessionLock
+	dir string
+	now func() time.Time
+	mu  sync.Mutex
+	// writeMu 让日志的实际写入（append 追加一行、update 整份重写）互相排斥。
+	// sessionLock 的身份是 -1（后台）时同一个身份会被多个协程同时“重入”（发消息、Agent 的一轮），
+	// 光靠它挡不住两个协程同时写同一个文件。
+	writeMu sync.Mutex
+	locks   map[string]*sessionLock
 }
 
 // sessionLock 一个会话的写锁，可重入：前台 Agent 的一轮拿着它跑整轮，期间它自己写日志（append、update）
@@ -299,6 +303,8 @@ func (s *store) append(id string, message Message) (Message, error) {
 	lock := s.lockOf(id)
 	lock.Lock(background)
 	defer lock.Unlock(background)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	current, err := s.read(id)
 	if err != nil {
@@ -334,10 +340,15 @@ func (s *store) append(id string, message Message) (Message, error) {
 }
 
 // update 改写一行（文字增量追加到同一轮的那一条），返回改写后的消息；序号、ID 不变，时间取现在。
+//
+// 日志是整份重写的（一行变长，只能重写）：先写临时文件再原子替换，读的一方（GET 会话、
+// 另一个人的操作读日志）不会读到写了一半的日志；写到一半失败或进程被杀时，原日志还在。
 func (s *store) update(id string, seq int64, change func(*Message)) (Message, error) {
 	lock := s.lockOf(id)
 	lock.Lock(background)
 	defer lock.Unlock(background)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 
 	raw, err := os.ReadFile(s.logPath(id))
 	if err != nil {
@@ -356,9 +367,43 @@ func (s *store) update(id string, seq int64, change func(*Message)) (Message, er
 			return Message{}, err
 		}
 		lines[index] = strings.TrimRight(encoded, "\n")
-		return message, os.WriteFile(s.logPath(id), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		if err := writeFileAtomic(s.logPath(id), []byte(strings.Join(lines, "\n")+"\n")); err != nil {
+			return Message{}, err
+		}
+		return message, nil
 	}
 	return Message{}, fmt.Errorf("会话日志里没有第 %d 条", seq)
+}
+
+// writeFileAtomic 先写同目录的临时文件、落盘，再原子替换目标文件。
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, ".log-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	cleanup := func() {
+		temp.Close()
+		_ = os.Remove(tempName)
+	}
+	if _, err := temp.Write(data); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		_ = os.Remove(tempName)
+		return err
+	}
+	if err := os.Rename(tempName, path); err != nil {
+		_ = os.Remove(tempName)
+		return err
+	}
+	return nil
 }
 
 // encodeLine 一条消息编成日志的一行。
