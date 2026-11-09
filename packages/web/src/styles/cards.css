@@ -8,7 +8,6 @@
 .card {
   --accent: var(--primary);
   position: relative;
-  margin-left: 40px;
   padding: var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 2px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
@@ -311,61 +310,12 @@ button.checklist-line {
   text-align: center;
 }
 
-/* ---------- Agent 的工具调用、写文件：一行，点开看详情 ---------- */
-.tool-calls,
+/* ---------- Agent 写的文件：一行，点开看改动 ---------- */
 .file-change {
-  margin-left: 40px;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--card-2);
-}
-.tool-calls .ant-collapse-header {
-  padding: 5px var(--sp-3) !important;
-}
-.tool-calls-label {
-  color: var(--muted);
-  font-size: var(--fs-md);
-}
-.tool-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-}
-.tool .tool-head {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  color: var(--muted);
-}
-.tool.ok .tool-head {
-  color: var(--tone-done);
-}
-.tool.bad .tool-head {
-  color: var(--tone-error);
-}
-.tool code {
-  padding: 0 6px;
-  border-radius: var(--r-sm);
-  background: var(--card);
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-.tool-args {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-}
-.tool .tool-result {
-  margin: 4px 0 0 22px !important;
-  color: var(--muted);
-  font-size: var(--fs-md);
-}
-.file-change {
+}.file-change {
   padding: 6px var(--sp-3);
   font-size: var(--fs-md);
 }

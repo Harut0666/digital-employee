@@ -279,7 +279,6 @@
   margin-top: var(--sp-2);
 }
 .past-run {
-  margin-left: 40px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   overflow: hidden;
@@ -318,21 +317,12 @@
 .msg-row.me {
   justify-content: flex-end;
 }
-.msg-avatar {
-  width: 28px;
-  height: 28px;
-  margin-top: 1px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  flex: none;
-  font-size: 15px;
-  background: var(--primary-soft);
-  color: var(--primary);
-}
 .msg-col {
   min-width: 0;
-  max-width: calc(100% - 40px);
+  max-width: 100%;
+}
+.msg-row:not(.me) .msg-col {
+  flex: 1;
 }
 .msg-row.me .msg-col {
   max-width: 78%;
@@ -352,7 +342,7 @@
   padding: 1px 0;
 }
 .msg-row.me .bubble {
-  padding: 8px 14px;
+  padding: 10px 16px;
   border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);
   background: var(--bubble-me);
 }
@@ -382,31 +372,6 @@
   background: var(--tone-idle-soft);
   font-size: var(--fs-sm);
   text-align: center;
-}
-
-/* 正在说话的一轮（T40）：说完之前逐字出现 */
-.streaming .caret {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  margin-left: 2px;
-  vertical-align: -0.15em;
-  background: var(--primary);
-  animation: caret-blink 1s steps(2, start) infinite;
-}
-.streaming .caret.steady {
-  animation: none;
-}
-@keyframes caret-blink {
-  to {
-    visibility: hidden;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .streaming .caret,
-  .trace-child-caret {
-    animation: none;
-  }
 }
 
 /* ---------- 输入区：一个圆角容器，上方文本框，底栏左权限模式、右模型和发送 ---------- */
