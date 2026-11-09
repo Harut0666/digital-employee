@@ -437,7 +437,7 @@ export function SessionChat({
       <ChatInput
         placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
         disabled={detail.readOnly}
-        folderFiles={detail.taskId ? [] : folderFiles}
+        folderFiles={detail.status === "task" ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
         onSend={onSend}
         modelPicker={

@@ -182,6 +182,25 @@ describe("模拟数据模式的会话", () => {
     expect(items.find((i) => i.taskId === "mock-43")?.workspaceName).toBe("我的工作区");
   });
 
+  test("会话有未结束的任务时拒绝再开新任务并说明原因；记录带“第几次运行”", async () => {
+    const { api: web } = asRole("initiator");
+    const api = web as MockWebApi;
+    const created = await api.createSession();
+    await api.confirmEmployee(created.id, "weekly-report");
+    await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx"), new File(["y"], "周会纪要_2026W44.docx")]);
+    const form = { period: { year: 2026, week: 44 }, remark: "" };
+    const first = await api.submitSession(created.id, form);
+    const firstId = first.ok ? first.session.taskId! : "";
+    expect(first.ok && first.session.taskIds).toEqual([firstId]);
+
+    const again = await api.submitSession(created.id, form);
+    expect(again).toMatchObject({ ok: false, error: "session_has_task" });
+    expect(!again.ok && again.message).toContain("还没结束");
+    expect(!again.ok && again.message).toContain(firstId);
+
+    const rows = (await api.records("initiator")).filter((r) => r.sessionId === created.id);
+    expect(rows.map((r) => [r.taskId, r.runNumber])).toEqual([[firstId, 1]]);
+  });
   test("会话可以重命名、归档：归档后默认不列，带 archived 才列", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();

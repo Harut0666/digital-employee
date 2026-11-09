@@ -123,7 +123,7 @@ func (m *Manager) SkipItem(id string, role contract.Role, itemID string) (*Reply
 		return nil, err
 	}
 	defer done()
-	if t.current.taskID != "" {
+	if m.openTask(t.current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，清单不能再改")
 	}
 	if t.current.employee == "" {
