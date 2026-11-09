@@ -261,7 +261,8 @@ func (loop *turnLoop) resolveModel() (*agent.ResolvedStepModel, error) {
 	if provider == nil {
 		return fail("没有可用的模型提供者")
 	}
-	// 前台 Agent 也用会话模型（Spec 0006）；绑定任务时是任务当前的模型
+	// 前台 Agent 也用会话模型（Spec 0006）；绑定未结束的任务时是任务当前的模型，
+	// 任务结束后是会话的选择（Spec 0007）
 	t := loop.turn
 	model := t.manager.taskModel(t.current)
 	if model.Connection != "" && model.Model != "" {

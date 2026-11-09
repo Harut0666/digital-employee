@@ -67,7 +67,7 @@ type gateFixture struct {
 func newGateFixture(t *testing.T) *gateFixture {
 	t.Helper()
 	manager := New(Deps{Dir: t.TempDir(), Workspace: func(string) bool { return true }})
-	view, err := manager.Create("ws")
+	view, err := manager.Create("ws", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

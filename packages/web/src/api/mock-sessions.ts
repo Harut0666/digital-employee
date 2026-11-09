@@ -208,8 +208,8 @@ export function createMockSessions(
     const status: SessionSummary["status"] = s.taskId ? (closed ? "closed" : "task") : s.employee ? "drafting" : "reception";
     const unread = unreadOf(s, summary);
     return {
-      // 绑定了任务时是任务的当前模型；还没任务时是选过的模型，没选过沿用 lastModel
-      ...(s.taskId ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
+      // 绑定未结束的任务时是任务的当前模型；任务已结束（T45）或还没任务时是选过的模型，没选过沿用 lastModel
+      ...(s.taskId && !closed ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
       permissionMode: s.permissionMode,
       id: s.id,
       workspaceId: s.workspaceId,
@@ -518,16 +518,15 @@ export function createMockSessions(
       const option = MOCK_MODEL_OPTIONS.find((o) => o.name === connection);
       if (!option) return fail("invalid_input", `没有这个连接：${connection}`);
       if (!option.models.includes(model)) return fail("invalid_input", `模型「${model}」不在连接「${connection}」的模型列表里`);
-      if (s.taskId) {
-        const task = await tasks.getTask(s.taskId);
-        if (task?.state === "delivered" || task?.state === "terminated") return fail("session_read_only", "任务已结束，模型不能再改；下一个任务请开新对话");
-      }
       const next: ModelRef = { connection, model };
       if (s.selected && s.selected.connection === connection && s.selected.model === model) return reply(s, []);
+      // T45：任务已结束（交付、终止）时只改会话的选择，不写任务事件；下一个任务用它
+      const task = s.taskId ? await tasks.getTask(s.taskId) : undefined;
+      const ended = task !== undefined && FINISHED.has(task.state);
       const out: SessionMessage[] = [];
       s.selected = next;
       lastModel = next;
-      if (s.taskId) {
+      if (s.taskId && !ended) {
         taskModels.set(s.taskId, next);
         tasks.switchModel?.(s.taskId, next);
       }
@@ -604,10 +603,18 @@ export function createMockSessions(
       return view(s);
     },
 
-    async createSession(workspaceId) {
+    /** 建会话（T45）：带 model 时按选模型的规则校验、从第一句话起用它；不带时沿用 lastModel */
+    async createSession(workspaceId, model) {
+      if (model) {
+        const option = MOCK_MODEL_OPTIONS.find((o) => o.name === model.connection);
+        if (!option) throw new Error(`没有这个连接：${model.connection}`);
+        if (!option.models.includes(model.model)) throw new Error(`模型「${model.model}」不在连接「${model.connection}」的模型列表里`);
+        lastModel = { connection: model.connection, model: model.model };
+      }
       const now = new Date(Date.now() + ++counter).toISOString();
       const s: MockSession = {
         id: `s-mock-${counter}`,
+        selected: model,
         workspaceId: workspaceId ?? MOCK_WORKSPACE,
         archived: false,
         taskIds: [],

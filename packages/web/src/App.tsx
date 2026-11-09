@@ -164,12 +164,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     return res.ok;
   };
 
-  const startConversation = async (text: string): Promise<boolean> => {
+  const startConversation = async (text: string, model?: ModelRef): Promise<boolean> => {
     try {
       // 新对话开在哪个工作区：从选中的“新对话”或第一个登记的工作区来；
       // 还没读到登记时交服务端取唯一的工作区（单目录模式）
       const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
-      const created = await api.createSession(targetWorkspace);
+      // 新对话页选的模型随建会话发出（T45）：这个会话从第一句话起就用它
+      const created = await api.createSession(targetWorkspace, model);
       // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现
       setSelection({ kind: "session", id: created.id });
       const res = await api.sendMessage(created.id, text);

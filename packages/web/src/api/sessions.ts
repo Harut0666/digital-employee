@@ -5,6 +5,7 @@
 import type {
   FolderListing,
   ModelConnectionOption,
+  ModelRef,
   PermissionDecision,
   PermissionMode,
   PreflightResult,
@@ -20,8 +21,11 @@ import type {
 export interface SessionApi {
   listSessions(workspaceId?: string, options?: { archived?: boolean }): Promise<SessionSummary[]>;
   getSession(id: string): Promise<SessionDetail>;
-  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
-  createSession(workspaceId?: string): Promise<SessionSummary>;
+  /**
+   * 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式）。
+   * model 是新对话页选中（T45）：从第一句话起用哪个模型；不给时沿用设置的 lastModel。
+   */
+  createSession(workspaceId?: string, model?: ModelRef): Promise<SessionSummary>;
   /**
    * 发一句话：接口立即受理（202），回复在会话事件流里逐字出现。
    * 正在回复时再发的话排进同一轮，在下一步之前送达。
@@ -95,12 +99,16 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       return read<SessionSummary[]>(url(`sessions${suffix}`));
     },
     getSession: (id) => read<SessionDetail>(session(id)),
-    createSession: (workspaceId) =>
-      read<SessionSummary>(url("sessions"), {
+    createSession: (workspaceId, model) => {
+      const body: Json = {};
+      if (workspaceId) body.workspaceId = workspaceId;
+      if (model) body.model = { connection: model.connection, model: model.model };
+      return read<SessionSummary>(url("sessions"), {
         method: "POST",
-        headers: { "x-role": getRole(), ...(workspaceId ? { "content-type": "application/json" } : {}) },
-        ...(workspaceId ? { body: JSON.stringify({ workspaceId }) } : {}),
-      }),
+        headers: { "x-role": getRole(), ...(workspaceId || model ? { "content-type": "application/json" } : {}) },
+        ...(workspaceId || model ? { body: JSON.stringify(body) } : {}),
+      });
+    },
     modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
     selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
     setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
