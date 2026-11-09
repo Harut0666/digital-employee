@@ -363,7 +363,7 @@ func walkFiles(root, dir, prefix string, exclude map[string]bool, seen *dirSeen,
 	return false
 }
 
-// folderTools 员工接手后总会开放的目录工具：只读，路径越界由 call 接口拒绝并留痕。
+// folderTools 目录工具，所有会话都开放：list_files、read_file 只读，路径越界由 call 接口拒绝并留痕；use_folder_file 过权限关口，由人确认后才复制进材料。
 func (t *turn) folderTools() []tool {
 	list := tool{
 		spec: agent.ToolSpec{
@@ -484,7 +484,7 @@ func folderPathProblem(root, requested string) (string, string, error) {
 		return "", "", failure(contract.ErrInvalidInput, "这是工作区目录本身，不是文件")
 	}
 	for _, segment := range strings.Split(rel, "/") {
-		if hiddenName(segment) || atHidden[segment] {
+		if hiddenName(segment) || atHidden[canonicalSegment(segment)] {
 			return "", "", failure(contract.ErrInvalidInput, "不能用程序自己的文件夹或隐藏文件：%s", rel)
 		}
 	}
