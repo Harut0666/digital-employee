@@ -522,6 +522,112 @@ body {
   flex: none;
   font-size: calc(var(--font-size) - 2px);
 }
+
+/* ---------- 对话里的任务步骤（T43）：每个步骤一行 ---------- */
+.step-rows {
+  flex: none;
+  padding: 4px 20px 8px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 220px;
+  overflow: auto;
+}
+.step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: calc(var(--font-size) - 2px);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.step-row:hover,
+.step-row:focus-visible {
+  background: var(--hover);
+}
+.step-row-icon {
+  flex: none;
+  display: inline-flex;
+  font-size: calc(var(--font-size) - 2px);
+}
+.step-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.step-row.pending .step-row-label {
+  color: var(--muted);
+}
+.step-row.running .step-row-label {
+  color: var(--info);
+  font-weight: 600;
+}
+.step-row.failed .step-row-label {
+  color: var(--danger);
+}
+.step-row-error {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--danger);
+  font-size: calc(var(--font-size) - 3px);
+}
+.step-row-meta {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 3px);
+  white-space: nowrap;
+}
+.step-row-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.step-row-status {
+  flex: none;
+  width: 3.4em;
+  text-align: right;
+  color: var(--muted);
+}
+.step-row.done .step-row-status {
+  color: var(--primary);
+}
+.step-row.running .step-row-status {
+  color: var(--info);
+}
+.step-row.failed .step-row-status {
+  color: var(--danger);
+}
+/* 从步骤行点进来的那一步：轨迹详情里高亮（T43） */
+.trace-row.focused {
+  background: var(--hover);
+  border-radius: 6px;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+/* 模型输出增量正在写入（T43） */
+.trace-child-caret {
+  flex: none;
+  width: 6px;
+  height: 12px;
+  background: var(--info);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+
 .chat-sub {
   color: var(--muted);
   font-size: calc(var(--font-size) - 1px);

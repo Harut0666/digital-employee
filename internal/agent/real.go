@@ -330,6 +330,45 @@ func (a *openAIStreamAnswer) streamAsEvents(model Model, onText func(string)) *A
 	return &message
 }
 
+// answerFromJSONBody 处理“请求了流式、200 却回了一段 JSON”：不支持流式的服务会直接给完整响应，
+// 有的服务在 200 里回错误体，还有的直接给逐行 JSON 帧。三条路都走通，调用方看到的仍是同一条消息。
+func answerFromJSONBody(model Model, raw []byte, apiKey string, onText func(string)) (*AssistantMessage, error) {
+	var probe struct {
+		Choices []map[string]json.RawMessage `json:"choices"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	whole := json.Unmarshal(raw, &probe) == nil
+	if whole {
+		if probe.Error.Message != "" {
+			return nil, newModelCallError(contract.ModelErrorServer, apiKey, "模型接口报错：%s", probe.Error.Message)
+		}
+		for _, choice := range probe.Choices {
+			if _, ok := choice["message"]; ok {
+				answer := openAIStreamAnswer{}
+				if err := json.Unmarshal(raw, &answer.answer); err != nil {
+					return nil, newModelCallError(contract.ModelErrorServer, apiKey, "模型响应不是合法的 JSON：%v", err)
+				}
+				answer.raw = raw
+				return answer.streamAsEvents(model, onText), nil
+			}
+		}
+	}
+	// 逐行 JSON 帧（有的服务不写 data: 前缀）：收齐以后按一条完整的回答交回
+	parser := newSSEParser(model, onText)
+	for _, line := range strings.Split(string(raw), "\n") {
+		frame := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "data:"))
+		if frame == "" {
+			continue
+		}
+		if parser.feed(frame) {
+			break
+		}
+	}
+	return parser.done(model), nil
+}
+
 // streamOpenAICompatibleEvents 前台 Agent 的流式调用：文字增量边到边回调，工具调用参数拼齐。
 //
 // 只在还没有任何输出时才重试（连不上、接口拒绝请求）：已经开始输出之后重试会让人看到两遍开头。
@@ -592,15 +631,25 @@ func postChatCompletionStream(ctx context.Context, model Model, body []byte, opt
 	}()
 
 	reader := bufio.NewReaderSize(response.Body, 64<<10)
-	// 正文开头不是 data: 行也不是 JSON 帧：有的服务回的是整段 JSON（不支持流式），或者 200 里的错误体
-	if head := strings.TrimLeft(string(mustPeek(reader, 512)), " \r\n\t"); !strings.HasPrefix(head, "data:") && !strings.HasPrefix(head, "{") {
+	head := strings.TrimLeft(string(mustPeek(reader, 512)), " \r\n\t")
+	// 正文开头不是 data: 行也不是 JSON：有的服务回的是 200 里的错误体
+	if !strings.HasPrefix(head, "data:") && !strings.HasPrefix(head, "{") {
 		raw, readErr := io.ReadAll(io.LimitReader(reader, 8<<20))
 		if readErr != nil {
 			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readErr)
 		}
 		return nil, newModelCallError(contract.ModelErrorServer, options.APIKey, "模型接口没有返回事件流：%s", truncate(string(raw), 500))
 	}
-	// 整段 JSON 回答：每一行都是 JSON 帧，收齐以后按一条完整的回答交回
+	// 正文是一段完整的 JSON：服务不支持流式（请求里的 stream 被忽略），或者 200 里回了错误体。
+	// 整段读完再判断，不要当成事件流逐帧喂。
+	if strings.HasPrefix(head, "{") {
+		raw, readErr := io.ReadAll(io.LimitReader(reader, 8<<20))
+		if readErr != nil {
+			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readErr)
+		}
+		return answerFromJSONBody(model, raw, options.APIKey, options.OnText)
+	}
+	// 标准事件流：一行一个 data: 帧
 
 	parser := newSSEParser(model, options.OnText)
 	for {

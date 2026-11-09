@@ -55,6 +55,11 @@ export function summarize(e: TaskEvent): string {
       return `${e.decision === "approve" ? "通过" : "退回"}${e.comment ? `：${e.comment}` : ""}`;
     case "deliverable_created":
       return `${e.kind} ${e.path}`;
+    case "deliverable_filed":
+      return e.filedPath ? `交付物已复制到 ${e.filedPath}` : `交付物没复制到工作区目录：${e.filedError ?? e.filedReason ?? ""}`;
+    case "model_delta":
+      // 增量不落盘，重放日志里不会出现；列在这里是为了让事件类型的 switch 保持穷尽
+      return `${e.stepId} 第 ${e.turn} 轮增量：${e.text}`;
     case "fault_injected":
       return `${e.target} ${e.mode}`;
     default: {

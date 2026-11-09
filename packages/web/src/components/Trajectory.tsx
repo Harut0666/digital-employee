@@ -56,6 +56,8 @@ function dotOf(state: TaskState | undefined): string {
 function ChildRow({ item, display }: { item: TraceItem; display: TrajectoryDisplay }) {
   const dur = display.showMeta ? fmtDur(item.meta?.durationMs) : undefined;
   const tokens = display.showMeta && item.meta?.usage ? item.meta.usage.input + item.meta.usage.output : undefined;
+  // 正在输出的模型增量（T43）不等详细度：边输出边看
+  const showDetail = display.showDetail || item.status === "running";
   const icon =
     item.kind === "model" ? <RobotOutlined /> : item.kind === "qc" ? <CloseCircleFilled style={{ color: "var(--danger)" }} /> : <ToolOutlined />;
   return (
@@ -68,18 +70,19 @@ function ChildRow({ item, display }: { item: TraceItem; display: TrajectoryDispl
       {dur && <span className="trace-child-meta">{dur}</span>}
       {tokens !== undefined && <span className="trace-child-meta">{tokens} tokens</span>}
       {item.status === "failed" && item.error && <span className="trace-child-error">{item.error}</span>}
-      {display.showDetail && item.detail && <span className="trace-child-detail">{item.detail}</span>}
+      {showDetail && item.detail && <span className="trace-child-detail">{item.detail}</span>}
+      {item.status === "running" && <span className="trace-child-caret" />}
     </div>
   );
 }
 
-function TraceRow({ item, detail }: { item: TraceItem; detail: TrajectoryDetail | undefined }) {
+function TraceRow({ item, detail, focused }: { item: TraceItem; detail: TrajectoryDetail | undefined; focused?: boolean }) {
   const display = trajectoryDisplay(detail);
   const [open, setOpen] = useState<boolean | undefined>();
   const children = item.children ?? [];
   const expandable = children.length > 0;
   // 运行中的步骤自动展开跟随最新事件；其余按详细度决定默认展开
-  const expanded = open ?? (expandable && shouldAutoExpand(detail, item.status));
+  const expanded = open ?? (expandable && (shouldAutoExpand(detail, item.status) || focused === true));
   const dur = display.showMeta ? fmtDur(item.meta?.durationMs) : undefined;
   const icon =
     item.kind === "step" ? (
@@ -94,9 +97,9 @@ function TraceRow({ item, detail }: { item: TraceItem; detail: TrajectoryDetail 
       <InfoCircleFilled style={{ color: "var(--muted)" }} />
     );
   return (
-    <div className="trace-item">
+    <div className="trace-item" data-step-id={item.stepId}>
       <div
-        className={`trace-row ${item.status} ${expandable ? "expandable" : ""}`}
+        className={`trace-row ${item.status} ${expandable ? "expandable" : ""} ${focused ? "focused" : ""}`}
         onClick={expandable ? () => setOpen(!expanded) : undefined}
         role={expandable ? "button" : undefined}
         aria-expanded={expandable ? expanded : undefined}
@@ -161,12 +164,15 @@ export function TrajectoryDetails({
   elapsedMs,
   attachments,
   artifacts,
+  focusStepId,
 }: {
   view: TrajectoryView;
   modelCalls: { used: number; limit: number };
   elapsedMs: number;
   attachments: string[];
   artifacts: TraceFile[];
+  /** 从对话里的步骤行点进来时要定位的步骤（T43） */
+  focusStepId?: string;
 }) {
   const { ui } = useUiPreferences();
   const linkProps = useLinkProps();
@@ -178,6 +184,16 @@ export function TrajectoryDetails({
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [view.active, view.lastSeq]);
+
+  // 点开某一步：滚到这一步（渲染出来之后再滚，等子项展开）
+  useEffect(() => {
+    if (!focusStepId) return;
+    const timer = setTimeout(() => {
+      const row = bodyRef.current?.querySelector(`[data-step-id="${CSS.escape(focusStepId)}"]`);
+      row?.scrollIntoView({ block: "nearest" });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [focusStepId, view.lastSeq]);
 
   const s = view.summary;
   const summary = [`已完成 ${s.done}/${s.steps} 步`, ...(s.failed > 0 ? [`${s.failed} 步失败`] : []), `模型 ${modelCalls.used}/${modelCalls.limit}`, fmtTime(elapsedMs)].join(" · ");
@@ -198,7 +214,7 @@ export function TrajectoryDetails({
           <div key={round.round} className="trace-round">
             {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
             {round.items.map((item) => (
-              <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} />
+              <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} focused={focusStepId !== undefined && item.stepId === focusStepId} />
             ))}
           </div>
         ))}

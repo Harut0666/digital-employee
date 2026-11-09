@@ -25,9 +25,11 @@ const EVENT_TYPE_SET: Record<TaskEventType, true> = {
   tool_result: true,
   tool_denied: true,
   model_called: true,
+  model_delta: true,
   qc_result: true,
   review_decision: true,
   deliverable_created: true,
+  deliverable_filed: true,
   fault_injected: true,
 };
 const EVENT_TYPES = Object.keys(EVENT_TYPE_SET) as TaskEventType[];

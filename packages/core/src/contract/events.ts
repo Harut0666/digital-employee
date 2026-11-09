@@ -56,9 +56,27 @@ export type TaskEvent = EventBase &
         /** 这次调用用的模型名；剧本模式没有 */
         modelName?: string;
       }
+    | {
+        type: "model_delta";
+        /** 判断步骤的模型输出增量：只推送给正在看的人，不落盘，seq 恒为 0，重连后不补发 */
+        stepId: string;
+        /** 第几轮（同一步骤内从 0 开始） */
+        turn: number;
+        /** 这一段文字 */
+        text: string;
+      }
     | { type: "qc_result"; attempt: number; passed: boolean; checks: QcCheckResult[] }
     | { type: "review_decision"; decision: "approve" | "return"; comment?: string; sections?: string[] }
     | { type: "deliverable_created"; kind: "docx" | "md" | "qc_record"; path: string; sha256: string }
+    | {
+        type: "deliverable_filed";
+        /** 复制到工作区“交付”文件夹里的文件；写不进去时为空 */
+        filedPath?: string;
+        /** 给业务人员看的说明（成功时是目标路径，失败时是原因） */
+        filedReason?: string;
+        /** 写不进去时的原因 */
+        filedError?: string;
+      }
     | { type: "fault_injected"; target: string; mode: string }
   );
 

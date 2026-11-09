@@ -185,7 +185,9 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
     }
   }
 
-  const last = events.at(-1);
+  // 最后一条可能是没有 seq 的模型输出增量（T43）：lastSeq 只取落盘事件的序号
+  let lastSeq = 0;
+  for (const ev of events) if (ev.seq > lastSeq) lastSeq = ev.seq;
   const latestRound = rounds.size === 0 ? undefined : rounds.get(Math.max(...rounds.keys()));
   return {
     state,
@@ -196,7 +198,7 @@ export function deriveSessionView(events: readonly TaskEvent[], defs: readonly S
     deliverables,
     counts,
     elapsedMs,
-    lastSeq: last?.seq ?? 0,
+    lastSeq,
   };
 }
 
