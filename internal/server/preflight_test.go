@@ -129,15 +129,50 @@ func TestSubmitPassesOnceKeyIsSaved(t *testing.T) {
 	h.settled(task.ID)
 }
 
-func TestEnvironmentKeyPassesPreflight(t *testing.T) {
+// T46：DEEPSEEK_API_KEY 不再覆盖任何连接的 Key，连接没配 Key 就是没配。
+func TestEnvironmentKeyNoLongerFillsConnections(t *testing.T) {
+	// 两条同样没有 Key 的连接：提交前检查要指出具体哪个连接缺 Key
 	h := newHarness(t, nil,
-		// 地址用本机假端口（不会真连出去）：DEEPSEEK_API_KEY 覆盖 deepseek 连接文件里的空 Key
-		withModelConnection(contract.ModelConnection{Name: "deepseek", BaseURL: "http://127.0.0.1:1", Models: []string{"fake-model"}}),
+		withScriptedModel(),
+		withModelConnections(
+			contract.ModelConnection{Name: "deepseek", BaseURL: "http://127.0.0.1:1", Models: []string{"fake-model"}},
+			contract.ModelConnection{Name: "local", BaseURL: "http://127.0.0.1:1", Models: []string{"qwen"}},
+		),
 		withEnv(map[string]string{"DEEPSEEK_API_KEY": "sk-from-env"}))
-	// T39：会话模型在这个连接上
 	h.setSessionModelOverride(contract.ModelRef{Connection: "deepseek", Model: "fake-model"})
-	if reply := h.preflight(); !reply.OK {
-		t.Fatalf("环境变量里的 Key 也算可用：%+v", reply)
+	reply := h.preflight()
+	if reply.OK || reply.Error != contract.ErrModelNotConfigured ||
+		!strings.Contains(reply.Message, "deepseek") || !strings.Contains(reply.Message, "Key") {
+		t.Fatalf("环境变量不应替没配 Key 的连接补上 Key：%+v", reply)
+	}
+	if reply.Settings.Section != "models" || reply.Settings.Label == "" {
+		t.Fatalf("应带设置入口：%+v", reply.Settings)
+	}
+}
+
+// T46：全新应用目录（没有 settings.json）里没有任何连接，提交被拦下并提示“还没有配置模型连接”。
+func TestSubmitWithoutAnyConnectionIsBlocked(t *testing.T) {
+	// 显式确认员工和表单，不经过前台 Agent 的剧本
+	h := newHarness(t, nil, withFreshAppDir())
+	if reply := h.preflight(); reply.OK || reply.Error != contract.ErrModelNotConfigured || !strings.Contains(reply.Message, "还没有配置模型连接") {
+		t.Fatalf("没有连接时应被拦下并提示还没有配置模型连接：%+v", reply)
+	} else if reply.Settings.Section != "models" || reply.Settings.Label == "" {
+		t.Fatalf("应带设置入口：%+v", reply.Settings)
+	}
+
+	task := h.createTask(a01Files(t))
+	before := eventCount(t, h, task.ID)
+	status, data := h.submitRaw(task.ID, initiator)
+	if status != http.StatusPreconditionFailed {
+		t.Fatalf("状态码 = %d：%s", status, data)
+	}
+	reply := decode[preflightReply](t, data)
+	if reply.Error != contract.ErrModelNotConfigured || !strings.Contains(reply.Message, "还没有配置模型连接") {
+		t.Fatalf("提交应被拦下并提示还没有配置模型连接：%+v", reply)
+	}
+	expectState(t, h.snapshot(task.ID), contract.StateDraft)
+	if after := eventCount(t, h, task.ID); after != before {
+		t.Fatalf("被拦下的提交不应写事件：%d → %d", before, after)
 	}
 }
 

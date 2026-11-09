@@ -1,11 +1,10 @@
-// 模型连接子页：多连接编辑、测试连接、API Key 打码与环境变量来源。
+// 模型连接子页：多连接编辑、测试连接、API Key 打码。T46：不预置任何厂商，没有连接时显示空状态与“添加连接”。
 // T20：每张连接卡片增加“高级”折叠区——每模型上下文窗口 / 输出上限 / 推理档位，连接级超时与重试。
 // T37：增加“拉取模型”——请求 {baseUrl}/models，结果以勾选框列出，点“保存”才写入连接的模型列表。
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Checkbox, Collapse, Input, InputNumber, Popconfirm, Select, Space, Spin, Tag, Tooltip, Typography } from "antd";
+import { App as AntApp, Button, Checkbox, Collapse, Input, InputNumber, Popconfirm, Select, Space, Spin, Tag, Typography } from "antd";
 import { THINKING_LEVELS, type ModelOptions, type ThinkingLevel } from "@de/core/contract";
 import {
-  ApiOutlined,
   CheckCircleFilled,
   CloseCircleFilled,
   CloudDownloadOutlined,
@@ -19,6 +18,7 @@ import {
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import type { ConnectionTestResult, SettingsApi, SettingsConnectionView } from "../../api/settings";
+import { ADD_CONNECTION_LABEL, NEW_CONNECTION_FIELDS, connectionsEmptyState } from "./connections-empty";
 import { mergeFetchedModels, modelCheckOptions, selectedModels, toggleModelSelection, type ModelOption } from "./model-picker";
 
 const { Text } = Typography;
@@ -265,11 +265,6 @@ function ConnectionCard({
         <CloudLogo name={connection.name} />
         <span style={{ fontWeight: 600, fontSize: 16 }}>{connection.name}</span>
         {connection.isDefault && <Tag color="green">默认</Tag>}
-        {connection.source === "env" && (
-          <Tooltip title="环境变量 DEEPSEEK_API_KEY 优先于此处设置">
-            <Tag color="orange">来自环境变量</Tag>
-          </Tooltip>
-        )}
         <div style={{ flex: 1 }} />
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: status.color }}>
           {status.dot === "ok" ? <CheckCircleFilled /> : status.dot === "fail" ? <CloseCircleFilled /> : <span className="dot default" />}
@@ -291,7 +286,7 @@ function ConnectionCard({
           <div style={row}>
             <div style={labelStyle}>Base URL</div>
             <div style={{ flex: 1 }}>
-              <Input value={draft.baseUrl} onChange={(e) => setDraft((d) => ({ ...d, baseUrl: e.target.value }))} placeholder="https://api.deepseek.com" />
+              <Input value={draft.baseUrl} onChange={(e) => setDraft((d) => ({ ...d, baseUrl: e.target.value }))} placeholder="OpenAI 兼容的接口地址，例如 https://…/v1" />
             </div>
           </div>
           <div style={row}>
@@ -511,7 +506,7 @@ function CloudLogo({ name }: { name: string }) {
         flex: "none",
       }}
     >
-      {name.toLowerCase().includes("deepseek") ? <ApiOutlined /> : <RobotOutlined />}
+      <RobotOutlined />
     </div>
   );
 }
@@ -569,31 +564,34 @@ function NewConnectionCard({ api, onCreated, onCancel }: { api: SettingsApi; onC
   return (
     <div style={{ ...cardStyle, marginBottom: 12 }}>
       <div style={headerStyle}>
-        <span style={{ fontWeight: 600, fontSize: 16 }}>新增连接</span>
+        <span style={{ fontWeight: 600, fontSize: 16 }}>{ADD_CONNECTION_LABEL}</span>
         <div style={{ flex: 1 }} />
         <Button size="small" type="text" onClick={onCancel}>
           取消
         </Button>
       </div>
       <div style={{ ...bodyStyle, borderTop: "none" }}>
-        <div style={row}>
-          <div style={labelStyle}>名称</div>
-          <div style={{ flex: 1 }}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 通义千问、GLM、本地 Qwen" />
+        {NEW_CONNECTION_FIELDS.map((field) => (
+          <div key={field.key} style={row}>
+            <div style={labelStyle}>{field.label}</div>
+            <div style={{ flex: 1 }}>
+              {field.key === "apiKey" ? (
+                <Input.Password
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={field.placeholder}
+                  autoComplete="new-password"
+                />
+              ) : (
+                <Input
+                  value={field.key === "name" ? name : baseUrl}
+                  onChange={(e) => (field.key === "name" ? setName(e.target.value) : setBaseUrl(e.target.value))}
+                  placeholder={field.placeholder}
+                />
+              )}
+            </div>
           </div>
-        </div>
-        <div style={row}>
-          <div style={labelStyle}>Base URL</div>
-          <div style={{ flex: 1 }}>
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://…/v1" />
-          </div>
-        </div>
-        <div style={row}>
-          <div style={labelStyle}>API Key</div>
-          <div style={{ flex: 1 }}>
-            <Input.Password value={apiKey} onChange={(e) => setApiKey(e.target.value)} autoComplete="new-password" />
-          </div>
-        </div>
+        ))}
         <div style={row}>
           <div style={labelStyle}>模型</div>
           <ModelTags
@@ -662,6 +660,8 @@ export function ModelConnections({ api }: { api: SettingsApi }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
+  const emptyState = connectionsEmptyState(view?.connections.length ?? 0);
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
@@ -673,7 +673,7 @@ export function ModelConnections({ api }: { api: SettingsApi }) {
         </div>
         {!adding && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setAdding(true)}>
-            新增连接
+            {ADD_CONNECTION_LABEL}
           </Button>
         )}
       </div>
@@ -693,11 +693,22 @@ export function ModelConnections({ api }: { api: SettingsApi }) {
       {view?.connections.map((connection) => (
         <ConnectionCard key={connection.name} api={api} connection={connection} onChanged={load} />
       ))}
-      {view?.connections.length === 0 && <Text type="secondary">还没有模型连接，点右上角“新增连接”。</Text>}
+      {view && emptyState && (
+        <div style={{ ...cardStyle, padding: "32px 24px", textAlign: "center" }}>
+          <RobotOutlined style={{ fontSize: 32, color: "var(--muted)" }} />
+          <div style={{ fontWeight: 600, fontSize: 16, marginTop: 12 }}>{emptyState.title}</div>
+          <div style={{ color: "var(--muted)", margin: "6px auto 16px", maxWidth: 480 }}>{emptyState.hint}</div>
+          {!adding && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setAdding(true)}>
+              {emptyState.actionLabel}
+            </Button>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--muted)", fontSize: 13, marginTop: 16 }}>
         <InfoCircleOutlined />
-        环境变量 DEEPSEEK_API_KEY 优先于此处设置（{view?.envOverride ? "当前生效中" : "当前未设置"}），密钥不会写入日志和交付物
+        Key 只来自这里填写的内容，不会被环境变量覆盖；密钥不会写入日志和交付物
       </div>
     </div>
   );

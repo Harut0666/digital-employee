@@ -71,7 +71,7 @@ function versionsOf(events: readonly TaskEvent[]): DeliverableVersion[] {
 }
 
 /** 公开样例没有会话：按模拟环境里唯一配了 Key 的连接的第一个模型（和 mock-sessions.ts 一致） */
-const MOCK_SAMPLE_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+const MOCK_SAMPLE_MODEL: ModelRef = { connection: "示例厂商", model: "demo-chat" };
 
 const STEP_GAP_MS = 900;
 const MODEL_LIMIT = 30;

@@ -43,8 +43,8 @@ export interface AppSettingsView {
   demo: DemoSettings;
   /** 未识别的顶层键（只读展示；写入时原样保留） */
   extra: Record<string, unknown>;
-  /** DEEPSEEK_API_KEY 覆盖了文件里的 Key */
-  envOverride: boolean;
+  /** 旧的 TS 服务端才会给（DEEPSEEK_API_KEY 覆盖）；Go 服务端不再有环境变量覆盖（Spec 0007），不返回 */
+  envOverride?: boolean;
 }
 
 /** PATCH /api/settings/app 冲突时的响应（409）。 */

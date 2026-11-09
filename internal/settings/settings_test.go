@@ -10,12 +10,13 @@ import (
 )
 
 func TestNormalizeDefaultsAndMigration(t *testing.T) {
+	// T46：没有 settings.json 时不预置任何厂商的连接，lastModel 也为空
 	doc := Normalize(map[string]any{})
 	if doc.Version != contract.SettingsVersion || doc.Revision != 0 {
 		t.Fatalf("默认文档 version/revision 不对：%d/%d", doc.Version, doc.Revision)
 	}
-	if len(doc.Connections) != 1 || doc.Connections[0].Name != DefaultConnectionName {
-		t.Fatalf("默认连接不对：%+v", doc.Connections)
+	if len(doc.Connections) != 0 {
+		t.Fatalf("新文档不应有任何连接：%+v", doc.Connections)
 	}
 	if doc.LastModel != nil {
 		t.Fatalf("新文档还没选过模型，lastModel 应为空：%+v", doc.LastModel)
@@ -89,7 +90,8 @@ func TestWriteIncrementsRevisionAndRoundTrip(t *testing.T) {
 	}
 }
 
-func TestViewRedactsKeyAndEnvOverride(t *testing.T) {
+// T46：Key 只来自设置里人填写的内容；老文档里的 deepseek 连接按普通连接对待。
+func TestViewRedactsKeyIgnoringTheEnvironment(t *testing.T) {
 	doc := Normalize(map[string]any{
 		"connections": []any{
 			map[string]any{"name": "deepseek", "baseUrl": "https://api.deepseek.com", "apiKey": "sk-secret-1234", "models": []any{"deepseek-chat"}},
@@ -108,12 +110,14 @@ func TestViewRedactsKeyAndEnvOverride(t *testing.T) {
 		t.Fatalf("视图里不能出现明文 Key：%s", encoded)
 	}
 
+	// 设置了 DEEPSEEK_API_KEY 也不影响连接的 Key 和来源
 	envView := View(doc, Env{"DEEPSEEK_API_KEY": "sk-env-9999"})
-	if envView.Connections[0].Source != "env" || !envView.EnvOverride {
-		t.Fatalf("环境变量优先不对：%+v", envView.Connections[0])
+	if envView.Connections[0].Source != "file" || *envView.Connections[0].APIKeyLast4 != "1234" {
+		t.Fatalf("环境变量不应影响连接的 Key：%+v", envView.Connections[0])
 	}
-	if *envView.Connections[0].APIKeyLast4 != "9999" {
-		t.Fatalf("末 4 位应来自环境变量：%v", *envView.Connections[0].APIKeyLast4)
+	encoded, _ = json.Marshal(envView)
+	if containsText(string(encoded), "sk-env-9999") || containsText(string(encoded), `"envOverride"`) {
+		t.Fatalf("设置视图不应再有环境变量覆盖：%s", encoded)
 	}
 }
 
@@ -200,7 +204,8 @@ func TestValidateImportAndExport(t *testing.T) {
 	}
 }
 
-func TestModelSettingsEnvOverride(t *testing.T) {
+// T46：Key 只来自设置文件；老设置文档里的 deepseek 连接原样保留，读时不补预置内容。
+func TestModelSettingsKeepKeysFromTheFileOnly(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := Write(dir, Normalize(map[string]any{
 		"connections": []any{map[string]any{"name": "deepseek", "baseUrl": "https://api.deepseek.com", "apiKey": "file-key", "models": []any{"deepseek-chat"}}},
@@ -209,11 +214,63 @@ func TestModelSettingsEnvOverride(t *testing.T) {
 	}
 	plain := LoadModelSettings(dir, Env{})
 	if plain.Connections[0].APIKey != "file-key" {
-		t.Fatalf("无环境变量时应读文件 Key：%q", plain.Connections[0].APIKey)
+		t.Fatalf("没有环境变量时应读文件 Key：%q", plain.Connections[0].APIKey)
 	}
-	overridden := LoadModelSettings(dir, Env{"DEEPSEEK_API_KEY": "env-key"})
-	if overridden.Connections[0].APIKey != "env-key" {
-		t.Fatalf("环境变量应优先：%q", overridden.Connections[0].APIKey)
+	withEnv := LoadModelSettings(dir, Env{"DEEPSEEK_API_KEY": "env-key"})
+	if withEnv.Connections[0].APIKey != "file-key" {
+		t.Fatalf("环境变量不应覆盖文件里的 Key：%q", withEnv.Connections[0].APIKey)
+	}
+}
+
+// T46：全新应用目录没有任何连接，lastModel 为空；没有 settings.json 时也不补预置连接。
+func TestFreshDirectoryHasNoConnections(t *testing.T) {
+	dir := t.TempDir()
+	doc := Read(dir)
+	if len(doc.Connections) != 0 || doc.LastModel != nil {
+		t.Fatalf("全新目录应没有连接、lastModel 为空：%+v %+v", doc.Connections, doc.LastModel)
+	}
+	models := LoadModelSettings(dir, Env{})
+	if len(models.Connections) != 0 || models.Default != (contract.ModelRef{}) {
+		t.Fatalf("全新目录的模型设置为空：%+v", models)
+	}
+}
+
+// T46：老设置文档读进来再写回，连接（名称、地址、Key、模型列表）一个字都不变。
+func TestLegacyDeepSeekDocumentRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"version":2,"revision":3,"connections":[{"name":"deepseek","baseUrl":"https://api.deepseek.com","apiKey":"sk-old-key-7777","models":["deepseek-chat","deepseek-reasoner"]}],"lastModel":{"connection":"deepseek","model":"deepseek-reasoner"}}`
+	if err := os.WriteFile(Path(dir), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc := Read(dir)
+	if len(doc.Connections) != 1 {
+		t.Fatalf("老文档的连接数不对：%+v", doc.Connections)
+	}
+	conn := doc.Connections[0]
+	if conn.Name != "deepseek" || conn.BaseURL != "https://api.deepseek.com" || conn.APIKey != "sk-old-key-7777" ||
+		len(conn.Models) != 2 || conn.Models[0] != "deepseek-chat" || conn.Models[1] != "deepseek-reasoner" {
+		t.Fatalf("老文档的连接应原样保留：%+v", conn)
+	}
+	if doc.LastModel == nil || *doc.LastModel != (contract.ModelRef{Connection: "deepseek", Model: "deepseek-reasoner"}) {
+		t.Fatalf("老文档的 lastModel 应原样保留：%+v", doc.LastModel)
+	}
+	if _, err := Write(dir, doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ReadRawObject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns, _ := raw["connections"].([]any)
+	if len(conns) != 1 {
+		t.Fatalf("写回后连接数不对：%v", raw["connections"])
+	}
+	written := conns[0].(map[string]any)
+	if written["name"] != "deepseek" || written["baseUrl"] != "https://api.deepseek.com" || written["apiKey"] != "sk-old-key-7777" {
+		t.Fatalf("写回后连接应原样保留：%v", written)
+	}
+	if models, _ := written["models"].([]any); len(models) != 2 || models[1] != "deepseek-reasoner" {
+		t.Fatalf("写回后模型列表应原样保留：%v", written["models"])
 	}
 }
 

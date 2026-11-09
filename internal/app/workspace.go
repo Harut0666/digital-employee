@@ -22,13 +22,11 @@ import (
 // runtimeDir 运行时资源目录（前端构建产物、默认员工配置副本）。
 const runtimeDir = ".runtime"
 
-// defaultSettingsTemplate 默认 settings.json：只带一个没有 Key 的 DeepSeek 连接。
-// 会话模型（Spec 0006）取代了 defaultModel：还没选过模型，新会话沿用第一个有 Key 的连接的第一个模型。
+// defaultSettingsTemplate 默认 settings.json：不预置任何厂商的连接（Spec 0007「设置与连接」）。
+// 全新应用目录里模型设置没有任何连接、lastModel 为空，由人在设置页自己添加连接。
 var defaultSettingsTemplate = map[string]any{
-	"connections": []map[string]any{
-		{"name": "deepseek", "baseUrl": "https://api.deepseek.com", "apiKey": "", "models": []string{"deepseek-chat"}},
-	},
-	"demo": map[string]any{"toolFaults": map[string]any{}, "corruptTraceability": false, "crashOnNextStep": false},
+	"connections": []map[string]any{},
+	"demo":        map[string]any{"toolFaults": map[string]any{}, "corruptTraceability": false, "crashOnNextStep": false},
 }
 
 // ReleaseOutcome 一次释放的结果。
