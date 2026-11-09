@@ -41,7 +41,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.trace-toggle {
+.chat-head .trace-toggle {
   flex: none;
   color: var(--text-2);
 }
@@ -418,7 +418,7 @@
 .composer-box {
   position: relative;
 }
-.composer .ant-sender {
+.composer .ant-sender.ant-sender-main {
   border: 1px solid var(--line-strong);
   border-radius: var(--r-xl);
   background: var(--card);
@@ -427,23 +427,23 @@
     border-color 0.15s,
     box-shadow 0.15s;
 }
-.composer .ant-sender:focus-within {
+.composer .ant-sender.ant-sender-main:focus-within {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--focus-shadow);
 }
-.composer .ant-sender.ant-sender-disabled {
+.composer .ant-sender.ant-sender-main.ant-sender-disabled {
   border-color: var(--line);
   background: var(--card-2);
   box-shadow: none;
 }
-.composer .ant-sender-content {
+.composer .ant-sender .ant-sender-content {
   padding: var(--sp-3) var(--sp-4) var(--sp-1);
 }
-.composer .ant-sender-input {
+.composer .ant-sender .ant-sender-input {
   font-size: var(--fs-base);
   line-height: 1.6;
 }
-.composer .ant-sender-footer {
+.composer .ant-sender .ant-sender-footer {
   padding: var(--sp-1) var(--sp-2) var(--sp-2);
 }
 .composer-bar {
@@ -464,15 +464,15 @@
   align-items: center;
   gap: var(--sp-1);
 }
-.mode-picker,
-.model-picker {
+.composer .mode-picker,
+.composer .model-picker {
   max-width: 100%;
   gap: 4px;
   color: var(--text-2);
   font-size: var(--fs-sm);
 }
-.mode-picker .anticon-down,
-.model-picker .anticon-down {
+.composer .mode-picker .anticon-down,
+.composer .model-picker .anticon-down {
   font-size: 9px;
   color: var(--muted);
 }
@@ -483,7 +483,7 @@
   white-space: nowrap;
 }
 /* 没有可用模型：提醒色，点开有“去设置”入口 */
-.model-picker.empty {
+.composer .model-picker.empty {
   color: var(--tone-waiting);
   background: var(--tone-waiting-soft);
 }

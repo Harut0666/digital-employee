@@ -178,7 +178,7 @@
 .side-skeleton {
   padding: var(--sp-2);
 }
-.side-add {
+.sidebar .side-add {
   margin-top: 6px;
   justify-content: flex-start;
   color: var(--muted);
@@ -237,7 +237,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ws-missing {
+.ws-head .ws-missing {
   flex: none;
   margin: 0;
   font-size: var(--fs-xs);
@@ -433,7 +433,7 @@
   background: var(--primary-soft);
   color: var(--primary);
 }
-.side-role {
+.sidebar .side-role {
   width: 100%;
   margin-top: 6px;
 }
