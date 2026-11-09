@@ -103,7 +103,8 @@ func trimContextMenu(event *mygo.ContextMenuEvent) {
 			}
 			continue
 		}
-		item.SetVisible(false)
+		// 直接改字段：这个菜单只显示一次，不需要通知后端刷新（SetVisible 会往后端发更新）
+		item.Hidden = true
 	}
 	if shown == 0 {
 		event.PreventDefault()
