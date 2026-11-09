@@ -403,6 +403,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions/{id}", s.sessionRoute(s.handleGetSession))
 	m.HandleFunc("PATCH /api/sessions/{id}", s.sessionRoute(s.handlePatchSession))
 	m.HandleFunc("PUT /api/sessions/{id}/model", s.sessionRoute(s.handleSelectSessionModel))
+	m.HandleFunc("PUT /api/sessions/{id}/permission-mode", s.sessionRoute(s.handleSetPermissionMode))
+	m.HandleFunc("POST /api/sessions/{id}/permissions/{requestId}", s.sessionRoute(s.handleDecidePermission))
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("GET /api/sessions/{id}/stream", s.sessionRoute(s.handleSessionStream))
 	m.HandleFunc("GET /api/sessions/{id}/activity", s.sessionRoute(s.handleSessionActivity))

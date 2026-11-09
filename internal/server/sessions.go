@@ -22,6 +22,8 @@ var sessionErrorStatus = map[string]int{
 	session.ErrSessionReadOnly: http.StatusConflict,
 	session.ErrSessionBusy:     http.StatusConflict,
 	session.ErrEmployeeMissing: http.StatusConflict,
+	// 这张权限确认已经答复或取消了
+	session.ErrPermissionSettled: http.StatusConflict,
 	// 必需项不齐：会话的现状不允许开工
 	session.ErrChecklistIncomplete: http.StatusConflict,
 	// 工作区没有登记过，也查不到它的目录
@@ -191,7 +193,7 @@ func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
 	records := s.sessions.Records()
 	for index := range records {
 		if records[index].SessionID != "" {
-			records[index].StatusDot = s.sessions.DotFor(records[index].SessionID, role)
+			records[index].StatusDot = s.sessions.DotForTask(records[index].SessionID, records[index].TaskID, role)
 		}
 	}
 	writeJSON(w, http.StatusOK, s.recordsView(records))
@@ -264,7 +266,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	view, err := s.sessions.Create(workspaceID)
+	// 新对话页的模型下拉（Spec 0007「会话模型的选择」）：可选的 model {connection, model}，校验规则同会话里选模型
+	var model *contract.ModelRef
+	if raw, present := body["model"]; present && raw != nil {
+		fields, ok := raw.(map[string]any)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "model 必须是 {connection, model} 对象"))
+			return
+		}
+		connection, _ := fields["connection"].(string)
+		name, _ := fields["model"].(string)
+		model = &contract.ModelRef{Connection: connection, Model: name}
+	}
+	view, err := s.sessions.Create(workspaceID, model)
 	if err != nil {
 		writeSessionError(w, err)
 		return
@@ -272,8 +286,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, view)
 }
 
-// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型。
-// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务运行中再写一条“模型已切换”任务事件。
+// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型，任何状态下都能选。
+// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务还没结束时再写一条“模型已切换”任务事件。
 func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request) {
 	role, ok := roleOf(r)
 	if !ok {
@@ -288,6 +302,48 @@ func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request
 	connection, _ := body["connection"].(string)
 	model, _ := body["model"].(string)
 	reply, err := s.sessions.SelectModel(r.PathValue("id"), role, connection, model)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleSetPermissionMode PUT /api/sessions/{id}/permission-mode：发起人在输入框左下角选权限模式。
+func (s *Server) handleSetPermissionMode(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	mode, _ := body["mode"].(string)
+	reply, err := s.sessions.SetPermissionMode(r.PathValue("id"), role, mode)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleDecidePermission POST /api/sessions/{id}/permissions/{requestId}：发起人答复一张权限确认。
+func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	decision, _ := body["decision"].(string)
+	reply, err := s.sessions.DecidePermission(r.PathValue("id"), role, r.PathValue("requestId"), decision)
 	if err != nil {
 		writeSessionError(w, err)
 		return
@@ -630,7 +686,14 @@ func (s *Server) handleDraftFiling(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, roleRequired)
 		return
 	}
-	reply, err := s.sessions.DraftFiling(r.Context(), r.PathValue("id"), role)
+	// 可选的 taskId：会话里有多个任务时，为哪一个任务的入库卡片起草；不给就是最新的任务
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	taskID, _ := body["taskId"].(string)
+	reply, err := s.sessions.DraftFiling(r.Context(), r.PathValue("id"), role, taskID)
 	if err != nil {
 		writeSessionError(w, err)
 		return

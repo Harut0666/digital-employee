@@ -33,10 +33,11 @@ func (m *Manager) effectiveModel(current *record) contract.ModelRef {
 }
 
 // taskModel 会话绑定任务的当前模型：任务记下的会话模型（发起事件，之后随“模型已切换”更新）；
-// 旧任务没记时用会话当前的模型。
+// 任务已结束时用会话的选择（Spec 0007「会话模型的选择」：任务结束后换模型只改会话的选择，
+// 下一次对话用它）；旧任务没记时也用会话当前的模型。
 func (m *Manager) taskModel(current *record) contract.ModelRef {
 	if current.taskID != "" {
-		if snapshot, found := m.deps.Engine.Get(current.taskID); found && snapshot.Model != nil {
+		if snapshot, found := m.deps.Engine.Get(current.taskID); found && snapshot.Model != nil && !contract.IsTerminal(snapshot.State) {
 			return *snapshot.Model
 		}
 	}
@@ -98,8 +99,10 @@ func (m *Manager) checkSelectable(ref contract.ModelRef) error {
 
 // SelectModel 人在会话里选模型。写进会话日志，同时更新设置的 lastModel。
 //
-// 任务已在运行时，再写一条“模型已切换”任务事件（从下一个判断步骤生效，正在进行的调用不中断）；
-// 任务已结束时只改会话记录，下一次发起的任务用它。
+// 任何状态下都能选（Spec 0007「会话模型的选择」）：没有任务、运行中、待审核、已交付、已终止。
+// 任务还没结束时，再写一条“模型已切换”任务事件（从下一个判断步骤生效，正在进行的调用不中断）；
+// 任务已结束（或没有任务）时只改会话的选择，下一次对话和下一个任务用它。
+// 由旧任务推导出的只读会话没有会话日志，改不了。
 func (m *Manager) SelectModel(id string, role contract.Role, connection, model string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以选模型")
@@ -116,10 +119,10 @@ func (m *Manager) SelectModel(id string, role contract.Role, connection, model s
 	if err := m.checkSelectable(ref); err != nil {
 		return nil, err
 	}
+	ended := false
 	if t.current.taskID != "" {
-		if snapshot, found := m.deps.Engine.Get(t.current.taskID); found && contract.IsTerminal(snapshot.State) {
-			return nil, failure(ErrSessionReadOnly, "任务已结束，模型不能再改；下一个任务请开新对话")
-		}
+		snapshot, found := m.deps.Engine.Get(t.current.taskID)
+		ended = !found || contract.IsTerminal(snapshot.State)
 	}
 	if !sameModel(t.current.model, ref.Connection, ref.Model) {
 		copied := ref
@@ -129,7 +132,7 @@ func (m *Manager) SelectModel(id string, role contract.Role, connection, model s
 		if err := m.saveLastModel(ref); err != nil {
 			return nil, err
 		}
-		if t.current.taskID != "" {
+		if t.current.taskID != "" && !ended {
 			if switcher, ok := m.deps.Engine.(TaskModelSwitcher); ok {
 				if err := switcher.SetTaskModel(t.current.taskID, ref); err != nil {
 					return nil, err

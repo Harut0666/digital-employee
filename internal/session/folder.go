@@ -486,7 +486,7 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 	if err != nil {
 		return nil, err
 	}
-	if current.taskID != "" {
+	if m.openTask(current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
 	}
 	root := m.workspaceDir(current.workspaceID)

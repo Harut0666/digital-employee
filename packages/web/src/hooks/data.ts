@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
 import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, TaskSnapshot, WebApi } from "../api";
+import type { PastRun } from "../view/chat-view";
 import { deriveSessionView, type SessionView } from "../view/session-view";
 export const ApiContext = createContext<WebApi | null>(null);
 export function useApi(): WebApi {
@@ -105,7 +106,8 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
             return prev;
         }
       });
-      if (event.type === "turn_end") ended.current();
+      // 流程卡片（权限确认等）在这一轮进行中就要让人看到：一轮停在确认上，不会有 turn_end
+      if (event.type === "turn_end" || (event.type === "message" && event.message?.card)) ended.current();
     };
     return api.subscribeSession(id, apply);
   }, [api, id]);
@@ -215,5 +217,30 @@ export function useTask(id: string | undefined): TaskState {
   return { snapshot, view, events, loading, reload };
 }
 
-
-
+/**
+ * 会话里早先的任务（Spec 0007“会话与任务一对多”）：它们都已结束，读一次事件和快照就够了，
+ * 用来在对话里按各自的时间点显示步骤行和交付物。当前任务由 useTask 负责。
+ */
+export function usePastRuns(taskIds: readonly string[]): PastRun[] {
+  const api = useApi();
+  const [loaded, setLoaded] = useState<Record<string, PastRun>>({});
+  const key = taskIds.join(",");
+  useEffect(() => {
+    let alive = true;
+    taskIds.forEach((id, index) => {
+      Promise.all([api.getTask(id), api.getEvents(id)]).then(
+        ([snapshot, events]) => {
+          if (!alive || !snapshot) return;
+          const run: PastRun = { taskId: id, run: index + 1, state: snapshot.state, deliverables: snapshot.deliverables, events, steps: snapshot.steps };
+          setLoaded((prev) => ({ ...prev, [id]: run }));
+        },
+        () => {},
+      );
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, key]);
+  return useMemo(() => taskIds.flatMap((id) => (loaded[id] ? [loaded[id]!] : [])), [loaded, key]);
+}

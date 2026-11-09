@@ -1,9 +1,19 @@
 // T39 会话模型：输入框右下角的下拉（连接 / 模型）、切换后的说明、轨迹里的模型名。
+// T45 新对话页的模型下拉：同一份数据、空状态、第一句话带上所选模型。
 import { describe, expect, test } from "bun:test";
 import type { TaskEvent } from "@de/core/contract";
+import { createSessionApi, type FetchLike } from "../src/api/sessions";
 import type { SessionDetail, SessionMessage } from "../src/api/types";
 import { deriveChat } from "../src/view/chat-view";
-import { modelLabel, modelMenuItems, modelNotices, modelSwitchedNotices, modelSwitchNotice, parseModelValue } from "../src/view/session-model";
+import {
+  modelLabel,
+  modelMenuItems,
+  modelNotices,
+  modelSwitchedNotices,
+  modelSwitchNotice,
+  newSessionModelMenu,
+  parseModelValue,
+} from "../src/view/session-model";
 import { deriveTrajectory } from "../src/view/trajectory";
 
 const OPTIONS = [
@@ -46,6 +56,57 @@ describe("模型下拉", () => {
   test("切换说明是一句话，写“连接 / 模型”，任务运行中说明从下一个判断步骤生效", () => {
     expect(modelSwitchNotice({ connection: "DeepSeek", model: "deepseek-reasoner" }, false)).toBe("模型已切换为 DeepSeek / deepseek-reasoner。");
     expect(modelSwitchNotice({ connection: "DeepSeek", model: "deepseek-reasoner" }, true)).toContain("下一个判断步骤");
+  });
+});
+
+describe("新对话页的模型下拉（T45）", () => {
+  test("和会话里的下拉同一份数据：按连接分组，选中的是新会话沿用的模型", () => {
+    const menu = newSessionModelMenu(OPTIONS, { connection: "通义千问", model: "qwen-plus" });
+    expect(menu.empty).toBe(false);
+    expect(menu.groups.map((g) => [g.label, g.options.map((o) => o.label)])).toEqual([
+      ["DeepSeek", ["deepseek-chat", "deepseek-reasoner"]],
+      ["通义千问", ["qwen-plus"]],
+    ]);
+    expect(menu.groups[1]!.options[0]!.selected).toBe(true);
+    expect(menu.groups[0]!.options.every((o) => !o.selected)).toBe(true);
+    expect(menu.selectedValue).toBe("通义千问/qwen-plus");
+  });
+
+  test("没有可用模型时显示“还没有可用的模型”，带设置入口，不能选", () => {
+    const menu = newSessionModelMenu([], undefined);
+    expect(menu.empty).toBe(true);
+    expect(menu.label).toBe("还没有可用的模型");
+    expect(menu.settingsEntry).toBe("去设置里配置模型连接");
+    expect(menu.selectedValue).toBeUndefined();
+    expect(menu.items.some((item) => item.type === "group")).toBe(false);
+
+    const withModels = newSessionModelMenu(OPTIONS, undefined);
+    expect(withModels.label).toBe("选择模型");
+    expect(withModels.settingsEntry).toBe("去设置里配置模型连接");
+  });
+});
+
+describe("新对话的第一句话带上所选模型", () => {
+  test("建会话时把所选模型发给服务端", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const impl: FetchLike = async (url, init) => {
+      calls.push({ url, body: init?.body });
+      return new Response(JSON.stringify({ id: "s-1", workspaceId: "ws-1", status: "reception" }), { status: 201, headers: { "content-type": "application/json" } });
+    };
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    await api.createSession(undefined, { connection: "DeepSeek", model: "deepseek-reasoner" });
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ model: { connection: "DeepSeek", model: "deepseek-reasoner" } });
+  });
+
+  test("没选模型时只带工作区", async () => {
+    const calls: { body: unknown }[] = [];
+    const impl: FetchLike = async (_url, init) => {
+      calls.push({ body: init?.body });
+      return new Response(JSON.stringify({ id: "s-1" }), { status: 201, headers: { "content-type": "application/json" } });
+    };
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    await api.createSession("ws-1");
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ workspaceId: "ws-1" });
   });
 });
 

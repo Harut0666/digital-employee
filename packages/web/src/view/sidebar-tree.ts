@@ -114,6 +114,13 @@ export function groupRecords(records: readonly RecordItem[]): RecordGroupView[] 
   }));
 }
 
+/** 记录里的“第几次运行”：同一个会话先后运行了多个任务时每行标出；只运行过一次的不标。 */
+export function runLabel(item: Pick<RecordItem, "sessionId" | "runNumber">, records: readonly Pick<RecordItem, "sessionId">[]): string {
+  if (!item.sessionId || !item.runNumber) return "";
+  const sameSession = records.filter((record) => record.sessionId === item.sessionId).length;
+  return sameSession > 1 || item.runNumber > 1 ? `第 ${item.runNumber} 次运行` : "";
+}
+
 /** 记录里的一条：副标题（员工 · 工作区）。 */
 export function recordSubtitle(item: Pick<RecordItem, "employee" | "workspaceName">): string {
   return [item.employee, item.workspaceName].filter((part) => part !== "").join(" · ");

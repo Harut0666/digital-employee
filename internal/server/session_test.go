@@ -732,7 +732,7 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	if strings.Contains(toolResult.Content[0].Text, h.workspace) {
 		t.Fatalf("工具结果泄露了本地路径：%s", toolResult.Content[0].Text)
 	}
-	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task propose_card list_files read_file use_folder_file]" {
+	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task propose_card list_files read_file use_folder_file write_file edit_file]" {
 		t.Fatalf("任务开始后开放的工具：%s", names)
 	}
 }
@@ -1340,8 +1340,9 @@ func TestConversationFromOneSentenceToDelivery(t *testing.T) {
 	if review := cardOf(t, got.Messages, session.CardReview); len(review.Actions) != 0 {
 		t.Fatalf("交付后审核卡片不该有按钮：%+v", review.Actions)
 	}
-	if status, data := h.trySubmit(created.ID, initiator, week44Form); status != http.StatusConflict {
-		t.Fatalf("交付后再提交：%d %s", status, data)
+	// 交付后同一个会话可以再开新任务（T47，见 session_tasks_test.go）；这里只看终态的会话仍能读
+	if got.TaskID != taskID || len(got.TaskIDs) != 1 {
+		t.Fatalf("交付后的任务列表 = %+v", got.View)
 	}
 }
 
