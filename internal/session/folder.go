@@ -23,6 +23,12 @@ import (
 // listFilesLimit list_files 和 @ 选择最多列出多少项。
 const listFilesLimit = 200
 
+// maxWalkDepth 递归列目录的深度上限：已访问集合之外的兜底，防止没解开的链接把栈撑爆。
+const maxWalkDepth = 64
+
+// maxReparseDepth 一条路径上连续解开多少层链接/junction；超过按异常处理。
+const maxReparseDepth = 16
+
 // FolderEntry 工作区目录里的一项；路径相对工作区目录，统一用 / 分隔。
 type FolderEntry struct {
 	Path      string `json:"path"`
@@ -82,6 +88,70 @@ func withinRoot(root, target string) bool {
 	return strings.HasPrefix(targetAbs, strings.TrimSuffix(rootAbs, separator)+separator)
 }
 
+// resolvePath 把路径上的符号链接和 Windows 目录联接（junction）都解开，返回真实路径。
+//
+// filepath.EvalSymlinks 只认 ModeSymlink；Windows 的 junction 在 Lstat 里是“非常规项”
+// （ModeIrregular，既不是目录也不是符号链接），EvalSymlinks 会原样返回、os.Readlink 却能读到目标。
+// 不处理它就会把工作区里的联接当成普通文件，甚至借联接读到工作区目录外面。
+func resolvePath(raw string) (string, error) {
+	current := raw
+	for depth := 0; depth < maxReparseDepth; depth++ {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			return "", err
+		}
+		info, err := os.Lstat(resolved)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode().IsRegular() || info.IsDir() {
+			return resolved, nil
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			current = resolved
+			continue
+		}
+		// 可能是 junction：读得到目标就继续解，读不到说明是别的特殊文件，原样返回
+		target, err := os.Readlink(resolved)
+		if err != nil {
+			return resolved, nil
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(resolved), target)
+		}
+		current = target
+	}
+	return "", fmt.Errorf("链接层级太深：%s", raw)
+}
+
+// entryInfo 取得一项的真实类型和大小：跟随路径上的链接和 junction。
+//
+// 返回 false 表示这一项不该列（读不了、或者链接/junction 指到了工作区目录外面）。
+func entryInfo(root, path string) (fs.FileInfo, bool) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, false
+	}
+	if info.Mode().IsRegular() || info.IsDir() {
+		return info, true
+	}
+	// 链接、junction 等特殊项：先确认它是能解开的重解析点，再解开看真实目标
+	if info.Mode()&fs.ModeSymlink == 0 {
+		if _, linkErr := os.Readlink(path); linkErr != nil {
+			return nil, false
+		}
+	}
+	resolved, err := resolvePath(path)
+	if err != nil || !withinRoot(root, resolved) {
+		return nil, false
+	}
+	target, err := os.Stat(resolved)
+	if err != nil {
+		return nil, false
+	}
+	return target, true
+}
+
 // resolveInWorkspace 把用户给的路径解析成工作区目录里的真实路径。
 // 不是绝对路径、逐段解析（链接先解开）后仍在根目录内，否则返回错误。
 func resolveInWorkspace(root, raw string) (string, string, error) {
@@ -100,7 +170,8 @@ func resolveInWorkspace(root, raw string) (string, string, error) {
 		} else {
 			current = filepath.Join(current, part)
 		}
-		if resolved, evalErr := filepath.EvalSymlinks(current); evalErr == nil {
+		// 链接和 junction 都解开，再判断是否还在工作区目录里
+		if resolved, evalErr := resolvePath(current); evalErr == nil {
 			current = resolved
 		} else if !errors.Is(evalErr, fs.ErrNotExist) {
 			return "", "", evalErr
@@ -153,22 +224,10 @@ func listFolder(base, sub string, exclude map[string]bool) (FolderListing, error
 			continue
 		}
 		path := filepath.Join(dir, name)
-		// 链接看它指向哪：指到目录外的既不列，也不能当材料
-		if child.Type()&fs.ModeSymlink != 0 {
-			resolved, linkErr := filepath.EvalSymlinks(path)
-			if linkErr != nil || !withinRoot(root, resolved) {
-				continue
-			}
-		}
-		// 每一项都按真实文件系统判断（链接解到目录外的会在这里落空）
-		fileInfo, statErr := os.Lstat(path)
-		if statErr != nil {
+		// 每一项都按真实文件系统判断：链接/junction 解到目录外的跳过，指向目录的标成目录
+		fileInfo, ok := entryInfo(root, path)
+		if !ok {
 			continue
-		}
-		if fileInfo.Mode()&fs.ModeSymlink != 0 {
-			if fileInfo, statErr = os.Stat(path); statErr != nil {
-				continue
-			}
 		}
 		if fileInfo.IsDir() {
 			entries = append(entries, FolderEntry{Path: prefix + name, Name: name, Dir: true})
@@ -232,13 +291,41 @@ func listFolderDeep(base string) (FolderListing, error) {
 		return FolderListing{}, fmt.Errorf("不是目录：%s", base)
 	}
 	entries := make([]FolderEntry, 0, 16)
-	truncated := walkFiles(root, root, "", atHidden, &entries)
+	seen := &dirSeen{}
+	seen.enter(info)
+	walkFiles(root, root, "", atHidden, seen, 0, &entries)
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return FolderListing{Entries: entries, Truncated: truncated}, nil
+	listing := FolderListing{Entries: entries}
+	// 多收了一项才能区分“刚好 200 项”和“还有第 201 项”
+	if len(entries) > listFilesLimit {
+		listing.Entries = entries[:listFilesLimit]
+		listing.Truncated = true
+	}
+	return listing, nil
 }
 
-// walkFiles 递归收集文件；收集够上限就提前返回 true（截断）。
-func walkFiles(root, dir, prefix string, exclude map[string]bool, entries *[]FolderEntry) bool {
+// dirSeen 已经进入过的目录。用 os.SameFile 判等，链接/junction 指回上级目录时能认出来。
+type dirSeen struct {
+	dirs []fs.FileInfo
+}
+
+// enter 记下一个目录；已经来过时返回 false。
+func (s *dirSeen) enter(info fs.FileInfo) bool {
+	for _, seen := range s.dirs {
+		if os.SameFile(seen, info) {
+			return false
+		}
+	}
+	s.dirs = append(s.dirs, info)
+	return true
+}
+
+// walkFiles 递归收集文件；收集到超过上限就提前返回 true（还有没列出来的）。
+// 进入子目录前按真实目录去重，目录链接/junction 成环时不会无限递归；深度另有上限兜底。
+func walkFiles(root, dir, prefix string, exclude map[string]bool, seen *dirSeen, depth int, entries *[]FolderEntry) bool {
+	if depth > maxWalkDepth {
+		return true
+	}
 	children, err := os.ReadDir(dir)
 	if err != nil {
 		return false
@@ -251,21 +338,15 @@ func walkFiles(root, dir, prefix string, exclude map[string]bool, entries *[]Fol
 		path := filepath.Join(dir, name)
 		rel := prefix + name
 		// 链接先解开：指到工作区目录外面的既不列也不进
-		fileInfo, statErr := os.Lstat(path)
-		if statErr != nil {
+		fileInfo, ok := entryInfo(root, path)
+		if !ok {
 			continue
 		}
-		if fileInfo.Mode()&fs.ModeSymlink != 0 {
-			resolved, linkErr := filepath.EvalSymlinks(path)
-			if linkErr != nil || !withinRoot(root, resolved) {
-				continue
-			}
-			if fileInfo, statErr = os.Stat(path); statErr != nil {
-				continue
-			}
-		}
 		if fileInfo.IsDir() {
-			if walkFiles(root, path, rel+"/", exclude, entries) {
+			if !seen.enter(fileInfo) {
+				continue
+			}
+			if walkFiles(root, path, rel+"/", exclude, seen, depth+1, entries) {
 				return true
 			}
 			continue
@@ -275,7 +356,7 @@ func walkFiles(root, dir, prefix string, exclude map[string]bool, entries *[]Fol
 			Size: fileInfo.Size(), ModTime: fileInfo.ModTime().UnixNano(),
 			Extension: strings.ToLower(filepath.Ext(name)),
 		})
-		if len(*entries) >= listFilesLimit {
+		if len(*entries) > listFilesLimit {
 			return true
 		}
 	}
