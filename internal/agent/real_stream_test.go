@@ -238,8 +238,8 @@ func TestRealStreamRejectsErrorStatusBeforeStreaming(t *testing.T) {
 	}
 }
 
-// 判断步骤仍走非流式：请求体里 stream 为 false。
-func TestJudgmentStepsStayNonStreaming(t *testing.T) {
+// 判断步骤的底层一次性调用仍是 stream:false；要看增量时执行器改走流式（见 TestRunnerEmitsModelDeltas）。
+func TestProviderStreamStaysNonStreaming(t *testing.T) {
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}`)
 	})
@@ -250,7 +250,34 @@ func TestJudgmentStepsStayNonStreaming(t *testing.T) {
 		t.Fatalf("非流式调用 = %+v / %v", message, err)
 	}
 	if !strings.Contains(service.bodies[0], `"stream":false`) {
-		t.Fatalf("判断步骤应保持非流式：%s", service.bodies[0])
+		t.Fatalf("一次性调用应带 stream:false：%s", service.bodies[0])
+	}
+}
+
+// 服务忽略 stream、直接回整段 JSON（不支持流式）：按一条完整的消息交回，文字仍逐段回调。
+func TestRealStreamFallsBackToWholeJSON(t *testing.T) {
+	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"content":"先看原因",`+
+			`"tool_calls":[{"id":"c1","type":"function","function":{"name":"query_task","arguments":"{\"taskId\":\"t-1\"}"}}]}}]}`)
+	})
+	resolved := streamProvider(t, service.server.URL)
+
+	var deltas []string
+	message, err := resolved.EventStream(context.Background(), resolved.Model, agent.StreamRequest{}, agent.EventStreamOptions{
+		APIKey: resolved.APIKey, OnText: func(text string) { deltas = append(deltas, text) },
+	})
+	if err != nil {
+		t.Fatalf("整段 JSON 应能当成一条回答：%v", err)
+	}
+	if strings.Join(deltas, "") != "先看原因" {
+		t.Fatalf("文字增量 = %q", deltas)
+	}
+	if message.StopReason != agent.StopToolUse || len(message.Content) != 2 || message.Content[1].Name != "query_task" {
+		t.Fatalf("完整消息 = %+v", message)
+	}
+	if message.Content[1].Arguments["taskId"] != "t-1" {
+		t.Fatalf("工具参数 = %+v", message.Content[1].Arguments)
 	}
 }
 

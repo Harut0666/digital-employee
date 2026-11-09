@@ -27,6 +27,20 @@ func (r *ResolvedStepModel) EventStream(ctx context.Context, model Model, reques
 	return r.Stream(ctx, model, request, options.StreamOptions)
 }
 
+// requestModel 判断步骤调一次模型。有人要看模型输出时走流式，把每段文字增量交出去（不落盘）；
+// 没人看时保持一次性调用。两种调用拿到的消息形状一致，调用方不用区分。
+func requestModel(ctx context.Context, resolved *ResolvedStepModel, request StreamRequest, options StreamOptions, onDelta func(ModelDeltaEvent), stepID string, turn int) (*AssistantMessage, error) {
+	if onDelta == nil {
+		return resolved.Stream(ctx, resolved.Model, request, options)
+	}
+	return resolved.EventStream(ctx, resolved.Model, request, EventStreamOptions{
+		StreamOptions: options,
+		OnText: func(text string) {
+			onDelta(ModelDeltaEvent{StepID: stepID, Turn: turn, Text: text})
+		},
+	})
+}
+
 // PartialText 消息里已经输出的全部文字。
 func PartialText(message *AssistantMessage) string {
 	if message == nil {

@@ -244,6 +244,47 @@ func TestRunnerSubmitsValidResult(t *testing.T) {
 	}
 }
 
+// 有人看增量时判断步骤改走流式：每片文字都交出去（不落盘），落盘的仍是完整的一次调用。
+func TestRunnerEmitsModelDeltas(t *testing.T) {
+	text := "先匹配原因"
+	turn := agent.ScriptedTurn{
+		Text:      &text,
+		Chunks:    []string{"先", "匹配", "原因"},
+		ToolCalls: []agent.ScriptedToolCall{{Name: agent.SubmitToolName, Arguments: validSubmission()}},
+	}
+	input := runInput(agent.ModelScript{"match_causes": {turn}})
+	var deltas []agent.ModelDeltaEvent
+	var modelCalls []agent.ModelCalledEvent
+	input.OnModelDelta = func(event agent.ModelDeltaEvent) { deltas = append(deltas, event) }
+	input.OnModelCalled = func(event agent.ModelCalledEvent) error {
+		modelCalls = append(modelCalls, event)
+		return nil
+	}
+
+	result, err := newRunner().Run(input)
+	if err != nil {
+		t.Fatalf("执行失败：%v", err)
+	}
+	if !result.OK {
+		t.Fatalf("应成功：%+v", result)
+	}
+	if len(deltas) != 3 {
+		t.Fatalf("文字增量 = %+v", deltas)
+	}
+	for _, delta := range deltas {
+		if delta.StepID != "match_causes" || delta.Turn != 0 || delta.Text == "" {
+			t.Fatalf("增量应带步骤、轮次和文字：%+v", delta)
+		}
+	}
+	if got := strings.Join([]string{deltas[0].Text, deltas[1].Text, deltas[2].Text}, ""); got != text {
+		t.Fatalf("增量拼起来 = %q，want %q", got, text)
+	}
+	// 落盘的仍是一次调用的完整响应
+	if len(modelCalls) != 1 {
+		t.Fatalf("model_called 回调 = %+v", modelCalls)
+	}
+}
+
 func TestRunnerRejectsInvalidOutput(t *testing.T) {
 	input := runInput(agent.ModelScript{"match_causes": {submitTurn(map[string]any{"causes": []any{}})}})
 	result, err := newRunner().Run(input)

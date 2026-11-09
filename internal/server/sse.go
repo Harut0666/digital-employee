@@ -18,10 +18,16 @@ import (
 const heartbeatInterval = 15 * time.Second
 
 // encodeEvent 一条事件 → SSE 帧。
+//
+// 不落盘的增量（判断步骤的模型输出）没有 seq：不写 id 行，浏览器重连时不会把它当成“已经看过”，
+// 服务端也不会再补发。
 func encodeEvent(event contract.TaskEvent) (string, error) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return "", err
+	}
+	if contract.TransientEvent(event.Type) || event.Seq <= 0 {
+		return fmt.Sprintf("event: %s\ndata: %s\n\n", event.Type, data), nil
 	}
 	return fmt.Sprintf("id: %d\nevent: %s\ndata: %s\n\n", event.Seq, event.Type, data), nil
 }
@@ -98,10 +104,13 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request, taskID stri
 	lastSeq := after
 	var writeErr error
 	push := func(event contract.TaskEvent) bool {
-		if event.Seq <= lastSeq {
-			return true
+		// 不落盘的增量不占 seq，也不参与历史去重（每次推送都是新的一段）
+		if event.Seq > 0 {
+			if event.Seq <= lastSeq {
+				return true
+			}
+			lastSeq = event.Seq
 		}
-		lastSeq = event.Seq
 		frame, err := encodeEvent(event)
 		if err != nil {
 			return true
@@ -129,7 +138,17 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request, taskID stri
 		if len(batch) == 0 {
 			return true
 		}
-		sort.SliceStable(batch, func(i, j int) bool { return batch[i].Seq < batch[j].Seq })
+		// 排序去重只对落盘事件有意义：增量没有 seq，保持到达顺序（它本来就是按输出顺序推的）
+		ordered := true
+		for _, event := range batch {
+			if event.Seq <= 0 {
+				ordered = false
+				break
+			}
+		}
+		if ordered {
+			sort.SliceStable(batch, func(i, j int) bool { return batch[i].Seq < batch[j].Seq })
+		}
 		for _, event := range batch {
 			if !push(event) {
 				return false

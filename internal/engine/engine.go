@@ -450,6 +450,43 @@ func (e *Engine) appendLocked(rt *taskRuntime, event contract.TaskEvent) error {
 	return nil
 }
 
+// publishTransient 只推给订阅者：不写事件日志、不进投影、不占 seq。
+// 判断步骤的模型输出增量走这里（Spec 0006“员工步骤在对话中的形式”）：正在看的人能边输出边看到，
+// 刷新或重连之后不补发；落盘的仍是一次调用的完整响应（model_called）。
+// 调用方不得持有 rt.mu。
+func (e *Engine) publishTransient(rt *taskRuntime, event contract.TaskEvent) {
+	if e.engineDead() {
+		return
+	}
+	event.Seq = 0
+	event.TS = e.nowISO()
+	event.TaskID = rt.id
+	event.WorkspaceID = rt.workspaceID
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	if rt.proj.State == contract.StateTerminated {
+		return
+	}
+	for _, entry := range rt.listeners {
+		if entry.active {
+			entry.fn(event)
+		}
+	}
+}
+
+// hasActiveListener 现在有没有人在看这个任务的事件流。
+// 判断步骤据此决定要不要流式推送增量：没人看时不请求流式，省掉没用的分片。
+func (e *Engine) hasActiveListener(rt *taskRuntime) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for _, entry := range rt.listeners {
+		if entry.active {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Engine) snapshotOf(rt *taskRuntime) *contract.TaskSnapshot {
 	nowMS := e.now().UnixMilli()
 	rt.mu.Lock()
@@ -1242,6 +1279,16 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 		return contract.ModelRef{}
 	})
 
+	// 有人正在看事件流时才把判断步骤的模型输出逐片推出去（不落盘）；没人看时保持一次性调用
+	var onModelDelta func(agent.ModelDeltaEvent)
+	if e.hasActiveListener(rt) {
+		onModelDelta = func(event agent.ModelDeltaEvent) {
+			e.publishTransient(rt, contract.TaskEvent{
+				Type: contract.EventModelDelta, StepID: event.StepID, Turn: contract.IntPtr(event.Turn), Text: event.Text,
+			})
+		}
+	}
+
 	var crashErr error
 	result, runErr := e.judgment.Run(agent.JudgmentInput{
 		TaskID:       rt.id,
@@ -1281,6 +1328,7 @@ func (e *Engine) runJudge(rt *taskRuntime, step contract.StepConfig, context any
 			}
 			return nil
 		},
+		OnModelDelta: onModelDelta,
 		OnToolCalled: func(event agent.ToolCalledEvent) error {
 			callID := newUUID()
 			if err := e.append(rt, contract.TaskEvent{

@@ -82,6 +82,9 @@ type TaskEvent struct {
 	FiledPath   string `json:"filedPath,omitempty"`
 	FiledReason string `json:"filedReason,omitempty"`
 	FiledError  string `json:"filedError,omitempty"`
+
+	// model_delta：判断步骤的模型输出增量（只推送，不落盘，没有 seq）
+	Text string `json:"text,omitempty"`
 }
 
 // EventUsage 模型 token 用量。
@@ -111,9 +114,16 @@ const (
 	EventFaultInjected      = "fault_injected"
 	// EventDeliverableFiled 交付物写进工作区“交付”文件夹的说明（写不进去也记一条）
 	EventDeliverableFiled = "deliverable_filed"
+	// EventModelDelta 判断步骤的模型输出增量：只推给正在看事件的客户端，不写进事件日志（Spec 0006）。
+	// 它没有 seq，重连时也不补发：落盘的仍是一次调用的完整响应（model_called）。
+	EventModelDelta = "model_delta"
 )
 
-// EventTypes 全部事件类型，SSE 为每条事件写具名 event:。
+// TransientEvent 只推送、不落盘的事件类型（没有 seq）。
+func TransientEvent(eventType string) bool { return eventType == EventModelDelta }
+
+// EventTypes 全部落盘事件类型，SSE 为每条事件写具名 event:。
+// 不落盘的增量（EventModelDelta）不在这里：它不属于事件日志，重放时也不会出现。
 var EventTypes = []string{
 	EventTaskCreated, EventModelSwitched, EventFormUpdated, EventStateChanged, EventTransitionRejected,
 	EventStepStarted, EventStepCompleted, EventStepFailed, EventToolCalled,

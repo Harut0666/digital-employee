@@ -34,6 +34,18 @@ type ModelCalledEvent struct {
 	Model      string
 }
 
+// ModelDeltaEvent 判断步骤模型输出的一段文字增量。
+//
+// 增量只给人边输出边看，不是任务状态：引擎把它推给事件流订阅者而不落盘。
+type ModelDeltaEvent struct {
+	// StepID 这一段属于哪个判断步骤
+	StepID string
+	// Turn 第几轮（同一步骤内从 0 开始）
+	Turn int
+	// Text 这一段文字
+	Text string
+}
+
 // ToolCalledEvent 判断步骤内一次工具调用的回调参数。
 type ToolCalledEvent struct {
 	Tool  string
@@ -75,8 +87,11 @@ type JudgmentInput struct {
 	Signal context.Context
 
 	OnModelCalled func(ModelCalledEvent) error
-	OnToolCalled  func(ToolCalledEvent) error
-	OnToolDenied  func(ToolDeniedEvent) error
+	// OnModelDelta 模型输出的文字增量（Spec 0006“员工步骤在对话中的形式”）。
+	// 给了就走流式调用并把每段增量交出去；nil 时保持一次性调用。
+	OnModelDelta func(ModelDeltaEvent)
+	OnToolCalled func(ToolCalledEvent) error
+	OnToolDenied func(ToolDeniedEvent) error
 }
 
 // JudgmentRunner 判断步骤执行器。
@@ -283,10 +298,10 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 				MaxRetries: ResolveModelMaxRetries(resolved.MaxRetries, execution),
 				TimeoutMS:  resolved.TimeoutMS,
 			}
-			produced, streamErr := resolved.Stream(ctx, resolved.Model, StreamRequest{
+			produced, streamErr := requestModel(ctx, resolved, StreamRequest{
 				Messages: messages,
 				Tools:    visibleTools,
-			}, options)
+			}, options, in.OnModelDelta, in.Step.ID, turn)
 			if streamErr != nil {
 				if ctx.Err() != nil {
 					failureKind, failureMessage = classifyCancel(in.Signal, taskDeadline, stepTimeoutMS)
