@@ -23,7 +23,7 @@
 - **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝。
 - **单文件 exe**：把服务端、前端构建产物、员工配置和公开样例打进一个 exe；双击即用，首次启动建应用目录 `%APPDATA%\digital-employee-app`（`DE_APP_DIR` 可改：设置、员工、知识库、会话和任务都在这里），以及默认工作区「我的工作区」（`文档\数字员工`）；端口冲突自动换端口 —— 见[设计文档 §14](docs/design.md)、[ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
 - **原生桌面窗口**：同一个 Go 主进程内嵌服务端，原生窗口（MyGo + 系统 WebView2）只加载本机地址；用 `digital-employee.exe --window` 打开，与浏览器方式共用应用目录 —— 见下文“方式二”与 [ADR-0004](docs/adr/0004-go-mainline.md)。
-- **Go 后端 + React 前端**：后端 Go（`net/http` + SSE），前端 React/Vite + antd；契约类型集中在 `internal/contract`，前后端共用。
+- **Go 后端 + React 前端**：后端 Go（`net/http` + SSE），前端 React/Vite + antd；契约类型在 `internal/contract`（Go 版唯一事实来源），前端用 `packages/core/src/contract` 的 TS 类型，字段名逐字段一致。
 
 ## 目录结构
 
@@ -31,12 +31,13 @@
 digital-employee/
 ├── cmd/digital-employee/   Go 单 exe 入口：子命令分派与真实接线
 ├── internal/               Go 后端
-│   ├── contract/           契约唯一事实来源（事件、状态、设置、配置）
+│   ├── contract/           契约唯一事实来源（事件、状态、设置、配置；前端 TS 类型在 packages/core/src/contract）
 │   ├── config/  engine/  qc/  agent/  tools/  render/   配置、引擎、质检、模型、工具、Word 渲染
 │   ├── server/  session/    REST + SSE、角色权限、会话与前台 Agent
 │   ├── app/  desktop/  cli/ 应用目录与工作区准备、原生窗口、命令行
 ├── packages/web/           React 前端（会话、步骤行与轨迹、发起、审核、配置、设置）
-├── packages/{core,tools,server,cli,app,desktop}/  TypeScript 旧版（冻结在 feat/electrobun-shell，仅作参考与兜底）
+├── packages/core/          前端契约类型（src/contract，与 internal/contract 逐字段一致）；其余是旧版 TS 引擎
+├── packages/{tools,server,cli,app,desktop}/  TypeScript 旧后端（冻结在 feat/electrobun-shell，仅作参考与兜底）
 ├── employees/
 │   ├── weekly-report/      场景 A 员工配置（提示词、输出 Schema、流程与质检配置）
 │   └── knowledge-qa/       知识库问答员工（只有一个判断步骤）
@@ -259,7 +260,7 @@ employees/weekly-report/
 - `qcSources`：质检从哪些步骤取草稿、纪要、渲染结果（缺省 `write_report` / `parse_minutes` / `render_document`）。
 - `qcFixSteps`：质检不通过时重跑哪一步（`write` 缺省跟随 `qcSources.draft`，`causes` 缺省 `match_causes`）。解析出的 id 必须真实存在，否则加载配置时直接报错。
 
-契约（共享类型与校验）集中在 [`internal/contract`](internal/contract)，是唯一事实来源；其余包只实现契约。
+契约（共享类型与校验）在 [`internal/contract`](internal/contract)，是 Go 版唯一事实来源；前端需要的类型在 [`packages/core/src/contract`](packages/core/src/contract)，字段名逐字段一致，新增事件类型时两边同步改（没有代码生成）。
 
 ## 设置中心
 
@@ -281,7 +282,7 @@ employees/weekly-report/
 
 | 包 | 职责 |
 |---|---|
-| `internal/contract` | 契约唯一事实来源：事件、任务状态、设置、员工配置等共享类型与校验 |
+| `internal/contract` | Go 版契约唯一事实来源：事件、任务状态、设置、员工配置等共享类型与校验（前端 TS 类型见 `packages/core/src/contract`） |
 | `internal/config` | 员工配置加载（`workflow.yaml` / `qc.yaml` / 表单 Schema / 提示词） |
 | `internal/engine` | 任务引擎：状态机、编排、事件日志、断点恢复、交付物 |
 | `internal/qc` | 质检引擎、槽位渲染 |
