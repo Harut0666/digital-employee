@@ -185,9 +185,21 @@ export function useTask(id: string | undefined): TaskState {
     if (!id) return;
     setLoading(true);
     const stop = api.subscribe(id, 0, (ev) => {
-      if (ev.seq <= lastSeq.current) return;
-      lastSeq.current = ev.seq;
-      setEvents((prev) => [...prev, ev]);
+      // 判断步骤的模型输出增量只推送、不落盘：它没有 seq，也不影响快照（T43）。
+      // 同一轮的分片并成一条，事件数组不会随输出长度无限变长。
+      if (ev.seq > 0) {
+        if (ev.seq <= lastSeq.current) return;
+        lastSeq.current = ev.seq;
+      }
+      setEvents((prev) => {
+        if (ev.type === "model_delta") {
+          const last = prev.at(-1);
+          if (last && last.type === "model_delta" && last.stepId === ev.stepId && last.turn === ev.turn) {
+            return [...prev.slice(0, -1), { ...last, text: last.text + ev.text }];
+          }
+        }
+        return [...prev, ev];
+      });
       setLoading(false);
       // 快照里有引擎判定的预算（模型调用数、用时）和步骤状态，这些事件之后重新拉取
       if (ev.type === "state_changed" || ev.type === "step_completed" || ev.type === "step_failed") reload();

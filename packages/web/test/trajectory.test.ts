@@ -152,3 +152,86 @@ describe("deriveTrajectory：重做与暂停", () => {
     expect(view.lastSeq).toBe(0);
   });
 });
+
+// 判断步骤的模型输出增量（T43）：只推给正在看的人，不落盘；完整响应到达后由 model_called 取代。
+describe("deriveTrajectory：判断步骤的模型输出增量", () => {
+  test("增量拼成一条正在输出的子项", () => {
+    const view = deriveTrajectory(
+      seqOf([
+        ...submit,
+        { type: "step_started", stepId: "match", attempt: 1, reworkRound: 0 },
+        { type: "model_delta", stepId: "match", turn: 0, text: "华东" },
+        { type: "model_delta", stepId: "match", turn: 0, text: "天气原因" },
+      ]),
+      STEP_DEFS,
+    );
+    const match = view.rounds[0]!.items.find((i) => i.stepId === "match")!;
+    expect(match.children).toHaveLength(1);
+    expect(match.children![0]).toMatchObject({ kind: "model", label: "正在输出", status: "running", detail: "华东天气原因" });
+  });
+
+  test("完整响应落盘后，增量被模型轮次取代", () => {
+    const view = deriveTrajectory(
+      seqOf([
+        ...submit,
+        { type: "step_started", stepId: "match", attempt: 1, reworkRound: 0 },
+        { type: "model_delta", stepId: "match", turn: 0, text: "华东天气原因" },
+        { type: "model_called", stepId: "match", turn: 2, response: {}, durationMs: 900 },
+        { type: "step_completed", stepId: "match", reworkRound: 0, outputPath: "match.json", outputSha256: "x" },
+      ]),
+      STEP_DEFS,
+    );
+    const match = view.rounds[0]!.items.find((i) => i.stepId === "match")!;
+    expect(match.children!.map((child) => [child.kind, child.status, child.detail])).toEqual([["model", "done", undefined]]);
+    expect(match.children!.some((child) => child.id.startsWith("delta:"))).toBe(false);
+  });
+
+  test("增量没有 seq，lastSeq 仍是最后一条落盘事件的序号", () => {
+    const events = seqOf([
+      ...submit,
+      { type: "step_started", stepId: "match", attempt: 1, reworkRound: 0 },
+      { type: "model_delta", stepId: "match", turn: 0, text: "华东" },
+    ]).map((ev) => (ev.type === "model_delta" ? { ...ev, seq: 0 } : ev));
+    expect(deriveTrajectory(events, STEP_DEFS).lastSeq).toBe(3);
+  });
+});
+
+// 交付物写进工作区“交付”文件夹的说明（T42 的事件、T43 的界面）。
+describe("deriveTrajectory：交付物已复制到工作区目录", () => {
+  test("复制成功时列出目标路径", () => {
+    const view = deriveTrajectory(
+      seqOf([
+        ...submit,
+        ...step("write"),
+        { type: "deliverable_filed", filedPath: "D:\\工作区\\交付\\经营周报员工_2026年第44周_v1.docx", filedReason: "交付物已复制到 D:\\工作区\\交付\\经营周报员工_2026年第44周_v1.docx" },
+      ]),
+      STEP_DEFS,
+    );
+    const notice = view.rounds[0]!.items.at(-1)!;
+    expect(notice.kind).toBe("notice");
+    expect(notice.status).toBe("info");
+    expect(notice.label).toBe("交付物已复制到 D:\\工作区\\交付\\经营周报员工_2026年第44周_v1.docx");
+  });
+
+  test("写不进去时显示失败原因，不影响任务本身", () => {
+    const view = deriveTrajectory(
+      seqOf([
+        ...submit,
+        ...step("write"),
+        {
+          type: "deliverable_filed",
+          filedReason: "没能把第 1 版的交付物复制到“交付”文件夹：磁盘已满。交付物仍在任务目录里，可以照常下载。",
+          filedError: "磁盘已满",
+        },
+      ]),
+      STEP_DEFS,
+    );
+    const notice = view.rounds[0]!.items.at(-1)!;
+    expect(notice).toMatchObject({
+      kind: "notice",
+      status: "failed",
+      label: "没能把第 1 版的交付物复制到“交付”文件夹：磁盘已满。交付物仍在任务目录里，可以照常下载。",
+      error: "磁盘已满",
+    });
+  });
+});

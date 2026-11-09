@@ -212,6 +212,24 @@ describe("deriveSessionView: 重做后的交付物", () => {
   });
 });
 
+// 判断步骤的模型输出增量（T43）：只推送、不落盘，不该影响会话视图和事件序号。
+describe("deriveSessionView: 模型输出增量", () => {
+  test("增量不进卡片、不算模型调用，lastSeq 仍取落盘事件", () => {
+    const events = seqOf([
+      created,
+      { type: "state_changed", from: "draft", to: "admission", trigger: "submit", actor: "initiator" },
+      { type: "step_started", stepId: "match", attempt: 1, reworkRound: 0 },
+      { type: "model_delta", stepId: "match", turn: 0, text: "华东" },
+      { type: "model_delta", stepId: "match", turn: 0, text: "天气原因" },
+    ]).map((ev) => (ev.type === "model_delta" ? { ...ev, seq: 0 } : ev));
+    const view = deriveSessionView(events, STEP_DEFS);
+    expect(view.cards.map((card) => card.kind)).toEqual(["user"]);
+    expect(view.steps.find((step) => step.id === "match")!.status).toBe("running");
+    expect(view.counts.modelCalls).toBe(0);
+    expect(view.lastSeq).toBe(3);
+  });
+});
+
 
 describe("deriveSessionView: 用时不含暂停等待", () => {
   test("暂停期间的时间不计入", () => {

@@ -29,6 +29,8 @@ export interface TraceItem {
   ts: string;
   meta?: TraceMeta;
   children?: TraceItem[];
+  /** 步骤 item 对应的步骤 id（点开步骤行时定位到这一步） */
+  stepId?: string;
 }
 
 export interface TraceRound {
@@ -97,6 +99,7 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
             ts: "",
             meta: { stepKind: d.kind },
             children: [],
+            stepId: d.id,
           };
           r.items.push(item);
           r.byStep.set(d.id, item);
@@ -111,11 +114,16 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
     let item = r.byStep.get(stepId);
     if (!item) {
       const def = defs.find((d) => d.id === stepId);
-      item = { id: `r${round}:${stepId}`, kind: "step", label: def?.label ?? stepId, status: "pending", ts: "", meta: { stepKind: def?.kind }, children: [] };
+      item = { id: `r${round}:${stepId}`, kind: "step", label: def?.label ?? stepId, status: "pending", ts: "", meta: { stepKind: def?.kind }, children: [], stepId };
       r.byStep.set(stepId, item);
       r.items.push(item);
     }
     return item;
+  };
+
+  // dropDelta 去掉某一步骤还没收尾的增量子项：完整响应到达（或步骤结束时）由 model_called 取代
+  const dropDelta = (step: TraceItem) => {
+    if (step.children) step.children = step.children.filter((child) => !child.id.startsWith("delta:"));
   };
 
   const notice = (round: number, input: NoticeInput): void => {
@@ -154,6 +162,7 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
         const item = stepItem(ev.reworkRound, ev.stepId);
         item.status = "done";
         item.error = undefined;
+        dropDelta(item);
         const dur = item.ts ? Date.parse(ev.ts) - Date.parse(item.ts) : 0;
         if (dur >= 0) item.meta = { ...item.meta, durationMs: dur };
         if (activeStepId === ev.stepId) activeStepId = undefined;
@@ -163,6 +172,7 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
         const item = stepItem(currentRound, ev.stepId);
         item.status = "failed";
         item.error = ev.error;
+        dropDelta(item);
         if (activeStepId === ev.stepId) activeStepId = undefined;
         break;
       }
@@ -200,6 +210,7 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
       }
       case "model_called": {
         const step = stepItem(currentRound, ev.stepId);
+        dropDelta(step);
         step.children!.push({
           id: `model:${ev.seq}`,
           kind: "model",
@@ -212,6 +223,18 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
           children: [],
         });
         summary.modelCalls += 1;
+        break;
+      }
+      case "model_delta": {
+        // 判断步骤的模型输出增量：只推给正在看的人，不落盘。挂成运行中的子项，完整响应到达后由 model_called 取代（T43）
+        const step = stepItem(currentRound, ev.stepId);
+        const id = `delta:${ev.stepId}:${ev.turn}`;
+        let child = step.children!.find((item) => item.id === id);
+        if (!child) {
+          child = { id, kind: "model", label: "正在输出", status: "running", ts: ev.ts, meta: { turn: ev.turn }, children: [] };
+          step.children!.push(child);
+        }
+        child.detail = (child.detail ?? "") + ev.text;
         break;
       }
       case "model_switched":
@@ -251,6 +274,16 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
           ts: ev.ts,
         });
         break;
+      case "deliverable_filed":
+        // 交付物写进工作区“交付”文件夹的说明（T42 的事件、T43 的界面）：写不进去不影响任务
+        notice(currentRound, {
+          kind: "notice",
+          label: ev.filedReason || (ev.filedPath ? `交付物已复制到 ${ev.filedPath}` : "交付物没能复制到工作区的“交付”文件夹"),
+          error: ev.filedError,
+          status: ev.filedError ? "failed" : "info",
+          ts: ev.ts,
+        });
+        break;
       default:
         break;
     }
@@ -263,7 +296,9 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
     if (item.status === "done") summary.done += 1;
     else if (item.status === "failed") summary.failed += 1;
   }
-  const last = events.at(-1);
+  // 最后一条可能是没有 seq 的模型输出增量：lastSeq 只取落盘事件的序号
+  let lastSeq = 0;
+  for (const ev of events) if (ev.seq > lastSeq) lastSeq = ev.seq;
   return {
     state,
     active: state ? ACTIVE_STATES.includes(state) : false,
@@ -271,6 +306,6 @@ export function deriveTrajectory(events: readonly TaskEvent[], defs: readonly St
     rounds: [...rounds.values()].map((r) => ({ round: r.round, items: r.items })),
     summary,
     activeStepId,
-    lastSeq: last?.seq ?? 0,
+    lastSeq,
   };
 }
