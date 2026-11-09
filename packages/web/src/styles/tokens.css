@@ -1,0 +1,174 @@
+/*
+ * 设计 token：整个界面的颜色、字号、间距、圆角、阴影、状态色都从这里取。
+ *
+ * - 浅色是 :root 的取值，深色由 App 写到 <html data-theme="dark"> 后覆盖同名变量；
+ * - antd 组件由 ConfigProvider（见 view/theme.ts）取同一套色值，自定义 CSS 与 antd 组件看起来是一体的；
+ * - 旧变量名（--primary、--danger、--warn、--info、--line、--card、--muted、--hover…）保持可用：
+ *   设置页、员工配置页、知识库页的内联样式在用它们，改值不改名，这些页面自然吃到新的取值。
+ * - 字号由设置页写入 --font-size（默认 14px），文字大小都用 --fs-* 相对它取，调字号时整体等比。
+ */
+:root {
+  color-scheme: light;
+
+  /* ---- 品牌色：一个克制的青绿色 ---- */
+  --primary: #1a7f67;
+  --primary-hover: #15705a;
+  --primary-soft: #e6f4f0;
+  --primary-ring: rgba(26, 127, 103, 0.28);
+  --on-primary: #ffffff;
+
+  /* ---- 表面与文字 ---- */
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --card-2: #fafafb;
+  --hover: #eef0f3;
+  --press: #e6e9ed;
+  --line: #e5e7eb;
+  --line-strong: #d3d7de;
+  --text: #1a2230;
+  --text-2: #475161;
+  --muted: #667180;
+
+  /* ---- 状态语义色（运行中 / 等你处理 / 已完成 / 出错 / 空闲）：fg 文字与图标，soft 底色，dot 圆点与细条 ---- */
+  --tone-running: #2563d6;
+  --tone-running-soft: #e9f0fd;
+  --tone-waiting: #a9500a;
+  --tone-waiting-soft: #fdf1e1;
+  --tone-done: #157347;
+  --tone-done-soft: #e4f5ec;
+  --tone-error: #c42b33;
+  --tone-error-soft: #fdecec;
+  --tone-idle: #667180;
+  --tone-idle-soft: #eff1f4;
+  --dot-running: #3b78f0;
+  --dot-waiting: #e8831f;
+  --dot-done: #22a06b;
+  --dot-error: #e5484d;
+  --dot-idle: #a3acb9;
+
+  /* ---- 兼容旧变量名 ---- */
+  --danger: var(--tone-error);
+  --danger-soft: var(--tone-error-soft);
+  --danger-border: #f1c3c5;
+  --warn: var(--tone-waiting);
+  --warn-soft: var(--tone-waiting-soft);
+  --warn-border: #f2d3a8;
+  --info: var(--tone-running);
+  --dot-default: var(--dot-idle);
+  --muted-border: var(--line-strong);
+  --bubble: #f1f3f5;
+  --bubble-me: #e3f2ee;
+  --avatar-bg: #d9efe8;
+  --avatar-bg-2: #e3ebff;
+  --chip-bg: #ffffff;
+  --chip-border: #bfe0d6;
+  --chip-text: #17705b;
+  --trace-bg: #fafbfc;
+  --doc-frame: #eceff3;
+  --ph-line: #e9edf1;
+  --bar: #3aa58a;
+
+  /* ---- 阴影与焦点 ---- */
+  --shadow: rgba(15, 23, 42, 0.07);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-pop: 0 8px 24px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.04);
+  --focus-shadow: rgba(26, 127, 103, 0.14);
+
+  /* ---- 字号：--font-size 是设置页的正文字号，其余相对它 ---- */
+  --font-size: 14px;
+  --fs-xs: calc(var(--font-size) - 3px);
+  --fs-sm: calc(var(--font-size) - 2px);
+  --fs-md: calc(var(--font-size) - 1px);
+  --fs-base: var(--font-size);
+  --fs-lg: calc(var(--font-size) + 2px);
+  --fs-xl: calc(var(--font-size) + 6px);
+  --font-sans: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Cascadia Mono", monospace;
+  --lh-tight: 1.35;
+  --lh-body: 1.65;
+
+  /* ---- 间距（4px 栅格） ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+
+  /* ---- 圆角 ---- */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* ---- 版式 ---- */
+  --sidebar-w: 264px;
+  --thread-w: 800px;
+  --head-h: 56px;
+}
+
+/*
+ * 深色：主题解析后由 App 写到 <html data-theme="dark">。
+ * 保证新对话、会话 + 轨迹、任务面板、员工配置、设置页都没有刺眼白块。
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --primary: #3fb596;
+  --primary-hover: #58c6a9;
+  --primary-soft: #12352d;
+  --primary-ring: rgba(63, 181, 150, 0.4);
+  --on-primary: #06241d;
+
+  --bg: #0e1216;
+  --card: #161b22;
+  --card-2: #1a2028;
+  --hover: #1e252e;
+  --press: #262e38;
+  --line: #262e38;
+  --line-strong: #36404c;
+  --text: #e6ebf1;
+  --text-2: #b3bdc9;
+  --muted: #8b98a7;
+
+  --tone-running: #7fb0ff;
+  --tone-running-soft: #15233f;
+  --tone-waiting: #f2b76e;
+  --tone-waiting-soft: #3a2a14;
+  --tone-done: #5fd09a;
+  --tone-done-soft: #11301f;
+  --tone-error: #ff908c;
+  --tone-error-soft: #3c1d20;
+  --tone-idle: #9aa7b5;
+  --tone-idle-soft: #232a33;
+  --dot-running: #5b93f5;
+  --dot-waiting: #e89a3c;
+  --dot-done: #3cba7e;
+  --dot-error: #f0605f;
+  --dot-idle: #5e6a78;
+
+  --danger-border: #6a3135;
+  --warn-border: #66481f;
+  --bubble: #232c36;
+  --bubble-me: #14382f;
+  --avatar-bg: #12352d;
+  --avatar-bg-2: #1c2a45;
+  --chip-bg: #1a2028;
+  --chip-border: #2f5c4f;
+  --chip-text: #6fd0b4;
+  --trace-bg: #131820;
+  --doc-frame: #0b0f13;
+  --ph-line: #262e38;
+  --bar: #3fb596;
+
+  --shadow: rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --focus-shadow: rgba(63, 181, 150, 0.22);
+}

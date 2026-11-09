@@ -1,0 +1,248 @@
+/* 基础：重置、外框版式、焦点环、通用小件（状态胶囊、状态点、空状态块）。颜色与尺寸都取自 tokens.css。 */
+
+/* 少数页面（设置页等，不在重排范围）仍用内联浅色底，按 React 序列化后的内联值统一改写，避免深色模式下出现刺眼白块。 */
+:root[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
+:root[data-theme="dark"] [style*="background: rgb(247, 248, 250)"],
+:root[data-theme="dark"] [style*="background: rgb(245, 247, 249)"],
+:root[data-theme="dark"] [style*="background: rgb(238, 241, 244)"] {
+  background: var(--card) !important;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--font-size);
+  font-family: var(--font-sans);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+::selection {
+  background: var(--primary-ring);
+}
+
+/* 键盘焦点：统一的主色环；鼠标点击不出环 */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+[role="option"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* ---------- 外框：左栏 | 中栏 | 右栏 ---------- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 360px;
+  gap: var(--sp-2);
+  height: 100%;
+  padding: var(--sp-2);
+}
+/* 审核时右栏加宽到一半左右 */
+.shell.wide {
+  --sidebar-w: 236px;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 48vw;
+}
+.shell.no-panel {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+/* 窄窗口：右栏收成抽屉，左栏也收窄 */
+.shell.narrow {
+  --sidebar-w: 236px;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+}
+@media (max-width: 760px) {
+  .shell,
+  .shell.narrow {
+    --sidebar-w: 208px;
+  }
+}
+.col {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.surface {
+  background: var(--card);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+}
+
+/* 弱化的说明文字；设置页、知识库页也在用 */
+.chat-sub {
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+
+/* ---------- 状态点：运行中 / 等你处理 / 已完成 / 出错 / 空闲 ---------- */
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+  background: var(--dot-idle);
+}
+.dot.running,
+.dot.processing {
+  background: var(--dot-running);
+}
+.dot.waiting,
+.dot.warning {
+  background: var(--dot-waiting);
+}
+.dot.done,
+.dot.success {
+  background: var(--dot-done);
+}
+.dot.error {
+  background: var(--dot-error);
+}
+.dot.idle,
+.dot.default {
+  background: var(--dot-idle);
+}
+/* 运行中的点轻轻呼吸，一眼看出还在跑 */
+.dot.running,
+.dot.processing {
+  animation: dot-breathe 1.8s ease-in-out infinite;
+}
+@keyframes dot-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.running,
+  .dot.processing {
+    animation: none;
+  }
+}
+
+/* ---------- 状态胶囊 ---------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 22px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--tone-idle);
+  background: var(--tone-idle-soft);
+}
+.pill[data-tone="running"] {
+  color: var(--tone-running);
+  background: var(--tone-running-soft);
+}
+.pill[data-tone="waiting"] {
+  color: var(--tone-waiting);
+  background: var(--tone-waiting-soft);
+}
+.pill[data-tone="done"] {
+  color: var(--tone-done);
+  background: var(--tone-done-soft);
+}
+.pill[data-tone="error"] {
+  color: var(--tone-error);
+  background: var(--tone-error-soft);
+}
+.pill .dot {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+}
+
+/* ---------- 空状态 / 加载 / 出错：图标 + 一句标题 + 一句说明 + 操作 ---------- */
+.state-block {
+  margin: auto;
+  max-width: 420px;
+  padding: var(--sp-8) var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: center;
+  color: var(--muted);
+}
+.state-block.compact {
+  padding: var(--sp-5) var(--sp-3);
+  gap: 6px;
+}
+.state-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-xl);
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  color: var(--tone-idle);
+  background: var(--tone-idle-soft);
+}
+.state-block.compact .state-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-lg);
+  font-size: 17px;
+}
+.state-block[data-tone="brand"] .state-icon {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.state-block[data-tone="waiting"] .state-icon {
+  color: var(--tone-waiting);
+  background: var(--tone-waiting-soft);
+}
+.state-block[data-tone="error"] .state-icon {
+  color: var(--tone-error);
+  background: var(--tone-error-soft);
+}
+.state-title {
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+.state-block.compact .state-title {
+  font-size: var(--fs-base);
+}
+.state-desc {
+  font-size: var(--fs-md);
+}
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.state-skeleton {
+  width: min(520px, 100%);
+  margin: var(--sp-8) auto;
+  padding-inline: var(--sp-6);
+}
+
+.placeholder-page {
+  margin: auto;
+  text-align: center;
+  color: var(--muted);
+}

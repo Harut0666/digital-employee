@@ -24,6 +24,7 @@ import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
 import { latestTaskId, pastTaskIds } from "./view/task-runs";
 import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
+import { antdTheme } from "./view/theme";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
@@ -490,13 +491,9 @@ function ThemedShell({ roleRef, api, settingsApi }: { roleRef: { current: UiRole
     <ConfigProvider
       locale={zhCN}
       theme={{
-        // 主题按解析后的实际值切换（`system` 已由 provider 跟随系统偏好解析）
+        // 主题按解析后的实际值切换（`system` 已由 provider 跟随系统偏好解析）；色值与 styles/tokens.css 一致
         algorithm: resolvedTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
-        token: {
-          colorPrimary: resolvedTheme === "dark" ? "#37A98C" : "#1F8A70",
-          borderRadius: 10,
-          fontSize: ui.fontSize,
-        },
+        ...antdTheme(resolvedTheme === "dark" ? "dark" : "light", ui.fontSize),
       }}
       button={{ autoInsertSpace: false }}
     >
