@@ -1,0 +1,192 @@
+/* 轨迹详情（对话框顶部，只读）：按轮次与步骤的工具调用、模型轮次、质检。 */
+
+/* ---------- 轨迹（对话框顶部，只读） ---------- */
+.trace {
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--trace-bg);
+  min-width: 0;
+}
+.trace-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 20px;
+  cursor: pointer;
+  user-select: none;
+  font-size: calc(var(--font-size) - 1px);
+  color: var(--text-2);
+  min-width: 0;
+}
+.trace-head:hover {
+  background: var(--hover);
+}
+.trace-head.static {
+  cursor: default;
+}
+.trace-head.static:hover {
+  background: transparent;
+}
+.trace-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text);
+  flex: none;
+}
+.trace-summary {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.trace-live {
+  color: var(--info);
+  flex: none;
+}
+.trace-arrow {
+  color: var(--muted);
+  flex: none;
+}
+.trace-body {
+  max-height: 280px;
+  overflow: auto;
+  padding: 2px 20px 10px;
+}
+.trace-empty {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  padding: 6px 0;
+}
+.trace-round + .trace-round {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.trace-round-label {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  margin: 2px 0 4px;
+}
+.trace-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: calc(var(--font-size) - 1px);
+  min-width: 0;
+}
+.trace-row.expandable {
+  cursor: pointer;
+}
+.trace-row.expandable:hover .trace-label {
+  color: var(--primary);
+}
+.trace-row.failed .trace-label {
+  color: var(--danger);
+}
+.trace-row.pending {
+  opacity: 0.6;
+}
+.trace-caret {
+  width: 12px;
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 3px);
+  flex: none;
+  display: inline-flex;
+  justify-content: center;
+}
+.trace-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.trace-tag {
+  margin: 0;
+  font-size: calc(var(--font-size) - 3px);
+  line-height: 18px;
+  padding-block: 0;
+}
+.trace-dur {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  margin-left: auto;
+  flex: none;
+}
+.trace-error {
+  color: var(--danger);
+  font-size: calc(var(--font-size) - 2px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-detail {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.trace-children {
+  margin: 0 0 4px 20px;
+  padding-left: 12px;
+  border-left: 1px dashed var(--line);
+}
+.trace-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: calc(var(--font-size) - 2px);
+  color: var(--text-2);
+  min-width: 0;
+}
+.trace-child-icon {
+  color: var(--muted);
+  flex: none;
+  display: inline-flex;
+}
+.trace-child.failed .trace-child-icon {
+  color: var(--danger);
+}
+.trace-child-label {
+  white-space: nowrap;
+}
+.trace-child-meta {
+  color: var(--muted);
+  flex: none;
+}
+.trace-child-error {
+  color: var(--danger);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-child-detail {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+
+
+/* 从对话里的步骤行点进来的那一步：轨迹详情里高亮（T43） */
+.trace-row.focused {
+  background: var(--hover);
+  border-radius: var(--r-sm);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+/* 模型输出增量正在写入（T43） */
+.trace-child-caret {
+  flex: none;
+  width: 6px;
+  height: 12px;
+  background: var(--tone-running);
+  animation: caret-blink 1s steps(2, start) infinite;
+}

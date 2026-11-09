@@ -29,7 +29,7 @@ export function FormCard({ item, session }: { item: Extract<ChatItem, { kind: "f
   return (
     <div className={`card ${submitted ? "" : "muted"}`}>
       <div className="card-title">
-        <FileTextOutlined style={{ color: "var(--primary)" }} /> {submitted ? "任务表单" : `${employee ? `${employee.name} · ` : ""}旧版表单草稿（已不再使用）`}
+        <FileTextOutlined /> {submitted ? "任务表单" : `${employee ? `${employee.name} · ` : ""}旧版表单草稿（已不再使用）`}
       </div>
       {submitted && (
         <>

@@ -5,6 +5,15 @@
 // 分组也只照后端给的 workspaceId / group，前端不自己判断会话归哪个工作区、任务归哪组。
 
 import type { RecordGroup, RecordItem, SessionSummary, WorkspaceInfo } from "../api/types";
+import type { WorkspaceList } from "../api/workspaces";
+
+/** 工作区列表 → 全部会话：各工作区自带的加上末尾的未归属。 */
+export function flattenSessions(list: WorkspaceList | undefined): SessionSummary[] {
+  if (!list) return [];
+  const known = new Set(list.workspaces.map((w) => w.id));
+  const owned = list.workspaces.flatMap((w) => w.sessions ?? []);
+  return [...owned, ...(list.unassigned ?? []).filter((s) => !known.has(s.workspaceId))];
+}
 
 export interface DotView {
   dot: "warning" | "processing" | "success" | "default";

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, ConfigProvider, Drawer, theme } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
-import { LeftOutlined } from "@ant-design/icons";
+import { ExclamationCircleOutlined, LeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
 import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type PermissionMode, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
@@ -10,7 +10,9 @@ import { createWorkspaces } from "./api";
 import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask, usePastRuns } from "./hooks/data";
 import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
-import { flattenSessions, Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
+import { Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
+import { AddWorkspaceModal } from "./components/AddWorkspaceModal";
+import { LoadingBlock, StateBlock } from "./components/StateBlock";
 import { NewConversation, SessionChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
@@ -24,6 +26,8 @@ import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
 import { latestTaskId, pastTaskIds } from "./view/task-runs";
 import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
+import { antdTheme } from "./view/theme";
+import { newChatTarget, startWorkspaceId } from "./view/new-chat";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
@@ -64,6 +68,8 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     }),
     [api, workspaceState.list],
   );
+  /** “添加工作区”弹窗：侧栏的按钮和新对话页的空状态都从这里打开 */
+  const [addWorkspace, setAddWorkspace] = useState<{ open: boolean; hint?: string }>({ open: false });
   const panelRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   /** 材料有变化（确认目录文件、上传）时让 @ 选择重读目录 */
@@ -165,9 +171,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
 
   const startConversation = async (text: string, model?: ModelRef): Promise<boolean> => {
     try {
-      // 新对话开在哪个工作区：从选中的“新对话”或第一个登记的工作区来；
+      // 新对话开在哪个工作区：选中的“新对话”带着的，没有就取默认（只有一个可用工作区时就是它）；
       // 还没读到登记时交服务端取唯一的工作区（单目录模式）
-      const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
+      const targetWorkspace = startWorkspaceId(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined);
       // 新对话页选的模型随建会话发出（T45）：这个会话从第一句话起就用它
       const created = await api.createSession(targetWorkspace, model);
       // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现
@@ -249,7 +255,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   // 人确认即开工；样例材料从应用目录取，不写进人的工作目录
   const loadSample = async () => {
     try {
-      const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
+      const targetWorkspace = startWorkspaceId(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined);
       const created = await api.createSession(targetWorkspace);
       const res = await api.loadSampleForm(created.id);
       setSelection({ kind: "session", id: created.id });
@@ -325,10 +331,30 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         onSample={() => void loadSample()}
         modelOptions={modelOptions}
         defaultModel={lastModel}
+        target={newChatTarget(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined)}
+        onChangeWorkspace={(workspaceId) => setSelection({ kind: "new", workspaceId })}
+        onAddWorkspace={() => setAddWorkspace({ open: true })}
       />
     );
   } else if (!detail) {
-    center = <div className="welcome" style={{ paddingTop: 48, color: "var(--muted)" }}>{session.error ?? "正在读取会话…"}</div>;
+    center = session.error ? (
+      <StateBlock
+        tone="error"
+        icon={<ExclamationCircleOutlined />}
+        title="读不出这个会话"
+        description={session.error}
+        actions={
+          <>
+            <Button type="primary" icon={<ReloadOutlined />} onClick={() => session.reload()}>
+              重试
+            </Button>
+            <Button onClick={() => setSelection({ kind: "new" })}>回到新对话</Button>
+          </>
+        }
+      />
+    ) : (
+      <LoadingBlock label="正在读取会话" />
+    );
   } else {
     center = (
       <SessionChat
@@ -424,6 +450,18 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         groups={recordsState.groups}
         error={workspaceState.error ?? (sidebarTab === "records" ? recordsState.error : undefined)}
         onStartChat={(workspaceId) => setSelection({ kind: "new", workspaceId })}
+        onAddWorkspace={(hint) => setAddWorkspace({ open: true, hint })}
+      />
+      <AddWorkspaceModal
+        open={addWorkspace.open}
+        hint={addWorkspace.hint}
+        api={workspaceApi}
+        onClose={() => setAddWorkspace({ open: false })}
+        onCreated={(created) => {
+          refreshSidebar();
+          // 正停在新对话页（比如“先添加工作区”的引导）：添加后新对话就开在它下面
+          if (selection.kind === "new") setSelection({ kind: "new", workspaceId: created.id });
+        }}
       />
       <div className="col surface chat">{center}</div>
       {columnPanel && (
@@ -490,13 +528,9 @@ function ThemedShell({ roleRef, api, settingsApi }: { roleRef: { current: UiRole
     <ConfigProvider
       locale={zhCN}
       theme={{
-        // 主题按解析后的实际值切换（`system` 已由 provider 跟随系统偏好解析）
+        // 主题按解析后的实际值切换（`system` 已由 provider 跟随系统偏好解析）；色值与 styles/tokens.css 一致
         algorithm: resolvedTheme === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
-        token: {
-          colorPrimary: resolvedTheme === "dark" ? "#37A98C" : "#1F8A70",
-          borderRadius: 10,
-          fontSize: ui.fontSize,
-        },
+        ...antdTheme(resolvedTheme === "dark" ? "dark" : "light", ui.fontSize),
       }}
       button={{ autoInsertSpace: false }}
     >
@@ -545,7 +579,7 @@ export function App() {
   }, [queryRole, settingsApi]);
 
   if (!roleReady) {
-    return <div style={{ padding: 24, color: "#888" }}>正在读取默认角色与审批策略…</div>;
+    return <div className="boot-note" role="status">正在读取默认角色与审批策略…</div>;
   }
 
   return (

@@ -167,6 +167,8 @@ export function createMockSessions(
   const taskSeqs = new Map<string, number>();
   /** 打开过的旧任务会话（旧任务推导出的会话没有会话日志） */
   const legacyRead = new Set<string>();
+  /** 旧任务推导出的只读会话可以归档（不能重命名、发消息、选模型） */
+  const legacyArchived = new Set<string>();
   let counter = 0;
   // 和 Go 一样：选过的模型记在设置里，新会话沿用
   let lastModel: ModelRef = MOCK_DEFAULT_MODEL;
@@ -634,7 +636,7 @@ export function createMockSessions(
       waitingFor: task.waitingFor,
       statusDot: dotOf(getRole(), status, task.state, unread),
       unread,
-      archived: false,
+      archived: legacyArchived.has(task.id),
       permissionMode: "ask",
       workspaceName: WORKSPACE_NAMES[workspaceId] ?? "",
       messages: [],
@@ -705,7 +707,7 @@ export function createMockSessions(
       const legacy = workspaceId
         ? []
         : await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
-      const all: SessionSummary[] = [...own, ...legacy.map(({ messages: _m, ...rest }) => rest)];
+      const all: SessionSummary[] = [...own, ...legacy.filter((s) => options?.archived || !s.archived).map(({ messages: _m, ...rest }) => rest)];
       return all.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     },
 
@@ -728,6 +730,14 @@ export function createMockSessions(
     },
 
     async updateSession(id, patch) {
+      if (id.startsWith(LEGACY) && "archived" in patch) {
+        const task = (await tasks.listTasks()).find((t) => `${LEGACY}${t.id}` === id);
+        if (!task) throw new Error("会话不存在");
+        if (patch.archived === true) legacyArchived.add(task.id);
+        else legacyArchived.delete(task.id);
+        const { messages: _m, ...summary } = await legacyDetail(task);
+        return summary;
+      }
       const s = writable(id);
       if (isFailure(s)) throw new Error(!s.ok ? s.message : "操作被拒绝");
       if ("archived" in patch) {

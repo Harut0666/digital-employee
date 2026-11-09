@@ -158,8 +158,9 @@ export function PauseCard({ item, actions }: { item: Extract<ChatItem, { kind: "
   const operator = !item.actions.some((a) => a.roles.includes("initiator")) && actions.waitingFor.includes("operator");
   return (
     <div className={`card ${operator ? "danger" : "warn"}`}>
-      <div className="card-title" style={{ color: operator ? "var(--danger)" : "var(--warn)" }}>
+      <div className="card-title">
         <ExclamationCircleFilled /> {title}
+        <span className="pill" data-tone={operator ? "error" : "waiting"}>{operator ? "需要操作员" : "等你处理"}</span>
       </div>
       <div className="card-body">{pause?.message}</div>
       {pause?.resolution && <div className="card-body">{pause.resolution}</div>}
@@ -179,7 +180,7 @@ export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
   const bad = item.checks.filter((c) => !c.passed);
   return (
     <div className={`card ${item.passed ? "ok" : "danger"}`}>
-      <div className="card-title" style={{ color: item.passed ? "var(--primary)" : "var(--danger)" }}>
+      <div className="card-title">
         {item.passed ? <CheckCircleFilled /> : <CloseCircleFilled />}
         {item.passed ? "质检通过" : "质检未通过"}
       </div>
@@ -198,8 +199,8 @@ export function ReviewNoticeCard({ item, actions }: { item: Extract<ChatItem, { 
   const reviewer = actions.waitingFor.includes(actions.role);
   return (
     <div className={`card ${outOfScope ? "warn" : ""}`}>
-      <div className="card-title" style={outOfScope ? { color: "var(--warn)" } : undefined}>
-        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined style={{ color: "var(--info)" }} />}
+      <div className="card-title">
+        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined />}
         {outOfScope ? pause.title : "交付物写好了，请在右侧审核"}
       </div>
       {outOfScope && <div className="card-body">{pause.message}</div>}
@@ -228,7 +229,7 @@ export function ReturnConfirmCard({ item, actions }: { item: Extract<ChatItem, {
   return (
     <div className="card">
       <div className="card-title">
-        <RollbackOutlined style={{ color: "var(--warn)" }} /> 确认退回意见
+        <RollbackOutlined /> 确认退回意见
         <span className="chat-sub" style={{ fontWeight: 400, marginLeft: "auto" }}>{clock(item.ts)}</span>
       </div>
       {mine ? (
@@ -289,7 +290,7 @@ export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kin
   const linkProps = useLinkProps();
   return (
     <div className="card ok">
-      <div className="card-title" style={{ color: "var(--primary)" }}>
+      <div className="card-title">
         <CheckCircleFilled /> 已交付{item.run ? `（第 ${item.run} 次运行）` : ""}
       </div>
       <div className="card-actions">
@@ -307,8 +308,7 @@ export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kin
 export function PastRunSteps({ item }: { item: Extract<ChatItem, { kind: "past_steps" }> }) {
   return (
     <div className="past-run">
-      <div className="notice">第 {item.run} 次运行的步骤</div>
-      <StepList rows={item.rows} onOpen={() => {}} />
+      <StepList rows={item.rows} onOpen={() => {}} title={`第 ${item.run} 次运行的步骤`} defaultOpen={false} />
     </div>
   );
 }
@@ -335,7 +335,7 @@ export function UseFileCard({ item, actions, session }: { item: Extract<ChatItem
   return (
     <div className="card">
       <div className="card-title">
-        <FileTextOutlined style={{ color: "var(--primary)" }} /> 使用目录文件
+        <FileTextOutlined /> 使用目录文件
       </div>
       <div className="card-body">
         <b>{item.name}</b>
@@ -380,8 +380,9 @@ export function PermissionCard({ item, actions, session }: { item: Extract<ChatI
   };
   return (
     <div className="card warn permission-card">
-      <div className="card-title" style={{ color: "var(--warn)" }}>
+      <div className="card-title">
         <SafetyCertificateOutlined /> 权限确认：{item.actionLabel}
+        <span className="pill" data-tone="waiting">{item.canAnswer ? "等你决定" : "等待发起人"}</span>
       </div>
       <div className="card-body">
         Agent 想{item.actionLabel}

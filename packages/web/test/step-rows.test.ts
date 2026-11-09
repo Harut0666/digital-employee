@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { deriveStepRows } from "../src/view/step-rows";
+import { deriveStepRows, stepProgress } from "../src/view/step-rows";
 import { seqOf, type EventInput } from "./helpers";
 
 // 步骤定义带业务说法（工作流配置里的 activity）：对话里的步骤行说人话。
@@ -125,5 +125,29 @@ describe("deriveStepRows：运行中、失败与重做", () => {
     const rows = deriveStepRows([], DEFS);
     expect(rows).toHaveLength(5);
     expect(rows.every((row) => row.status === "pending")).toBe(true);
+  });
+});
+
+describe("stepProgress：折叠头上的进度概述", () => {
+  const row = (id: string, status: "pending" | "running" | "done" | "failed" | "skipped") => ({ id, label: id, kind: "compute" as const, status });
+
+  test("进行中：已完成几步，有一步在跑", () => {
+    const progress = stepProgress([row("a", "done"), row("b", "running"), row("c", "pending")]);
+    expect(progress).toMatchObject({ total: 3, done: 1, running: 1, failed: 0, tone: "running", finished: false, label: "已完成 1/3 步" });
+  });
+
+  test("失败的步数写进概述，状态是出错", () => {
+    const progress = stepProgress([row("a", "done"), row("b", "failed")]);
+    expect(progress.tone).toBe("error");
+    expect(progress.label).toBe("已完成 1/2 步，1 步失败");
+  });
+
+  test("全部完成（跳过的可选步骤也算）：收起", () => {
+    const progress = stepProgress([row("a", "done"), row("b", "skipped")]);
+    expect(progress).toMatchObject({ done: 2, finished: true, tone: "done" });
+  });
+
+  test("没有步骤", () => {
+    expect(stepProgress([])).toMatchObject({ total: 0, finished: false, tone: "idle" });
   });
 });

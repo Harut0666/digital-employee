@@ -1,8 +1,25 @@
-import { Prompts, Sender, Welcome } from "@ant-design/x";
+import { Sender } from "@ant-design/x";
 import type { SenderRef } from "@ant-design/x/es/sender/interface";
-import { Alert, Button, Collapse, Dropdown, Tag, Typography } from "antd";
-import { DownOutlined, FolderOpenOutlined, RobotOutlined, SafetyCertificateOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
-import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, CloseCircleFilled, LoadingOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
+import { Alert, Button, Collapse, Dropdown, Tooltip, Typography } from "antd";
+import {
+  BranchesOutlined,
+  CaretDownOutlined,
+  CaretRightOutlined,
+  CheckCircleFilled,
+  CloseCircleFilled,
+  DownOutlined,
+  FolderAddOutlined,
+  FolderOutlined,
+  LoadingOutlined,
+  LockOutlined,
+  MessageOutlined,
+  RobotOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
+  StopOutlined,
+  ToolOutlined,
+  UserOutlined,
+} from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { ModelConnectionOption, ModelRef, PermissionMode, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
@@ -14,45 +31,40 @@ import { deriveStages } from "../view/stages";
 import { deriveStepRows } from "../view/step-rows";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
+import { composerView, enterHint, STARTERS, type Starter } from "../view/composer";
+import { stateTone } from "../view/session-row";
+import type { NewChatTarget } from "../view/new-chat";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
 import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
 import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
 import { StepList } from "./StepList";
 import { StageBar } from "./StageBar";
+import { StateBlock } from "./StateBlock";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
 import { enterAction } from "../pages/settings/preferences";
 
-const STATE_COLOR: Record<TaskState, string> = {
-  draft: "default",
-  admission: "processing",
-  awaiting_initiator: "orange",
-  running: "processing",
-  qc: "processing",
-  awaiting_operator: "red",
-  awaiting_review: "blue",
-  delivered: "green",
-  terminated: "default",
-};
-
-export function StateTag({ state }: { state: TaskState }) {
+/** 对话顶部的状态胶囊：任务状态，语义色与侧栏状态点一致 */
+export function StatusPill({ state }: { state: TaskState }) {
+  const tone = stateTone(state);
   return (
-    <Tag color={STATE_COLOR[state]} variant="filled" style={{ margin: 0, fontSize: 13 }}>
+    <span className="pill" data-tone={tone}>
+      <span className={`dot ${tone}`} aria-hidden />
       {STATE_LABELS[state]}
-    </Tag>
+    </span>
   );
 }
-
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 /** 一轮里的一次工具调用：默认折成一行，点开看参数和结果 */
 function ToolCalls({ items }: { items: AgentToolView[] }) {
+  const busy = items.some((t) => !t.ended);
   return (
     <Collapse
       className="tool-calls"
       size="small"
       bordered={false}
-      defaultActiveKey={items.some((t) => !t.ended) ? ["tools"] : []}
+      defaultActiveKey={busy ? ["tools"] : []}
       expandIconPosition="start"
       expandIcon={({ isActive }) => (isActive ? <CaretDownOutlined /> : <CaretRightOutlined />)}
       items={[
@@ -60,7 +72,7 @@ function ToolCalls({ items }: { items: AgentToolView[] }) {
           key: "tools",
           label: (
             <span className="tool-calls-label">
-              <ToolOutlined /> 调用了 {items.length} 次工具{items.some((t) => !t.ended) ? "，还没结束" : ""}
+              {busy ? <LoadingOutlined /> : <ToolOutlined />} 调用了 {items.length} 次工具{busy ? "，还没结束" : ""}
             </span>
           ),
           children: (
@@ -97,7 +109,7 @@ function brief(value: unknown): string {
 function StreamingMessage({ text, running }: { text: string; running: boolean }) {
   return (
     <div className="msg-row">
-      <div className="msg-avatar">
+      <div className="msg-avatar" aria-hidden>
         <RobotOutlined />
       </div>
       <div className="msg-col">
@@ -113,27 +125,32 @@ function StreamingMessage({ text, running }: { text: string; running: boolean })
 function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }> }) {
   const me = item.kind === "user";
   // 不是发起人说的话，标出是谁说的（审核人、操作员也会在对话里说话）
-  const who = me && item.role && item.role !== "initiator" ? `${ROLE_LABELS[item.role]} · ` : "";
+  const other = me && item.role && item.role !== "initiator" ? item.role : undefined;
   return (
     <div className={`msg-row ${me ? "me" : ""}`}>
-      <div className="msg-avatar">{me ? <UserOutlined /> : <RobotOutlined />}</div>
-      <div className="msg-col">
-        <div className="bubble">{item.text}</div>
-        <div className="msg-time">
-          {who}
-          {clock(item.ts)}
+      {/* 发起人自己的话靠右、不带头像；员工的话带头像，不套气泡框 */}
+      {!me && (
+        <div className="msg-avatar" aria-hidden>
+          <RobotOutlined />
         </div>
+      )}
+      <div className="msg-col">
+        {other && (
+          <div className="msg-who">
+            <UserOutlined /> {ROLE_LABELS[other]}
+          </div>
+        )}
+        <div className="bubble">{item.text}</div>
+        <div className="msg-time">{clock(item.ts)}</div>
       </div>
     </div>
   );
 }
 
 /**
- * 输入框：发送立即受理，回复在事件流里逐字出现；失败时保留原文。
- * 右下角是这一轮用的模型（T39）。@ 选目录文件（T41）：选中即视为人已确认。
- * 正在说话时发送键变成“停止”，但输入框里的字照样能发出去——这时发的话排进这一轮，在下一步之前送达。
+ * 输入框右下角的模型下拉（T39）：显示“连接 / 模型”，点开按连接分组列出可选模型。
+ * 没有可用模型时按钮变成提醒色，菜单里给“去设置”入口。
  */
-/** 输入框右下角的模型下拉（T39）：显示“连接 / 模型”，点开按连接分组列出可选模型。 */
 function ModelPicker({
   options,
   current,
@@ -158,7 +175,10 @@ function ModelPicker({
       menu={{
         selectedKeys: picked ? [picked] : [],
         items: empty
-          ? [{ key: "empty", disabled: true, label: "还没有可用的模型：先到设置里配置 Key 并选好模型" }]
+          ? [
+              { key: "empty", disabled: true, label: "还没有可用的模型：先到设置里配置 Key 并选好模型" },
+              { key: "settings", label: "去设置里配置模型连接" },
+            ]
           : [
               ...groups.map((group) => ({ type: "group" as const, key: `group:${group.label}`, label: group.label, children: group.options.map((o) => ({ key: o.value, label: o.label })) })),
               { type: "divider" as const, key: "divider" },
@@ -175,8 +195,8 @@ function ModelPicker({
         },
       }}
     >
-      <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={empty ? "还没有可用的模型" : modelLabel(current)}>
-        {empty ? "选择模型" : modelLabel(current)}
+      <Button size="small" type="text" className={`model-picker ${empty ? "empty" : ""}`} icon={<RobotOutlined />} aria-label="选择模型" title={empty ? "还没有可用的模型" : modelLabel(current)}>
+        <span className="picker-label">{empty ? "未配置模型" : modelLabel(current)}</span>
         <DownOutlined />
       </Button>
     </Dropdown>
@@ -215,17 +235,23 @@ function PermissionModePicker({
         },
       }}
     >
-      <Button size="small" type="text" className="mode-picker" icon={<SafetyCertificateOutlined />} title={permissionHint(current)} disabled={disabled}>
-        {permissionModeLabel(current)}
+      <Button size="small" type="text" className="mode-picker" icon={<SafetyCertificateOutlined />} aria-label="权限模式" title={permissionHint(current)} disabled={disabled}>
+        <span className="picker-label">{permissionModeLabel(current)}</span>
         <DownOutlined />
       </Button>
     </Dropdown>
   );
 }
 
+/**
+ * 输入区：一个圆角容器，上方是文本框，底栏左侧权限模式、右侧模型和发送 / 停止。会话页与新对话页共用。
+ * 发送立即受理，回复在事件流里逐字出现；失败时保留原文。@ 选目录文件（T41）：选中即视为人已确认。
+ * 正在说话时右下角多一个“停止”，但输入框里的字照样能发出去——这时发的话排进这一轮，在下一步之前送达。
+ */
 function ChatInput({
   placeholder,
   disabled,
+  notice,
   modePicker,
   modelPicker,
   folderFiles = [],
@@ -233,9 +259,12 @@ function ChatInput({
   onSend,
   streaming,
   onStop,
+  draft,
 }: {
   placeholder: string;
   disabled?: boolean;
+  /** 输入框上方的明确提示（只读会话） */
+  notice?: React.ReactNode;
   /** 左下角的权限模式下拉（T48） */
   modePicker?: React.ReactNode;
   modelPicker?: React.ReactNode;
@@ -244,10 +273,12 @@ function ChatInput({
   /** 人用 @ 选中的文件：确认作为材料 */
   onUseFolderFile?: (path: string) => Promise<void>;
   onSend: (text: string) => Promise<boolean>;
-  /** 正在说话：右下角换成“停止” */
+  /** 正在说话：右下角多一个“停止” */
   streaming?: boolean;
   /** 点“停止” */
   onStop?: () => Promise<void> | void;
+  /** 示例起点把话填进输入框：nonce 变了就替换一次 */
+  draft?: { text: string; nonce: number };
 }) {
   const { ui } = useUiPreferences();
   const [value, setValue] = useState("");
@@ -257,6 +288,13 @@ function ChatInput({
   const areaRef = useRef<SenderRef>(null);
   const word = folderFiles.length > 0 && onUseFolderFile ? atQuery(value, caret) : undefined;
   const candidates = word === undefined ? [] : filterFolderPaths(folderFiles, word);
+
+  useEffect(() => {
+    if (!draft) return;
+    setValue(draft.text);
+    setCaret(draft.text.length);
+    requestAnimationFrame(() => areaRef.current?.focus?.());
+  }, [draft?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = async (text: string) => {
     const trimmed = text.trim();
@@ -298,62 +336,77 @@ function ChatInput({
   };
 
   return (
-    <div className="chat-foot">
-      {candidates.length > 0 && (
-        <div className="at-picker" role="listbox" aria-label="工作区目录里的文件">
-          {candidates.slice(0, 20).map((path) => (
-            <button key={path} type="button" role="option" aria-selected={false} className="at-picker-item" onClick={() => void pick(path)}>
-              {path}
-            </button>
-          ))}
+    <div className="composer">
+      {notice && (
+        <div className="composer-notice" role="status">
+          <LockOutlined /> <span>{notice}</span>
         </div>
       )}
-      <Sender
-        ref={areaRef}
-        value={value}
-        onChange={(text, event) => {
-          setValue(text);
-          const element = event?.target as HTMLTextAreaElement | undefined;
-          setCaret(element?.selectionStart ?? text.length);
-        }}
-        placeholder={
-          streaming ? "接着说…（会在下一步之前送达）" : folderFiles.length > 0 ? `${placeholder}（输入 @ 选目录里的文件）` : placeholder
-        }
-        // 正在说话时发送键（右下角）是“停止”；loading 是正在发送，骨架由 Sender 自己画
-        loading={sending}
-        suffix={
-          streaming ? (
-            <Button type="primary" className="stop-button" icon={<StopOutlined />} loading={stopping} onClick={() => void stop()}>
-              停止
-            </Button>
-          ) : undefined
-        }
-        disabled={disabled}
-        // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
-        submitType="enter"
-        onSubmit={(text) => void send(text)}
-        onKeyDown={(event) => {
-          const textarea = event.target as HTMLTextAreaElement | null;
-          if (textarea && typeof textarea.selectionStart === "number") setCaret(textarea.selectionStart);
-          if (event.key !== "Enter") return;
-          const ctrl = event.ctrlKey || event.metaKey;
-          // Ctrl/Cmd+Enter 始终发送（两种模式一致）
-          if (ctrl) {
-            event.preventDefault();
-            void send(value);
-            return false;
-          }
-          // 换行模式：拦住 Sender 的 Enter 提交，让 textarea 自己换行
-          if (enterAction(ui.enterBehavior, { shift: event.shiftKey }) === "newline") return false;
-          return undefined;
-        }}
-      />
-      {(modePicker || modelPicker) && (
-        <div className="chat-foot-bar">
-          {modePicker && <div className="chat-foot-left">{modePicker}</div>}
-          {modelPicker}
-        </div>
-      )}
+      <div className="composer-box">
+        {candidates.length > 0 && (
+          <div className="at-picker" role="listbox" aria-label="工作区目录里的文件">
+            <div className="at-picker-title">工作区目录里的文件</div>
+            {candidates.slice(0, 20).map((path) => (
+              <button key={path} type="button" role="option" aria-selected={false} className="at-picker-item" onClick={() => void pick(path)}>
+                {path}
+              </button>
+            ))}
+          </div>
+        )}
+        <Sender
+          ref={areaRef}
+          value={value}
+          onChange={(text, event) => {
+            setValue(text);
+            const element = event?.target as HTMLTextAreaElement | undefined;
+            setCaret(element?.selectionStart ?? text.length);
+          }}
+          placeholder={placeholder}
+          autoSize={{ minRows: 1, maxRows: 8 }}
+          // 发送键挪到底栏右侧（footer），文本框这一行只剩输入
+          suffix={false}
+          loading={sending}
+          disabled={disabled}
+          // Enter 由下面的 onKeyDown 按偏好决定；Sender 默认的 Enter 提交保留给「发送」模式
+          submitType="enter"
+          onSubmit={(text) => void send(text)}
+          onKeyDown={(event) => {
+            const textarea = event.target as HTMLTextAreaElement | null;
+            if (textarea && typeof textarea.selectionStart === "number") setCaret(textarea.selectionStart);
+            if (event.key !== "Enter") return;
+            const ctrl = event.ctrlKey || event.metaKey;
+            // Ctrl/Cmd+Enter 始终发送（两种模式一致）
+            if (ctrl) {
+              event.preventDefault();
+              void send(value);
+              return false;
+            }
+            // 换行模式：拦住 Sender 的 Enter 提交，让 textarea 自己换行
+            if (enterAction(ui.enterBehavior, { shift: event.shiftKey }) === "newline") return false;
+            return undefined;
+          }}
+          footer={(_, { components }) => {
+            const { SendButton, LoadingButton } = components;
+            return (
+              <div className="composer-bar">
+                <div className="composer-bar-left">{modePicker}</div>
+                <div className="composer-bar-right">
+                  {modelPicker}
+                  {streaming && (
+                    <Button className="stop-button" size="small" danger icon={<StopOutlined />} loading={stopping} onClick={() => void stop()} aria-label="停止这一轮">
+                      停止
+                    </Button>
+                  )}
+                  <span className="send-slot" title="发送">
+                    {sending ? <LoadingButton /> : <SendButton />}
+                  </span>
+                </div>
+              </div>
+            );
+          }}
+        />
+      </div>
+      {!disabled && <div className="composer-hint">{enterHint(ui.enterBehavior)}</div>}
     </div>
   );
 }
@@ -430,22 +483,34 @@ export function SessionChat({
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [lastKey, items.length]);
-  const tag = detail.taskState ? <StateTag state={detail.taskState} /> : undefined;
   const showStages = Boolean(detail.taskId);
+  const composer = composerView({
+    readOnly: detail.readOnly,
+    streaming: Boolean(live?.running),
+    hasTask: Boolean(detail.taskId),
+    canMention: detail.status !== "task" && (folderFiles?.length ?? 0) > 0,
+  });
   return (
     <>
       <div className="chat-head">
         <div className="chat-head-main">
           <div className="chat-title">
             <h2 title={detail.title}>{detail.title}</h2>
-            {tag}
+            {detail.taskState && <StatusPill state={detail.taskState} />}
+            {detail.readOnly && (
+              <span className="pill" data-tone="idle" title="由旧任务生成的记录">
+                <LockOutlined /> 只读
+              </span>
+            )}
           </div>
-          {subtitle && <div className="chat-sub">{subtitle}</div>}
+          {subtitle && <div className="chat-sub chat-subtitle">{subtitle}</div>}
         </div>
         {detail.taskId && (
-          <Button type="link" className="trace-toggle" aria-expanded={traceOpen} onClick={() => setTraceOpen(!traceOpen)}>
-            {traceOpen ? "收起轨迹详情" : "轨迹详情"}
-          </Button>
+          <Tooltip title={traceOpen ? "收起轨迹详情" : "查看每一步做了什么"}>
+            <Button type="text" size="small" className="trace-toggle" icon={<BranchesOutlined />} aria-expanded={traceOpen} onClick={() => setTraceOpen(!traceOpen)}>
+              {traceOpen ? "收起轨迹详情" : "轨迹详情"}
+            </Button>
+          </Tooltip>
         )}
         {headerExtra}
       </div>
@@ -468,22 +533,31 @@ export function SessionChat({
           focusStepId={focusedStep}
         />
       )}
-      <div className="chat-body" ref={bodyRef}>
+      <div className="chat-body thread" ref={bodyRef}>
+        {items.length === 0 && (
+          <StateBlock
+            icon={<MessageOutlined />}
+            tone="brand"
+            title={detail.readOnly ? "这条记录里没有对话" : "还没有消息"}
+            description={detail.readOnly ? "它由旧任务生成，只保留任务本身的步骤和交付物。" : "说说要做什么，或者问问员工能帮上什么。"}
+          />
+        )}
         {items.map((item) =>
-        item.kind === "user" || item.kind === "agent" ? (
-          <Message key={item.key} item={item} />
-        ) : item.kind === "tools" ? (
-          <ToolCalls key={item.key} items={item.items} />
-        ) : item.kind === "streaming" ? (
-          <StreamingMessage key={item.key} text={item.text} running={live?.running ?? false} />
-        ) : (
-          renderCard(item, actions, session)
-        ),
-      )}
+          item.kind === "user" || item.kind === "agent" ? (
+            <Message key={item.key} item={item} />
+          ) : item.kind === "tools" ? (
+            <ToolCalls key={item.key} items={item.items} />
+          ) : item.kind === "streaming" ? (
+            <StreamingMessage key={item.key} text={item.text} running={live?.running ?? false} />
+          ) : (
+            renderCard(item, actions, session)
+          ),
+        )}
       </div>
       <ChatInput
-        placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "说说要做什么，或问问员工…"}
-        disabled={detail.readOnly}
+        placeholder={composer.placeholder}
+        disabled={composer.disabled}
+        notice={composer.notice}
         folderFiles={detail.status === "task" ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
         onSend={onSend}
@@ -491,12 +565,13 @@ export function SessionChat({
         modelPicker={
           <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />
         }
-        streaming={!detail.readOnly && Boolean(live?.running)}
+        streaming={composer.showStop}
         onStop={onStop}
       />
     </>
   );
 }
+
 /** 没配 Key 时的首屏提示：说明原因，并给设置入口。 */
 export function PreflightNotice({ preflight, openSettings }: { preflight: PreflightResult | undefined; openSettings: () => void }) {
   if (!preflight || preflight.ok) return null;
@@ -554,11 +629,39 @@ function NewSessionModelPicker({
         },
       }}
     >
-      <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={menu.label}>
-        {menu.label}
+      <Button size="small" type="text" className={`model-picker ${menu.empty ? "empty" : ""}`} icon={<RobotOutlined />} aria-label="选择模型" title={menu.label}>
+        <span className="picker-label">{menu.label}</span>
         <DownOutlined />
       </Button>
     </Dropdown>
+  );
+}
+
+/** 新对话开在哪个工作区：只有一个就写出来，有多个可以更换。 */
+function WorkspaceTarget({ target, onChange }: { target: NewChatTarget; onChange?: (workspaceId: string) => void }) {
+  if (!target.current) return null;
+  const label = (
+    <span className="target-chip">
+      <FolderOutlined /> 工作区：<b>{target.current.name}</b>
+      {target.choices.length > 0 && <DownOutlined />}
+    </span>
+  );
+  if (target.choices.length === 0) return <div className="welcome-target">{label}</div>;
+  return (
+    <div className="welcome-target">
+      <Dropdown
+        trigger={["click"]}
+        menu={{
+          selectedKeys: [target.current.id],
+          items: target.choices.map((choice) => ({ key: choice.id, label: choice.disabled ? `${choice.name}（目录缺失）` : choice.name, disabled: choice.disabled })),
+          onClick: ({ key }) => onChange?.(key),
+        }}
+      >
+        <button type="button" className="target-button" aria-label="更换工作区">
+          {label}
+        </button>
+      </Dropdown>
+    </div>
   );
 }
 
@@ -570,6 +673,9 @@ export function NewConversation({
   role,
   modelOptions,
   defaultModel,
+  target,
+  onChangeWorkspace,
+  onAddWorkspace,
 }: {
   preflight: PreflightResult | undefined;
   openSettings: () => void;
@@ -580,43 +686,70 @@ export function NewConversation({
   /** 新会话沿用的模型（设置的 lastModel）：右下角先显示它，可以有可用模型时换（T39、T45） */
   modelOptions?: readonly ModelConnectionOption[];
   defaultModel?: SessionDetail["model"];
+  /** 新对话开在哪个工作区，或被拦住（先添加工作区） */
+  target?: NewChatTarget;
+  onChangeWorkspace?: (workspaceId: string) => void;
+  onAddWorkspace?: () => void;
 }) {
   // 新对话页选的模型：没换过时显示设置里的 lastModel；换过就是人选的
   const [picked, setPicked] = useState<ModelRef | undefined>();
+  const [draft, setDraft] = useState<{ text: string; nonce: number }>();
   const selected = picked ?? defaultModel;
+  const blocked = target?.blocked;
+  const startWith = (starter: Starter) => {
+    if (starter.action === "sample") onSample();
+    else setDraft({ text: starter.text ?? "", nonce: (draft?.nonce ?? 0) + 1 });
+  };
   return (
     <>
-      <div className="chat-body">
+      <div className="chat-body thread welcome-body">
         <div className="welcome">
+          <div className="welcome-mark" aria-hidden>
+            <RobotOutlined />
+          </div>
+          <h1 className="welcome-title">你好，说说要做什么</h1>
+          <p className="welcome-desc">用一句话说明工作，我来安排合适的员工接手，再帮你备齐材料。</p>
           <PreflightNotice preflight={preflight} openSettings={openSettings} />
-          <Welcome
-            variant="borderless"
-            icon={
-              <div className="welcome-icon">
-                <RobotOutlined />
+          {blocked ? (
+            <StateBlock
+              tone="brand"
+              icon={<FolderAddOutlined />}
+              title="先添加一个工作区"
+              description={
+                blocked.canAdd
+                  ? blocked.reason === "missing"
+                    ? "已登记的工作区目录都找不到了。添加一个可用的目录，才能开始新对话。"
+                    : "工作区就是一个本机目录，对话和文件都放在里面。添加之后才能开始新对话。"
+                  : (blocked.hint ?? "工作区由环境变量指定，不能添加")
+              }
+              actions={
+                blocked.canAdd && (
+                  <Button type="primary" icon={<FolderAddOutlined />} onClick={onAddWorkspace}>
+                    添加工作区
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <>
+              {target && <WorkspaceTarget target={target} onChange={onChangeWorkspace} />}
+              <div className="starters" role="list" aria-label="示例起点">
+                {STARTERS.map((starter) => (
+                  <button key={starter.key} type="button" role="listitem" className="starter" onClick={() => startWith(starter)}>
+                    <span className="starter-title">{starter.title}</span>
+                    <span className="starter-desc">{starter.description}</span>
+                  </button>
+                ))}
               </div>
-            }
-            title="你好，说说要做什么"
-            description="用一句话说明工作，我来安排合适的员工接手，再帮你备齐材料。"
-          />
-          <Prompts
-            wrap
-            style={{ marginTop: 24 }}
-            items={[
-              {
-                key: "sample",
-                icon: <FolderOpenOutlined style={{ color: "#2f6fed" }} />,
-                label: "载入公开样例",
-                description: "把第 44 周的样例数据预填成一张员工表单，确认开工即可看到完整流程",
-              },
-            ]}
-            onItemClick={() => onSample()}
-          />
-          {role !== "initiator" && <p className="chat-sub" style={{ marginTop: 16 }}>当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工表单、让员工开工。</p>}
+            </>
+          )}
+          {role !== "initiator" && <p className="chat-sub welcome-role">当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工表单、让员工开工。</p>}
         </div>
       </div>
       <ChatInput
-        placeholder="例如：帮我出第 44 周的经营周报"
+        placeholder={blocked ? "先添加工作区，再开始对话" : "例如：帮我出第 44 周的经营周报"}
+        disabled={Boolean(blocked)}
+        draft={draft}
         onSend={(text) => onStart(text, picked)}
         modelPicker={
           modelOptions ? (

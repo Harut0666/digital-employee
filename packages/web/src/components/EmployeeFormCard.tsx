@@ -105,7 +105,8 @@ export function EmployeeFormCard({
   return (
     <div className="card form-card employee-form-card">
       <div className="card-title">
-        <TeamOutlined style={{ color: "var(--primary)" }} /> {name} · 员工表单
+        <TeamOutlined /> {name} · 员工表单
+        <span className="pill" data-tone="waiting">{initiator ? "待你确认" : "等待发起人"}</span>
       </div>
       <div className="card-body chat-sub">
         {card.reason ? `${card.reason}。` : ""}
@@ -139,7 +140,7 @@ export function EmployeeFormCard({
       )}
 
       <div className="employee-form-materials">
-        <div className="card-body">材料</div>
+        <div className="card-section-title">材料</div>
         {derived.materials.length === 0 && <div className="card-body chat-sub">还没有材料。</div>}
         {derived.materials.map((m) => (
           <div key={m.name} className="employee-form-material">

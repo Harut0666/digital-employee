@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { RecordItem, SessionSummary } from "../src/api/types";
-import { dotView, groupRecords, groupSessionsByWorkspace, unreadOf, type WorkspaceGroup } from "../src/view/sidebar-tree";
+import { dotView, flattenSessions, groupRecords, groupSessionsByWorkspace, unreadOf, type WorkspaceGroup } from "../src/view/sidebar-tree";
 
 const summary = (id: string, workspaceId: string, patch: Partial<SessionSummary> = {}): SessionSummary =>
   ({
@@ -144,5 +144,16 @@ describe("记录 tab：分组", () => {
     const groups = groupRecords([record("t9", "running", { state: "awaiting_operator" })]);
     expect(groups[0]!.items.map((r) => r.taskId)).toEqual(["t9"]);
     expect(groups[1]!.items).toEqual([]);
+  });
+});
+
+describe("工作区列表 → 全部会话", () => {
+  test("各工作区自带的会话加上未归属；未归属里已被登记的不重复", () => {
+    const a = summary("a", "ws-1");
+    const b = summary("b", "ws-gone");
+    const dup = summary("dup", "ws-1");
+    const list = { readOnly: false, workspaces: [{ ...workspace("ws-1", "我的工作区"), sessions: [a] }], unassigned: [b, dup] };
+    expect(flattenSessions(list).map((s) => s.id)).toEqual(["a", "b"]);
+    expect(flattenSessions(undefined)).toEqual([]);
   });
 });

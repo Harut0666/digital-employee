@@ -139,3 +139,27 @@ export function deriveStepRows(
     return out;
   });
 }
+
+export interface StepProgress {
+  total: number;
+  /** 已完成（含跳过的可选步骤）的步数 */
+  done: number;
+  failed: number;
+  running: number;
+  /** 一句话：已完成 3/7 步（1 步失败） */
+  label: string;
+  tone: "running" | "error" | "done" | "idle";
+  /** 步骤都走完了：默认收起这张列表 */
+  finished: boolean;
+}
+
+/** 步骤行 → 折叠头上的进度概述。 */
+export function stepProgress(rows: readonly StepRow[]): StepProgress {
+  const total = rows.length;
+  const done = rows.filter((r) => r.status === "done" || r.status === "skipped").length;
+  const failed = rows.filter((r) => r.status === "failed").length;
+  const running = rows.filter((r) => r.status === "running").length;
+  const finished = total > 0 && done === total;
+  const tone = failed > 0 ? "error" : running > 0 ? "running" : finished ? "done" : "idle";
+  return { total, done, failed, running, finished, tone, label: `已完成 ${done}/${total} 步${failed > 0 ? `，${failed} 步失败` : ""}` };
+}

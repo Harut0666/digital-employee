@@ -8,6 +8,7 @@ import { actionPlan } from "../view/permissions";
 import { DocxPreview } from "./DocxPreview";
 import { Handoff, ReturnForm, TaskActionBar, type CardActions } from "./Cards";
 import { useLinkProps } from "./Preferences";
+import { StateBlock } from "./StateBlock";
 
 export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | undefined; actions: CardActions }) {
   const [selected, setSelected] = useState<number>();
@@ -28,10 +29,7 @@ export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | un
         <div className="review-head">
           <span className="review-label">交付物</span>
         </div>
-        <div className="review-empty">
-          <InboxOutlined style={{ fontSize: 40 }} />
-          <div>员工完成后，交付物、检验记录和审核操作会显示在这里</div>
-        </div>
+        <StateBlock icon={<InboxOutlined />} title="还没有交付物" description="员工完成后，交付物、检验记录和审核操作会显示在这里。" />
       </div>
     );
   }
