@@ -3,11 +3,11 @@
 > 能接收岗位任务、调用工具产出交付物、交付前接受人工审核的数字员工系统。
 > 工作流程由程序编排，模型只在判断步骤里工作；一个员工一套配置，换配置就换岗位。
 
-首个落地的岗位是**经营周报员工（场景 A）**：发起人在对话里说明要做什么，前台 Agent 判断由哪个员工接手、引导备齐材料，系统依次完成准入校验 → 读取数据 → 计算指标 → 解析纪要 → 匹配异常原因 → 撰写报告 → 生成 Word → 质检（不通过自动修正）→ 等待审核；审核人可通过交付，或退回重做。全流程有事件日志，进程被杀后可从断点恢复。
+首个落地的岗位是**经营周报员工（场景 A）**：发起人在对话里说明要做什么，前台 Agent（一个通用的对话 Agent）从对话和工作区目录的文件里整理出员工的输入，调用员工工具 `run_employee`，弹出一张**员工表单**让发起人核对、补充、确认；确认开工后，系统依次完成准入校验 → 读取数据 → 计算指标 → 解析纪要 → 匹配异常原因 → 撰写报告 → 生成 Word → 质检（不通过自动修正）→ 等待审核；审核人可通过交付，或退回重做。全流程有事件日志，进程被杀后可从断点恢复。
 
-工作区就是电脑上的一个文件夹：会话和任务属于某个工作区，所有工作区同时可用、不用切换；设置、员工和知识库放在应用目录，所有工作区共用（见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)）。
+工作区就是电脑上的一个文件夹：会话和任务属于某个工作区，所有工作区同时可用、不用切换；设置、员工和知识库放在应用目录，所有工作区共用（见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)）。一个会话里可以先后运行多个任务（同一时刻最多一个未结束），交付后会话照常能聊、能换模型、能“再来一版”；前台 Agent 能做什么由输入框左下角的**权限模式**决定（见 [ADR-0007](docs/adr/0007-general-agent-employees-as-tools.md)）。
 
-> **评审/演示**：直接看 [快速开始](#快速开始)——打包一次 exe → 双击启动（浏览器）→ 配模型跑任务。逐项真实模型验收见 [真实模型手动测试指南](docs/manual-test-0006.md)。
+> **评审/演示**：直接看 [快速开始](#快速开始)——打包一次 exe → 双击启动（浏览器）→ 添加自己的模型连接 → 跑任务。逐项真实模型验收见 [真实模型手动测试指南（Spec 0007）](docs/manual-test-0007.md)。
 
 <img src="docs/ui/final/01-welcome.png" alt="欢迎页" width="760">
 
@@ -21,9 +21,13 @@
 - **JSONL 事件日志 + 断点恢复**：每个任务 `events.jsonl` 追加写；重启后重放事件、只重跑未完成步骤；支持命令行回放。
 - **轨迹与步骤行**：对话框顶部固定显示当前任务的执行过程（步骤、工具调用、模型轮次、质检、暂停与重做），折叠成一行摘要，运行中自动展开并跟随最新事件；对话里每个步骤也显示成一行（业务说法、状态、耗时、所用模型），点开定位到轨迹详情。两者都只读，不提供推进操作。
 - **工作区就是目录**：工作区只是名字加一个本机目录，侧栏同时列出所有工作区和它们下面的会话；取消登记只删登记，目录里的文件、会话和任务都保留；设置、员工和知识库存在应用目录，所有工作区共用 —— 见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
-- **会话里选模型**：设置里能从 `{baseUrl}/models` 拉取模型再勾选；输入框右下角按会话选模型，新会话沿用上次选择，任务运行中切换从下一个判断步骤生效；轨迹和步骤行标出每步用的模型。
+- **设置里不预置任何厂商**：全新安装时没有任何模型连接，由人自己“添加连接”（名称、地址、Key，任何 OpenAI 兼容的服务都行），再从 `{baseUrl}/models` 拉取模型并勾选。Key 只来自设置里填写的内容，不会被环境变量覆盖。
+- **会话里选模型**：输入框右下角按会话选模型，新对话页也能选；新会话沿用上次选择；任何状态（含已交付、已终止）都能换，任务运行中切换从下一个判断步骤生效；轨迹和步骤行标出每步用的模型。
+- **通用对话 Agent，员工是它能调用的工具**：前台 Agent 有 `list_files` / `read_file` / `write_file` / `edit_file` 四个文件工具，和 `run_employee`。它把员工需要的字段和材料整理好，弹出**员工表单卡**（标出哪些字段是它预填的、材料来自哪里），人核对后点“确认开工”，或点“不是这个员工”让它换人 —— 取代原来的“确认员工、开工清单、提交”三张卡（见 [ADR-0007](docs/adr/0007-general-agent-employees-as-tools.md)）。
+- **权限模式**：计划 / 询问 / 接受编辑 / 自动 / 放开五档，每个会话各自记住、新会话总是从“询问”开始；管 Agent 写文件、运行员工、把目录文件用作材料要不要先问人，审核、重试、终止、开工清单确认仍然只有人能做（详见下文「前台 Agent、权限模式与员工当工具」）。
+- **一个会话多个任务**：交付或终止后会话继续可用，可以接着聊、换模型、说“再来一版”开第二个任务；侧栏状态点按最新任务算，“记录”里每个任务单独一行。
 - **工具在进程内调用**：Go 主进程直接调用工具，不另起 stdio 子进程；内置故障注入（超时 / 报错 / 非法输出），可现场演示工具故障与重试。
-- **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝。
+- **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝；Agent 的写操作另有权限模式和固定边界（只限工作区目录内，不能写隐藏文件和“交付”“材料”文件夹，没有命令行工具）。
 - **单文件 exe**：把服务端、前端构建产物、员工配置和公开样例打进一个 exe；双击即用，首次启动建应用目录 `%APPDATA%\digital-employee-app`（`DE_APP_DIR` 可改：设置、员工、知识库、会话和任务都在这里），以及默认工作区「我的工作区」（`文档\数字员工`）；端口冲突自动换端口 —— 见[设计文档 §14](docs/design.md)、[ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
 - **原生桌面窗口**：同一个 Go 主进程内嵌服务端，原生窗口（MyGo + 系统 WebView2）只加载本机地址；用 `digital-employee.exe --window` 打开，与浏览器方式共用应用目录 —— 见下文「启动软件」与 [ADR-0004](docs/adr/0004-go-mainline.md)。
 - **Go 后端 + React 前端**：后端 Go（`net/http` + SSE），前端 React/Vite + antd；契约类型在 `internal/contract`（Go 版唯一事实来源），前端用 `packages/core/src/contract` 的 TS 类型，字段名逐字段一致。
@@ -137,7 +141,7 @@ cd D:\program4claude\competition\digital-employee
 
 | 位置 | 内容 |
 |---|---|
-| `settings.json` | 空模板（不含 Key）；在设置页填连接后写入 |
+| `settings.json` | 空模板（没有任何连接、不含 Key）；在设置页“添加连接”后写入 |
 | `employees\` | 默认员工配置（已存在的文件不覆盖） |
 | `samples\` | 公开样例（已存在的文件不覆盖） |
 | `workspaces.json` | 工作区登记；没有任何工作区时自动建「我的工作区」= `文档\数字员工` |
@@ -186,10 +190,11 @@ $env:DE_PORT='8790'
 
 1. 打开界面 → **设置** → **模型连接**
 2. 全新安装时设置里没有任何连接：点 **添加连接**，填名称、地址（任何 OpenAI 兼容服务的 Base URL）与 Key → **拉取模型** → 勾选模型 → 保存（可再 **测试连接**）
-3. 左栏「工作区」→「+ 新对话」；输入框右下角选模型（显示“连接 / 模型”）
-4. 欢迎页点 **载入公开样例**（或在输入框用 `@` 选目录里的材料），按流程卡片提交
+3. 左栏「工作区」→「+ 新对话」；输入框右下角选模型（显示“连接 / 模型”）；左下角是权限模式（新会话默认“询问”）
+4. 直接说一句“帮我出第 44 周的周报”（工作区目录里放了销售明细和纪要时，Agent 会自己找文件、推断统计周期），或点欢迎页的 **载入公开样例**（预填好的员工表单）。对话里出现 **员工表单** 卡：核对字段和材料，点 **确认开工**（不对就点 **不是这个员工**）。也可以在输入框用 `@` 选目录里的文件作材料
 5. 任务依次经过 准入校验 → 执行中 → 质检中 → 待审核；工作区 `交付\` 里出现 Word；审核通过后变已交付
 6. 退回重做会产生 v2，旧版本保留，可对比
+7. 交付后会话没有关闭：可以接着问问题、换模型，或说“再来一版”在同一个会话里开第二个任务
 
 **没有 Key 也能演示**（剧本式假模型，不联网）：
 
@@ -233,7 +238,7 @@ $env:VITE_API_TARGET='http://localhost:8787'; bun run dev:web   # http://localho
 
 这是 Spec 0003 的 **Electrobun + Hutch** 方案，Go 主线已用它取代（[ADR-0004](docs/adr/0004-go-mainline.md)）：
 
-- **状态**：冻结，只保留作比赛交付兜底；**不包含** Spec 0005/0006 的功能（会话与侧栏、会话模型、目录材料、交付物写目录、步骤行等），不要用它验收。
+- **状态**：冻结，只保留作比赛交付兜底；**不包含** Spec 0005/0006/0007 的功能（会话与侧栏、会话模型、目录材料、交付物写目录、步骤行、权限模式、`run_employee`、一个会话多个任务等），不要用它验收。旧 TypeScript 包里还保留着 DeepSeek 默认连接和 `DEEPSEEK_API_KEY` 覆盖，Go 主线已经去掉。
 - **构建**（仅构建机，使用者不需要）：需要 Hutch，首次构建要联网拉 Electrobun / Bun 运行时：
 
 ```powershell
@@ -257,7 +262,7 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 | `.\dist\digital-employee.exe --version` | 打印版本（`0.1.0-go`） |
 | `.\dist\digital-employee.exe init` | 只准备应用目录，不起服务 |
 | `go test ./...` | 全部 Go 测试（引擎、工具、质检、渲染、服务端、会话、CLI；剧本模型，不联网、不需要 Key） |
-| `bun test packages/web` | 前端纯函数与视图测试（204 项） |
+| `bun test packages/web` | 前端纯函数与视图测试 |
 | `bun run typecheck` | 各前端包 `tsc --noEmit` |
 | `go run ./cmd/digital-employee run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/`（`result.json`、`snapshot.json`、`events.jsonl`） |
 | `go run ./cmd/digital-employee run-cases "samples/cases/*.json" --scripted --out out/cases` | 批量跑用例，**36/36** 为通过 |
@@ -294,9 +299,44 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 - **终态**：已交付 / 已终止。
 - 角色：`initiator`（发起人）、`reviewer`（审核人）、`operator`（操作员）。HTTP 请求用 `x-role` 头声明角色，服务端校验。
 - 表外的流转一律拒绝，并写一条 `transition_rejected` 事件；越权操作同样留痕。
-- 提交任务前先检查会话模型（所在连接有 Key、模型在连接的模型列表里），不通过就拦下并给设置入口，不会跑到一半才失败。
+- **会话里怎么开工**：Agent 调 `run_employee` → 员工表单卡 → 发起人点“确认开工”→ 程序做开工清单判定、提交前检查、准入校验并创建任务（目录文件在确认时复制进任务）。`auto` / `放开` 模式下，表单完整有效且必需的开工清单项备齐时免确认直接开工。会话里的任务在“草稿 → 提交”这一步之前的人工确认由员工表单卡承担，不再有“确认员工 / 开工清单 / 提交”三张卡。
+- 提交前先检查会话模型（所在连接有 Key、模型在连接的模型列表里）。一个连接都没有时提示“还没有配置模型连接”并带设置入口；有连接但模型不可用时提示对应原因。不通过就拦下，不会跑到一半才失败。
+- 同一个会话同一时刻最多一个未结束（非已交付、非已终止）的任务；有未结束任务时 `run_employee` 和“载入公开样例”都被拒绝，并说明是哪个任务、现在什么状态。
 - 任务的执行过程在对话里以步骤行显示，顶部保留轨迹状态机；两者只读，只由流程卡片上的按钮推进。
 - 完整流转表见[设计文档 §5](docs/design.md)。
+
+## 前台 Agent、权限模式与员工当工具
+
+前台 Agent 是会话里的通用对话 Agent，按“调用模型、执行工具、再调用模型”的循环工作，回复逐字显示、可随时停止。它的工具：
+
+| 工具 | 作用 | 过权限关口 |
+|---|---|---|
+| `list_files` / `read_file` | 列、读工作区目录里的文件（`read_file` 支持 csv、xlsx、docx、txt、md，超过 2 万字截断） | 否，任何模式都允许 |
+| `write_file` | 整文件写入工作区目录里的文本文件，新建或覆盖，最多 1 MB | 是（动作：写入文件） |
+| `edit_file` | 把文件里一段恰好出现一次的原文换成新文本；找不到、有多处会分别报错；结果带改动前后的差异摘要 | 是（动作：写入文件） |
+| `use_folder_file` | 提议把目录里的文件用作材料 | 是（动作：使用目录文件） |
+| `run_employee` | 运行员工：参数是员工 id、表单字段 `fields`、材料 `materials`；字段不合法返回具体错误、不弹表单；结果是任务 ID 和当前状态，不等任务跑完 | 是（动作：运行员工） |
+| `query_task` | 只读查询任务（会话里已有任务时开放，默认查最新的一个） | 否 |
+| `kb_search` / `kb_read` | 知识库问答员工勾选后开放的只读工具 | 否 |
+
+没有命令行工具，任何模式都没有。`propose_employee`、`fill_form_draft` 这类提议卡片工具已不再给 Agent；旧会话里已经发出的“确认员工”等卡片仍能显示，但只读、没有按钮。
+
+**权限模式**在输入框左下角选，每个会话各自记住，新会话总是从“询问”开始，设置里没有全局默认。各模式下 Agent 的动作怎么处理：
+
+| 动作 | 计划 `plan` | 询问 `ask`（默认） | 接受编辑 `accept_edits` | 自动 `auto` | 放开 `yolo` |
+|---|---|---|---|---|---|
+| 读、列工作区文件 | 允许 | 允许 | 允许 | 允许 | 允许 |
+| 新建或修改工作区内的文件 | 拒绝 | 问（权限确认卡） | 允许 | 允许 | 允许 |
+| 运行员工 | 拒绝 | 问（弹员工表单卡） | 问（弹员工表单卡） | 表单完整有效且必需开工清单项备齐时免问直接开工，否则弹员工表单卡 | 同自动 |
+| 把目录文件用作材料 | 拒绝 | 问（使用目录文件卡） | 问 | 问（带目录文件的员工表单照样弹） | 自动确认 |
+
+- 档位是单调的，越往右免问的越多；自动和放开的区别只在“把目录文件用作材料”。
+- **权限确认卡**：“问”的时候这一轮在工具调用处暂停，对话里出现卡片，写明动作和对象，三个按钮：允许一次、本会话总是允许这一类（只对这个会话生效，换模式时清空；运行员工不适用，员工表单卡永远要人确认）、拒绝（把“用户拒绝”作为工具结果交给模型，让它换办法）。等确认时点停止，这一轮结束，未决的确认记为已取消。
+- **始终适用、不受模式影响**：写操作只限工作区目录内（路径逐段解析，链接先解开，越界拒绝并写进会话日志）；隐藏文件、“交付”“材料”文件夹不可写；单个文件最多 1 MB，只写文本；审核通过或退回、暂停后的重试或终止、开工清单必需项与跳过项的确认只有人能做；必需开工清单项没备齐，任何模式都不能开工。
+- 每一次允许、拒绝、自动放行都写进会话日志，对话里能看到“已放行 / 已拒绝”的留痕。
+- 模式只管 Agent 的动作，不管角色：发起人 / 审核人 / 操作员的角色权限照旧，只有发起人能选权限模式、答复权限确认和员工表单。设置里的「权限与审批」是另一回事（见下文「设置中心」）。
+
+**员工表单卡**：卡头写明是哪个员工，标出哪些字段是 Agent 预填的、材料来自哪里（会话里已有、工作区目录、公开样例）；人可以直接改字段、补传材料、确认可跳过的开工清单项；必需项没备齐时“确认开工”点不了。“不是这个员工”会把“用户拒绝，原因：选错员工”交回 Agent，让它换一个员工或重新问人。表单字段和开工清单就是员工配置里的 `form.schema.json`、`checklist.yaml`，没有另设一份。“载入公开样例”得到的是同样的一张预填表单（统计周期和样例材料），样例文件取自应用目录，不写进人的工作目录。
 
 ## HTTP 接口
 
@@ -312,18 +352,22 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 | `GET /api/tasks/:id/stream?after=<seq>` | SSE 事件流（含心跳，重连用 `Last-Event-ID`） |
 | `GET /api/tasks/:id/deliverables/:kind` | 下载交付物（`docx` / `md` / `qc_record`，可带版本） |
 | `GET /api/workspaces` · `POST` · `PATCH /:id` · `DELETE /:id` | 工作区：列表（含会话摘要与“未归属”）、新建、重命名、取消登记 |
-| `GET /api/records` | 记录：所有已开工的任务按状态分组，带工作区名 |
-| `GET /api/sessions?workspaceId=<id>` · `POST /api/sessions` | 会话列表（可按工作区过滤）、新建（带 `workspaceId`） |
+| `GET /api/records` | 记录：所有已开工的任务按状态分组，**每个任务一行**，带所属会话、工作区名和“第几次运行”（`runNumber`） |
+| `GET /api/sessions?workspaceId=<id>` · `POST /api/sessions` | 会话列表（可按工作区过滤）、新建（带 `workspaceId`，可选 `model {connection, model}`，校验同会话里选模型；没给时沿用 `lastModel`） |
 | `PATCH /api/sessions/:id` | 重命名 / 归档会话 |
-| `PUT /api/sessions/:id/model` | 选会话模型（写会话日志并更新 `lastModel`） |
+| `PUT /api/sessions/:id/model` | 选会话模型（写会话日志并更新 `lastModel`；任何状态都能选，只有由旧任务推导出的只读会话拒绝） |
+| `PUT /api/sessions/:id/permission-mode` | 选权限模式（`plan` / `ask` / `accept_edits` / `auto` / `yolo`，只有发起人；换模式清空“本会话总是允许”） |
+| `POST /api/sessions/:id/permissions/:requestId` | 答复权限确认卡：`allow_once` / `always_allow` / `deny`（只有发起人） |
+| `POST /api/sessions/:id/employee-forms/:requestId` | 答复员工表单卡：`confirm`（可带改过的字段、补传的材料、确认跳过的清单项）或 `reject`（不是这个员工）（只有发起人） |
+| `POST /api/sessions/:id/sample` | 载入公开样例：弹出一张预填好的员工表单 |
 | `POST /api/sessions/:id/messages` | 发消息，立即返回 202；回复走会话事件流 |
 | `GET /api/sessions/:id/stream` | 会话事件流（文字增量、工具调用、流程卡片） |
-| `POST /api/sessions/:id/stop` | 停止当前一轮 |
+| `POST /api/sessions/:id/stop` | 停止当前一轮（等权限确认或员工表单时同样有效） |
 | `POST /api/sessions/:id/attachments` | 上传材料 |
 | `GET /api/sessions/:id/folder-files` · `POST` | 列出 / 确认使用工作区目录里的文件 |
-| `POST /api/sessions/:id/submit` | 提交表单，开工 |
-| `GET /api/settings/models` | 会话里可选的模型（只列有 Key 的连接） |
-| `POST /api/settings/connections/:name/models` | 拉取 `{baseUrl}/models`（结果不写设置） |
+| `POST /api/sessions/:id/employee` · `/submit` · `/checklist/:item/skip` | 旧流程（确认员工 / 提交 / 跳过清单项）的接口，只为旧会话兼容保留；新界面不再调用，会话里的开工走员工表单卡 |
+| `GET /api/settings/models` | 会话里可选的模型（连接有 Key 且模型列表非空） |
+| `POST /api/settings/connections/:name/models` | 拉取 `{baseUrl}/models`（结果不写设置；请求体可带未保存的 baseUrl 与 Key） |
 
 附件只能通过 multipart 上传；命令 JSON 里自带 `attachments[].sourcePath` 会被拒绝（防止服务端读取任意本地文件）。完整路由见 `internal/server/server.go`，以代码为准。
 
@@ -334,17 +378,17 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 ```
 employees/weekly-report/
 ├── SKILL.md          岗位职责与写作要求（判断步骤的系统提示词）
-├── frontdesk.md      前台 Agent 人设
+├── frontdesk.md      写给前台 Agent 的说明（这个员工做什么、什么时候该调 run_employee）和开放的只读工具
 ├── checklist.yaml    开工清单（缺什么不能开工、哪些可跳过）
 ├── workflow.yaml     步骤列表、输入映射、预算、质检输入/修正步骤
 ├── qc.yaml           质检规则、禁用词、阈值、自定义规则
-├── form.schema.json  发起表单（前端用 JSON Schema 渲染）
+├── form.schema.json  员工表单（`run_employee` 的输入定义，前端用 JSON Schema 渲染）
 ├── form.ui.json      表单布局
 ├── prompts/*.md      各判断步骤的提示词
 └── schemas/*.json    各判断步骤的输出 Schema
 ```
 
-首次启动会把默认员工配置复制到应用目录的 `employees/`（已有文件不覆盖）；运行中的任务使用发起时的配置副本。
+首次启动会把默认员工配置复制到应用目录的 `employees/`（已有文件不覆盖）；运行中的任务使用发起时的配置副本。员工的输入定义（表单 + 开工清单）直接复用这份配置，`run_employee` 的参数校验、员工表单卡的字段和必需项判定都读它，没有另设一份。
 
 `workflow.yaml` 里两个可选映射值得知道：
 
@@ -358,12 +402,12 @@ employees/weekly-report/
 侧栏左上角的设置入口里分七节：**模型连接、外观与交互、执行与预算、演示与调试、权限与审批、诊断与关于、工作区**。
 
 - **设置文档**：全部设置存在**应用目录**的 `settings.json`（`version: 2`；应用目录缺省 `%APPDATA%\digital-employee-app`，可用 `DE_APP_DIR` 改），每次写入 `revision` +1；旧版文件读时自动补默认值，第一次写入时迁移为 v2，未知字段原样保留；旧文档里的 `defaultConnection` / `defaultModel` 会换算成 `lastModel`。两个窗口同时保存时会返回冲突提示，不会静默覆盖。
-- **模型连接**：可配多个连接（名称 / Base URL / API Key / 模型列表），每个模型还能单独设上下文窗口、输出上限与推理档位（关闭 / 最低 / 低 / 中 / 高 / 最高），连接级可设超时与重试次数；「测试连接」发一条极短请求验证 Key 与模型是否可用；「拉取模型」请求 `{baseUrl}/models`，勾选后再保存，拉取结果本身不写设置。
-- **会话模型**：输入框右下角按会话选模型，显示“连接 / 模型”；切换后对话里有一条说明；最近一次选择记进设置 `lastModel`，新会话沿用它。任务运行中切换会写一条“模型已切换”任务事件，从下一个判断步骤生效，正在进行的调用不中断。
+- **模型连接**：**没有预置任何厂商**，全新安装时一个连接都没有（页面显示空状态和「添加连接」）。「添加连接」填名称、地址（任何 OpenAI 兼容服务的 Base URL）、Key；可配多个连接，每个模型还能单独设上下文窗口、输出上限与推理档位（关闭 / 最低 / 低 / 中 / 高 / 最高），连接级可设超时与重试次数；「测试连接」发一条极短请求验证 Key 与模型是否可用；「拉取模型」请求 `{baseUrl}/models`，结果以勾选框列出，勾选后再保存，拉取结果本身不写设置，新建的、还没保存的连接也能先拉。Key 只来自这里填写的内容，不再有环境变量（如 `DEEPSEEK_API_KEY`）覆盖，也没有“来自环境变量”的标记。升级前已有的连接（包括老用户的 deepseek 连接）原样保留，按普通连接对待。
+- **会话模型**：输入框右下角按会话选模型（新对话页也有同一个下拉），显示“连接 / 模型”；下拉里列出所有可用模型（连接有 Key 且模型列表非空），没有可用模型时显示“还没有可用的模型”并带设置入口。任何状态（没有任务、运行中、待审核、已交付、已终止）都能换；切换后对话里有一条说明；最近一次选择记进设置 `lastModel`，新会话沿用它（`lastModel` 也没有时取第一个可用模型）。任务未结束时切换会写一条“模型已切换”任务事件，从下一个判断步骤生效，正在进行的调用不中断；任务已结束或没有任务时只改会话的选择，下一次对话和下一个任务用它。
 - **外观与交互**：主题（浅色 / 深色 / 跟随系统）、字号、轨迹详细度（简洁 / 标准 / 详细）、轨迹折叠时机、回车行为、链接打开方式；保存后立即生效。
 - **执行与预算**：`stepTimeoutMs`、`modelMaxRetries`、`retryBackoffMs`、`qcAutofix` 是**默认值**，优先级为「步骤或连接配置 → 设置 → 内置值」（内置分别为 120 秒 / 2 次 / `[500,1500,4000]` 毫秒 / 3 次）。员工配置里显式写了就以员工配置为准。
 - **演示与调试**：工具故障注入、数据溯源故障、模拟崩溃（一次性开关，命中即清）。
-- **权限与审批**：只读 / 工作区可写 / 完全访问三档预设、审批策略（每次询问 / 从不询问）、默认角色；危险操作会二次确认并写审计。**本机模式：预设只影响审批确认与审计留痕，不提供系统级文件沙箱，也不改变操作系统文件权限。**
+- **权限与审批**：只读 / 工作区可写 / 完全访问三档预设、审批策略（每次询问 / 从不询问）、默认角色；危险操作会二次确认并写审计。**本机模式：预设只影响审批确认与审计留痕，不提供系统级文件沙箱，也不改变操作系统文件权限。** 注意它和会话里的**权限模式**（计划 / 询问 / 接受编辑 / 自动 / 放开）是两件事：这一节管设置页上危险操作的确认框，权限模式管前台 Agent 写文件、运行员工要不要先问人，互不影响。
 - **诊断与关于**：应用版本、运行时（Go / 平台 / 架构）、应用目录（界面显示为“工作区路径”）、日志级别（error / warn / info / debug）、复制诊断信息、导出诊断包（脱敏）、用本机编辑器打开 `settings.json`。
 - **工作区**（设置页里的这一节）：查看当前应用目录与工作区目录、在资源管理器中打开工作区、恢复默认员工配置。工作区本身的新增、重命名、取消登记在左侧栏。
 - **导出 / 导入**：默认导出脱敏（只保留 Key 末 4 位），勾选「包含密钥」需二次确认且文件名追加 `-with-keys`；导入会先校验并备份当前设置到 `config-versions/settings/<时间戳>.json`。
@@ -381,7 +425,7 @@ employees/weekly-report/
 | `internal/tools` | 数据类工具注册表与故障注入（进程内调用） |
 | `internal/render` | 纯 Go 生成 Word 与图表 PNG |
 | `internal/server` | REST + SSE、角色权限、设置、样例、员工配置接口 |
-| `internal/session` | 会话、前台 Agent 循环、目录材料 |
+| `internal/session` | 会话（一对多任务）、前台 Agent 循环与工具、权限模式与权限确认、`run_employee` 与员工表单、目录材料 |
 | `internal/app` / `internal/desktop` | 应用目录与工作区准备、启动、端口；原生窗口 |
 | `internal/cli` / `cmd/digital-employee` | 命令行子命令与程序入口 |
 | `packages/web` | React 前端：会话与步骤行轨迹 / 发起 / 审核 / 设置 / 配置 / 知识库 |
@@ -395,7 +439,7 @@ employees/weekly-report/
 ## 测试与样例
 
 - `go test ./...` 覆盖契约、配置、引擎、质检、模型、工具、渲染、服务端、会话与 CLI；端到端用例用剧本式模型，不联网、不需要 Key。
-- `bun test packages/web` 覆盖前端纯函数与视图（步骤行推导、侧栏分组、模型下拉等，204 项）；`bun run typecheck` 检查类型。
+- `bun test packages/web` 覆盖前端纯函数与视图（步骤行推导、侧栏分组、模型下拉、权限模式菜单与权限确认卡、员工表单卡、多任务会话等）；`bun run typecheck` 检查类型。测试项数以命令输出为准。
 - `samples/cases/` 是 36 条自测用例（6 条公开 A 系列 + 24 条 S 系列 + 6 条 T 系列）的描述；`samples/cases/scripts/` 是对应的剧本式假模型输出。剧本模式 **36/36** 通过，A 系列另做过真实模型验证，结果见 [`docs/results/`](docs/results/)。
 - `samples/scenario-a/` 是原始数据：销售明细、W42–W44 周会纪要、格式要求、数据说明。公开样例会释放到**应用目录**的 `samples/`（不在工作区目录里）。
 - A-01 与冻结的 TS 版做了逐事件对拍（`scripts/parity-a01.sh`），归一化后 42 条事件逐字段一致。
@@ -406,7 +450,9 @@ employees/weekly-report/
 - [架构图与结构观察](docs/architecture.md)：进程拓扑、分层依赖、状态机、会话循环、事件流、磁盘布局（Mermaid）
 - [术语表](GLOSSARY.md)：任务、角色、步骤、事实等术语的准确含义
 - [ADR-0001 程序编排步骤](docs/adr/0001-program-orchestrated-steps.md) / [ADR-0002 事实与槽位](docs/adr/0002-facts-via-slots.md) / [ADR-0004 Go 主线](docs/adr/0004-go-mainline.md) / [ADR-0005 知识库是背景参考](docs/adr/0005-knowledge-base-is-background.md) / [ADR-0006 工作区即目录](docs/adr/0006-workspace-is-a-folder.md)
-- [规格 0006 工作区、会话模型、前台 Agent 循环](docs/specs/0006-workspace-folder-and-agent-loop.md)、[真实模型手动测试指南](docs/manual-test-0006.md)
+- [ADR-0007 通用对话 Agent，员工是它能调用的工具](docs/adr/0007-general-agent-employees-as-tools.md)：取代 ADR-0001 里“前台 Agent 只读、一个会话一个任务”的说法
+- [规格 0007 通用对话 Agent、权限模式、员工当工具](docs/specs/0007-general-agent-employees-as-tools.md)、[真实模型手动测试指南（0007）](docs/manual-test-0007.md)
+- [规格 0006 工作区、会话模型、前台 Agent 循环](docs/specs/0006-workspace-folder-and-agent-loop.md)（部分已被 0007 取代）、[0006 手动测试指南](docs/manual-test-0006.md)（历史记录，其中的“确认员工”流程和预置 DeepSeek 连接已过时）
 - [Go 迁移验收（架构、对拍、体积）](docs/go-migration/architecture-and-parity.md)、[Go 版使用说明](docs/go-migration/README.md)
 - [规格 0001](docs/specs/0001-skeleton.md)、[规格 0003 桌面壳](docs/specs/0003-electrobun-desktop-shell.md) 与 [tickets](docs/specs/tickets)
 - [用例文件格式](samples/cases/README.md)
@@ -416,6 +462,7 @@ employees/weekly-report/
 - 场景 A（经营周报）已端到端跑通：契约、工具、引擎、服务端/CLI、前端、质检与集成测试均已实现；Go 成为主线（[ADR-0004](docs/adr/0004-go-mainline.md)）。
 - 第二个员工「知识库问答员工」已落地（T34）：只有一个判断步骤，查知识库索引、按需读正文；已交付文件经人确认才入库（[ADR-0005](docs/adr/0005-knowledge-base-is-background.md)）。
 - Spec 0006 已落地（T36–T44）：工作区即目录（应用目录 + 工作区登记 + 旧数据一次性迁移 + 单目录模式）、设置里拉取模型、侧栏“工作区 | 记录”、会话模型与运行中切换、前台 Agent 流式循环、目录材料、交付物写入工作区、对话里的步骤行；收尾补齐了对拍基准、6 条新用例、目录链接防护、测试提速（server 包约 480s → 约 170s）。
+- Spec 0007 已落地（T45–T49，T50 收尾中）：新对话页能选模型、任何状态都能换模型；设置不再预置厂商（空状态 + 添加连接，去掉 `DEEPSEEK_API_KEY` 覆盖）；会话与任务一对多；五档权限模式与 `write_file` / `edit_file`；员工当工具（`run_employee` + 员工表单卡，取代“确认员工 / 开工清单 / 提交”三张卡，公开样例改为预填表单）。真实模型手动测试按 [docs/manual-test-0007.md](docs/manual-test-0007.md) 由使用者执行。
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 36 条在剧本模式 36/36 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
 - 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 27MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
@@ -427,5 +474,7 @@ employees/weekly-report/
   - 旧数据迁移只做一次（标记文件 `<应用目录>/migrated.json`，可重复运行、结果不变）：原默认工作区 `%APPDATA%\digital-employee` 的设置、员工、知识库，以及原工作区的任务和会话会复制进应用目录并归到“我的工作区”；**原目录只读不删**。
   - 单目录模式（`DE_WORKSPACE` 或命令行用例）布局和旧版一致：这个目录同时是应用目录和唯一工作区，不读写 `workspaces.json`。
   - 真实供应商的流式增量（文字增量、工具调用参数分片、`[DONE]`）只用本地假模型服务覆盖过，没有对所有 OpenAI 兼容服务逐一验证；接新供应商时先按手动测试指南跑一遍。
+  - 旧 TypeScript 包（`packages/{core,server,app,…}`，已冻结）里还保留着 DeepSeek 默认值和 `DEEPSEEK_API_KEY` 覆盖；Go 主线已去掉，TS 包不再同步。
+  - 权限模式、`run_employee`、员工表单卡的真实模型行为（Agent 是否总能正确预填字段、推断统计周期）只用剧本模型和假模型服务覆盖过，真实模型要按 [0007 手动测试指南](docs/manual-test-0007.md) 跑一遍。
   - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。
   - `--window` 只在 Windows 11 x64 + 系统 WebView2 上验证过；Windows 10 需要先装 WebView2 Runtime，否则用浏览器方式。
