@@ -7,11 +7,14 @@ import (
 	"digital-employee/internal/contract"
 )
 
-// 场景 A 的员工配置哈希必须与 TS 版逐字节一致。这个值由 packages/core 的 loadEmployeeConfigSync 算出；
-// T25 给 workflow.yaml 加了 deliverableName，T29 给 form.ui.json 的统计周期配了周选择器（ui:field），
-// T31 给每个步骤加了业务文案（activity），T30 加了开工清单（checklist.yaml）并改了 frontdesk.md，
-// golden-a01 里的 configHash 要到 T35 更新基准时才跟上。
-const goldenWeeklyReportHash = "d42bfc5939fc5e3fe82f357d4d08026c52a5be9fbb985e58730e50ab20896ec9"
+// 场景 A 的员工配置哈希由 packages/core 的 loadEmployeeConfigSync 算出，Go 版必须与它逐字节一致。
+// 相对 TS 版最初的基准（c9c99c68…），配置目录里这些文件变过，哈希随之改变：
+// T25 workflow.yaml 加 deliverableName、T29 form.ui.json 给统计周期配周选择器（ui:field）、
+// T31 每个步骤加业务文案（activity）、T30 加 checklist.yaml 并改 frontdesk.md、
+// T44 按 T35 第 6 项把 interpret_feedback 的提示词与 Schema 措辞改成“超范围意见回到待审核”
+// （最后这一处是有意不再与冻结的 TS 版逐字节相同）。
+// T44 已按新哈希更新 golden-a01 的 events/snapshot/qc_record 与 parity 基准，见 golden-a01/README.md。
+const goldenWeeklyReportHash = "4b955c8d43b5fe9a296b883c6eebbb8042be9e4fd7d5fdac7cd77c438572c0e5"
 
 func testEmployeeDir(t *testing.T) string {
 	t.Helper()
