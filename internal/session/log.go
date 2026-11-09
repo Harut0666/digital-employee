@@ -399,11 +399,35 @@ func writeFileAtomic(path string, data []byte) error {
 		_ = os.Remove(tempName)
 		return err
 	}
-	if err := os.Rename(tempName, path); err != nil {
-		_ = os.Remove(tempName)
-		return err
+	// 替换目标时如果正好有读者拿着旧文件（Windows 不共享删除），会短暂报“另一个进程正在使用”；
+	// 读者读的是小文件、很快放掉，短重试即可，不把一次读请求变成失败。
+	var renameErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
+		}
+		if renameErr = os.Rename(tempName, path); renameErr == nil {
+			return nil
+		}
 	}
-	return nil
+	_ = os.Remove(tempName)
+	return renameErr
+}
+
+// readFileRetry 读一个日志文件，遇到“文件被占用”这类瞬时错误时短重试。
+func readFileRetry(path string) ([]byte, error) {
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
+		}
+		raw, err := os.ReadFile(path)
+		if err == nil || os.IsNotExist(err) {
+			return raw, err
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 // encodeLine 一条消息编成日志的一行。
@@ -435,7 +459,9 @@ func (s *store) dropTornTail(id string) error {
 // read 回放一个会话；不存在时返回 nil。
 // 末尾的半行是写入中途被杀留下的，丢弃；中间的坏行是日志损坏，报错。
 func (s *store) read(id string) (*record, error) {
-	raw, err := os.ReadFile(s.logPath(id))
+	// 短重试：Windows 上杀毒/索引服务或本进程的原子替换会在瞬间占用日志文件，
+	// 打开时可能报“另一个进程正在使用”；会话日志很小，重试几次比让请求 500 好。
+	raw, err := readFileRetry(s.logPath(id))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
