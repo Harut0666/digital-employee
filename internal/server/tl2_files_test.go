@@ -119,7 +119,7 @@ func TestEditFileReplaceAllAndStrictRules(t *testing.T) {
 	))
 	h.writeWorkspaceFile(t, "a.md", []byte("猫在睡。\n猫在吃。\n"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleInitiator, "改")
 
@@ -154,7 +154,7 @@ func TestEditFileKeepsCRLF(t *testing.T) {
 	h.writeWorkspaceFile(t, "w.txt", []byte("第一行\r\n第二行\r\n第三行\r\n"))
 	h.writeWorkspaceFile(t, "u.txt", []byte("甲\n乙\n"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleInitiator, "改")
 

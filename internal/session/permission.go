@@ -20,27 +20,43 @@ import (
 	"digital-employee/internal/contract"
 )
 
-// 权限模式。
+// 权限模式（ADR-0007 增补二）：三档，越往右免问的越多。
 const (
-	PermissionPlan        = "plan"         // 计划：只读
-	PermissionAsk         = "ask"          // 询问：默认，写之前问
-	PermissionAcceptEdits = "accept_edits" // 接受编辑：工作区里写文件不问
-	PermissionAuto        = "auto"         // 自动：员工表单完整有效时直接开工
-	PermissionYolo        = "yolo"         // 放开：连目录文件的确认也免掉
+	PermissionReadOnly  = "read_only" // 仅可查看：只读文件、做计划、回答问题，不写文件、不运行员工和命令
+	PermissionWorkspace = "workspace" // 仅限工作区：工作区内读写文件不问；运行员工、用目录文件、运行命令前先问；新会话默认
+	PermissionFull      = "full"      // 完全权限：不再逐项询问
 )
 
-// PermissionModes 全部权限模式，从严到松。
-var PermissionModes = []string{PermissionPlan, PermissionAsk, PermissionAcceptEdits, PermissionAuto, PermissionYolo}
+// DefaultPermissionMode 新会话的权限模式。
+const DefaultPermissionMode = PermissionWorkspace
+
+// PermissionModes 全部权限模式，从严到松（也是界面菜单的顺序）。
+var PermissionModes = []string{PermissionReadOnly, PermissionWorkspace, PermissionFull}
 
 // PermissionModeLabels 权限模式的显示名。
 var PermissionModeLabels = map[string]string{
-	PermissionPlan: "计划", PermissionAsk: "询问", PermissionAcceptEdits: "接受编辑", PermissionAuto: "自动", PermissionYolo: "放开",
+	PermissionReadOnly: "仅可查看", PermissionWorkspace: "仅限工作区", PermissionFull: "完全权限",
 }
 
-// ValidPermissionMode 是不是五个权限模式之一。
+// legacyPermissionModes 旧版本五档里的值 → 新值（会话日志里已有的“选择权限模式”，以及接口入参里的旧值）。
+// 老会话因此会略宽松：ask、accept_edits、auto 都读作 workspace，其中 ask 原先连写文件也要问。
+var legacyPermissionModes = map[string]string{
+	"plan": PermissionReadOnly, "ask": PermissionWorkspace, "accept_edits": PermissionWorkspace, "auto": PermissionWorkspace, "yolo": PermissionFull,
+}
+
+// ValidPermissionMode 是不是三个权限模式之一（只认新值；旧值见 NormalizePermissionMode）。
 func ValidPermissionMode(mode string) bool {
 	_, ok := PermissionModeLabels[mode]
 	return ok
+}
+
+// NormalizePermissionMode 把新值或旧五档的值读作新值；不认得的返回 false。
+func NormalizePermissionMode(mode string) (string, bool) {
+	if ValidPermissionMode(mode) {
+		return mode, true
+	}
+	mapped, ok := legacyPermissionModes[mode]
+	return mapped, ok
 }
 
 // 动作类别：权限判定和“本会话总是允许这一类”都以它为单位。读不是动作类别（始终允许）。
@@ -82,57 +98,48 @@ const (
 	VerdictDeny  Verdict = "deny"
 )
 
-// Decide Spec 0007 的矩阵。档位是单调的：越往松，免问的越多。
+// Decide ADR-0007 增补二的矩阵。档位是单调的：越往右，免问的越多。
 //
-// 运行员工（run_employee，T49）在 auto、yolo 下放行：表单完整有效就直接开工，否则由 run_employee 自己弹员工表单；
-// ask、accept_edits 下的“问”也是员工表单卡（selfDecide），关口不替它判断表单。使用目录文件同理：yolo 自动确认，
-// 其余模式的“问”是“使用目录文件”卡。
+// 模式不是三档之一（旧五档的值先读作新值；都不认得的，比如以后的版本写进来的）按最严格的 read_only 处理，宁可只读也不放宽。
+//
+// 运行员工（run_employee）在 full 下放行：表单完整有效、必需开工清单项备齐就直接开工，否则由 run_employee 自己弹员工表单；
+// workspace 下的“问”也是员工表单卡（selfDecide），关口不替它判断表单。使用目录文件同理：full 自动确认，
+// workspace 的“问”是“使用目录文件”卡。
 func Decide(mode, action string) Verdict {
+	normalized, known := NormalizePermissionMode(mode)
+	if !known {
+		normalized = PermissionReadOnly
+	}
 	switch action {
 	case ActionWriteFile:
-		switch mode {
-		case PermissionPlan:
+		// 工作区内读写文件不问（边界检查在 guard 里，始终适用）
+		if normalized == PermissionReadOnly {
 			return VerdictDeny
-		case PermissionAsk:
+		}
+		return VerdictAllow
+	case ActionRunEmployee, ActionUseFolderFile, ActionShell:
+		// 运行员工、目录文件用作材料、命令行（没有沙箱，见 shell.go）：read_only 拒绝，workspace 问，full 放行
+		switch normalized {
+		case PermissionReadOnly:
+			return VerdictDeny
+		case PermissionWorkspace:
 			return VerdictAsk
 		}
 		return VerdictAllow
-	case ActionRunEmployee:
-		switch mode {
-		case PermissionPlan:
-			return VerdictDeny
-		case PermissionAsk, PermissionAcceptEdits:
-			return VerdictAsk
-		}
-		return VerdictAllow
-	case ActionUseFolderFile:
-		switch mode {
-		case PermissionPlan:
-			return VerdictDeny
-		case PermissionYolo:
-			return VerdictAllow
-		}
-		return VerdictAsk
-	case ActionShell:
-		// 命令行没有沙箱：只有放开模式放行，计划模式拒绝，其余每次问（见 shell.go）
-		switch mode {
-		case PermissionPlan:
-			return VerdictDeny
-		case PermissionYolo:
-			return VerdictAllow
-		}
-		return VerdictAsk
 	}
-	// 读和其它没有归类的动作：始终允许
+	// 读、搜索、待办、提问和其它没有归类的动作：始终允许
 	return VerdictAllow
 }
 
-// mode 会话当前的权限模式；没选过就是 ask。
+// mode 会话当前的权限模式；没选过就是 workspace，不认得的值按最严格的 read_only。
 func (r *record) mode() string {
-	if ValidPermissionMode(r.permissionMode) {
-		return r.permissionMode
+	if r.permissionMode == "" {
+		return DefaultPermissionMode
 	}
-	return PermissionAsk
+	if normalized, ok := NormalizePermissionMode(r.permissionMode); ok {
+		return normalized
+	}
+	return PermissionReadOnly
 }
 
 // ---------------------------------------------------------------- 选模式
@@ -143,10 +150,12 @@ func (m *Manager) SetPermissionMode(id string, role contract.Role, mode string) 
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以选权限模式")
 	}
-	mode = strings.TrimSpace(mode)
-	if !ValidPermissionMode(mode) {
-		return nil, failure(contract.ErrInvalidInput, "没有这个权限模式：%q。可选 plan、ask、accept_edits、auto、yolo", mode)
+	// 新值和旧五档的值都收；落盘的总是新值
+	normalized, ok := NormalizePermissionMode(strings.TrimSpace(mode))
+	if !ok {
+		return nil, failure(contract.ErrInvalidInput, "没有这个权限模式：%q。可选 read_only（仅可查看）、workspace（仅限工作区）、full（完全权限）", mode)
 	}
+	mode = normalized
 	t, done, err := m.beginUnlocked(id, role)
 	if err != nil {
 		return nil, err
@@ -162,16 +171,12 @@ func (m *Manager) SetPermissionMode(id string, role contract.Role, mode string) 
 func permissionPrompt(mode string) string {
 	lines := []string{"## 权限模式", "", "当前模式：" + PermissionModeLabels[mode] + "（" + mode + "）。"}
 	switch mode {
-	case PermissionPlan:
-		lines = append(lines, "计划模式是只读的：你只能读、列工作区目录里的文件，不能写文件，不能运行员工，也不能把目录文件用作材料；这类动作会被直接拒绝。请把打算怎么做的方案告诉发起人，等 TA 切换模式后再动手。")
-	case PermissionAsk:
-		lines = append(lines, "询问模式：读文件不受限；写文件前程序会弹出权限确认，由发起人允许或拒绝；run_employee 一定会弹员工表单卡，由发起人核对并确认后才开工。")
-	case PermissionAcceptEdits:
-		lines = append(lines, "接受编辑模式：在工作区目录里写、改文件不用问发起人；run_employee 仍一定会弹员工表单卡，把目录文件用作材料仍要先确认。")
-	case PermissionAuto:
-		lines = append(lines, "自动模式：写、改文件不用问；run_employee 的表单填得完整有效、必需的开工清单项都备齐时直接开工，缺什么才弹员工表单让发起人补；把目录文件用作材料仍要先确认（带目录文件的表单照样弹）。")
-	case PermissionYolo:
-		lines = append(lines, "放开模式：写、改文件不用问，目录文件自动确认；run_employee 的表单完整有效、必需的开工清单项备齐时直接开工，否则弹员工表单让发起人补。")
+	case PermissionReadOnly:
+		lines = append(lines, "仅可查看模式是只读的：你只能读、列、搜工作区目录里的文件，可以做计划、问问题，不能写文件，不能运行员工，不能运行命令，也不能把目录文件用作材料；这类动作会被直接拒绝。请把打算怎么做的方案告诉发起人，等 TA 切换到“仅限工作区”或“完全权限”后再动手。")
+	case PermissionWorkspace:
+		lines = append(lines, "仅限工作区模式：在工作区目录里读、写、改文件不用问发起人；run_employee 一定会弹员工表单卡，由发起人核对并确认后才开工；把目录文件用作材料要先确认；运行命令前要先问发起人。")
+	case PermissionFull:
+		lines = append(lines, "完全权限模式：不再逐项询问。写、改文件不用问，目录文件自动确认；run_employee 的表单完整有效、必需的开工清单项备齐时直接开工，否则弹员工表单让发起人补；命令直接运行（命令仍可能触达工作区之外，务必只做发起人要求的事）。")
 	}
 	lines = append(lines, shellModeLine(mode))
 	lines = append(lines,
@@ -298,7 +303,7 @@ func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item to
 	}
 	switch Decide(mode, item.action) {
 	case VerdictDeny:
-		return &denial{reason: fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。",
+		return &denial{reason: fmt.Sprintf("当前是%s模式，不能%s%s。请改为给出方案（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。",
 			PermissionModeLabels[mode], label, suffixObject(object))}, false, nil
 	case VerdictAllow:
 		if item.selfDecide {

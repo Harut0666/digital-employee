@@ -28,7 +28,9 @@ const (
 	KindToolCalled  = "tool_called"
 	KindToolDenied  = "tool_denied"
 	KindModelFailed = "model_failed"
-	// KindPermissionModeSet 发起人选了权限模式（T48）：Mode 记下选的是哪一档；留痕，也是“本会话总是允许”清空的时刻
+	// KindPermissionModeSet 发起人选了权限模式（T48）：Mode 记下选的是哪一档；留痕，也是“本会话总是允许”清空的时刻。
+	// 新写入的是 read_only / workspace / full；旧日志里的 plan / ask / accept_edits / auto / yolo 回放时读作新值。
+	// 行的格式不变：旧版本读到不认得的值会按它自己的默认（ask）处理，不会出错。
 	KindPermissionModeSet = "permission_mode_set"
 	// KindPermissionAllowed 权限模式或“本会话总是允许”让一个动作免问放行（T48）：留痕，轨迹里能看到
 	KindPermissionAllowed = "permission_allowed"
@@ -157,7 +159,7 @@ type record struct {
 	archived bool
 	// readUpTo 已读到哪一条消息：最后一条消息的序号比它大就是有新消息
 	readUpTo int64
-	// permissionMode 权限模式；空串表示没选过，也就是新会话的默认 ask（T48）
+	// permissionMode 权限模式；空串表示没选过，也就是新会话的默认 workspace（ADR-0007 增补二）
 	permissionMode string
 	// alwaysAllowed 本会话总是允许的动作类别；换权限模式时清空
 	alwaysAllowed map[string]bool
@@ -177,7 +179,12 @@ func (r *record) apply(message Message) {
 	case kindModelSelected:
 		r.model = message.Model
 	case KindPermissionModeSet:
-		r.permissionMode = message.Mode
+		// 旧五档的值读作新值；不认得的原样留着，mode() 按最严格的 read_only 处理
+		if normalized, ok := NormalizePermissionMode(message.Mode); ok {
+			r.permissionMode = normalized
+		} else {
+			r.permissionMode = message.Mode
+		}
 		r.alwaysAllowed = nil
 	case kindPermissionDecided:
 		if message.Decision == DecisionAlwaysAllow {

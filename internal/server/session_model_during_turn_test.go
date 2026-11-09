@@ -8,13 +8,13 @@ import (
 	"digital-employee/internal/session"
 )
 
-// 前台 Agent 停在权限确认卡上时也能换模型（规格“会话里选模型不再有状态限制”）：
+// 前台 Agent 停在权限确认卡（仅限工作区下运行命令要问）上时也能换模型（规格“会话里选模型不再有状态限制”）：
 // 新选择写进会话，当前这一轮继续用旧模型，下一轮对话起才用新的。
 func TestModelCanBeSelectedWhileTheAgentWaitsOnAPermissionCard(t *testing.T) {
 	service := newRoutingModelService(t)
 	service.script(map[string][]fakeModelTurn{
 		"model-a": {
-			{ToolCalls: []agent.ScriptedToolCall{{Name: contract.ToolWriteFile, Arguments: map[string]any{"path": "a.md", "content": "甲"}}}},
+			{ToolCalls: []agent.ScriptedToolCall{{Name: contract.ToolShell, Arguments: shellCall("echo model-switch-ok")}}},
 			{Text: "写好了。"},
 		},
 		"model-b": {{Text: "换成新模型回答。"}},
@@ -25,7 +25,7 @@ func TestModelCanBeSelectedWhileTheAgentWaitsOnAPermissionCard(t *testing.T) {
 	stream := h.openStream(created.ID)
 	defer stream.close()
 
-	turn := h.sayAsync(created.ID, contract.RoleInitiator, "写一个文件")
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
 	card := h.waitPending(created.ID)
 
 	// Agent 正停在权限确认卡上：换模型不被“上一条消息还在处理”挡住
@@ -41,8 +41,8 @@ func TestModelCanBeSelectedWhileTheAgentWaitsOnAPermissionCard(t *testing.T) {
 
 	h.mustDecide(created.ID, card, session.DecisionAllowOnce)
 	h.waitTurn(stream, turn)
-	if got := h.workspaceText(t, "a.md"); got != "甲" {
-		t.Fatalf("允许之后文件应写出：%q", got)
+	if !ranShell(h.readSession(created.ID)) {
+		t.Fatal("允许之后命令应运行")
 	}
 	// 当前这一轮继续用旧模型：两次请求都是 model-a
 	if got := service.modelsCalled(); len(got) != 2 || got[0] != "model-a" || got[1] != "model-a" {
@@ -60,7 +60,7 @@ func TestModelCanBeSelectedWhileTheAgentWaitsOnAPermissionCard(t *testing.T) {
 func TestOnlyTheInitiatorCanSelectAModelWhileTheAgentIsBusy(t *testing.T) {
 	service := newRoutingModelService(t)
 	service.script(map[string][]fakeModelTurn{
-		"model-a": {{ToolCalls: []agent.ScriptedToolCall{{Name: contract.ToolWriteFile, Arguments: map[string]any{"path": "a.md", "content": "甲"}}}}, {Text: "好。"}},
+		"model-a": {{ToolCalls: []agent.ScriptedToolCall{{Name: contract.ToolShell, Arguments: shellCall("echo busy-ok")}}}, {Text: "好。"}},
 	})
 	h := newHarness(t, nil, withModelConnections(service.connection("conn", "model-a", "model-b")))
 	created := h.createSession()

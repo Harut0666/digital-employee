@@ -6,6 +6,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,24 +16,25 @@ import (
 	"digital-employee/internal/contract"
 )
 
-// 矩阵本身：Spec 0007 的表。
+// 矩阵本身：ADR-0007 增补二的表（三档，越往右免问越多）。
 func TestDecideFollowsTheMatrix(t *testing.T) {
 	want := map[string]map[string]Verdict{
 		ActionWriteFile: {
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAllow, PermissionAuto: VerdictAllow, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAllow, PermissionFull: VerdictAllow,
 		},
 		ActionRunEmployee: {
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAllow, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAsk, PermissionFull: VerdictAllow,
 		},
 		ActionUseFolderFile: {
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAsk, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAsk, PermissionFull: VerdictAllow,
 		},
-		// 命令行没有沙箱：只有放开模式放行，计划拒绝，其余每次问
+		// 命令行没有沙箱：只有完全权限放行，仅可查看拒绝，仅限工作区每次问
 		ActionShell: {
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAsk, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAsk, PermissionFull: VerdictAllow,
 		},
+		// 读、搜索、待办、提问：没有动作类别，始终允许
 		"": {
-			PermissionPlan: VerdictAllow, PermissionAsk: VerdictAllow, PermissionAcceptEdits: VerdictAllow, PermissionAuto: VerdictAllow, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictAllow, PermissionWorkspace: VerdictAllow, PermissionFull: VerdictAllow,
 		},
 	}
 	for action, row := range want {
@@ -46,6 +48,9 @@ func TestDecideFollowsTheMatrix(t *testing.T) {
 
 // 档位是单调的：越往松，免问的越多，不存在高档位反而问得更多的动作。
 func TestModesAreMonotonic(t *testing.T) {
+	if fmt.Sprint(PermissionModes) != "[read_only workspace full]" {
+		t.Fatalf("菜单顺序 = %v", PermissionModes)
+	}
 	rank := map[Verdict]int{VerdictDeny: 0, VerdictAsk: 1, VerdictAllow: 2}
 	for _, action := range []string{ActionWriteFile, ActionRunEmployee, ActionUseFolderFile, ActionShell} {
 		previous := -1
@@ -55,6 +60,85 @@ func TestModesAreMonotonic(t *testing.T) {
 				t.Errorf("%s 在 %s 下比更严的档位问得更多", action, mode)
 			}
 			previous = current
+		}
+	}
+}
+
+// 旧五档的值还能读：plan→read_only；ask、accept_edits、auto→workspace；yolo→full。
+func TestLegacyModesMapToTheNewOnes(t *testing.T) {
+	cases := map[string]string{
+		"plan": PermissionReadOnly, "ask": PermissionWorkspace, "accept_edits": PermissionWorkspace, "auto": PermissionWorkspace, "yolo": PermissionFull,
+		PermissionReadOnly: PermissionReadOnly, PermissionWorkspace: PermissionWorkspace, PermissionFull: PermissionFull,
+	}
+	for old, want := range cases {
+		got, ok := NormalizePermissionMode(old)
+		if !ok || got != want {
+			t.Errorf("NormalizePermissionMode(%q) = %q, %v，want %q", old, got, ok, want)
+		}
+		if Decide(old, ActionShell) != Decide(want, ActionShell) {
+			t.Errorf("Decide 对旧值 %q 应和 %q 一致", old, want)
+		}
+	}
+	for _, bad := range []string{"", "god", "ASK", "Full", " full"} {
+		if got, ok := NormalizePermissionMode(bad); ok {
+			t.Errorf("NormalizePermissionMode(%q) = %q，不该被认可", bad, got)
+		}
+	}
+	if ValidPermissionMode("yolo") || !ValidPermissionMode("full") {
+		t.Error("ValidPermissionMode 只认三个新值")
+	}
+}
+
+// 会话日志回放：旧值映射成新值；没选过是 workspace；不认得的值按最严格（read_only）处理，不崩。
+func TestReplayMapsLegacyAndUnknownModes(t *testing.T) {
+	replay := func(modes ...string) *record {
+		r := &record{}
+		for index, mode := range modes {
+			r.apply(Message{Seq: int64(index + 1), Kind: KindPermissionModeSet, Mode: mode})
+		}
+		return r
+	}
+	if got := (&record{}).mode(); got != PermissionWorkspace {
+		t.Fatalf("新会话默认 = %q", got)
+	}
+	for old, want := range map[string]string{"plan": PermissionReadOnly, "ask": PermissionWorkspace, "accept_edits": PermissionWorkspace, "auto": PermissionWorkspace, "yolo": PermissionFull} {
+		if got := replay(old).mode(); got != want {
+			t.Errorf("旧日志里的 %q 回放为 %q，want %q", old, got, want)
+		}
+	}
+	if got := replay("yolo", "read_only").mode(); got != PermissionReadOnly {
+		t.Errorf("以最后一次选择为准：%q", got)
+	}
+	// 以后的版本可能写进我们不认得的值：宁可只读，也不放宽
+	if got := replay("future_mode").mode(); got != PermissionReadOnly {
+		t.Errorf("不认得的值 = %q，want 按最严格 read_only", got)
+	}
+	if Decide("future_mode", ActionWriteFile) != VerdictDeny || Decide("future_mode", ActionShell) != VerdictDeny {
+		t.Error("不认得的模式下写和 shell 必须拒绝")
+	}
+}
+
+// 旧值也能从 Manager 选：落盘的是新值；非法值被拒绝；日志里的一行格式不变（旧版本读到未知值也不会出错）。
+func TestSetPermissionModeAcceptsLegacyValuesAndStoresNewOnes(t *testing.T) {
+	f := newGateFixture(t)
+	for old, want := range map[string]string{"plan": PermissionReadOnly, "yolo": PermissionFull, "accept_edits": PermissionWorkspace, "ask": PermissionWorkspace, "auto": PermissionWorkspace, "read_only": PermissionReadOnly} {
+		reply, err := f.manager.SetPermissionMode(f.id, contract.RoleInitiator, old)
+		if err != nil {
+			t.Fatalf("选 %q：%v", old, err)
+		}
+		if reply.Session == nil || reply.Session.PermissionMode != want {
+			t.Fatalf("选 %q 之后会话视图 = %+v，want %q", old, reply.Session, want)
+		}
+		recorded := f.messages(KindPermissionModeSet)
+		if got := recorded[len(recorded)-1].Mode; got != want {
+			t.Fatalf("选 %q 落盘的是 %q，want %q", old, got, want)
+		}
+	}
+	for _, bad := range []string{"", "god", "ASK"} {
+		if _, err := f.manager.SetPermissionMode(f.id, contract.RoleInitiator, bad); err == nil {
+			t.Fatalf("%q 应被拒绝", bad)
+		} else if code, _ := CodeOf(err); code != contract.ErrInvalidInput {
+			t.Fatalf("%q 的错误码 = %q", bad, code)
 		}
 	}
 }
@@ -144,17 +228,17 @@ func (f *gateFixture) messages(kind string) []Message {
 	return out
 }
 
-// 运行员工、把目录文件用作材料：五个模式下的处理（拒绝 / 问 / 免问）。
+// 运行员工、把目录文件用作材料：三个模式下的处理（拒绝 / 问 / 免问）。
 func TestGateHandlesRunEmployeeAndFolderFileInEveryMode(t *testing.T) {
 	cases := []struct {
 		action string
 		want   map[string]Verdict
 	}{
 		{ActionRunEmployee, map[string]Verdict{
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAllow, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAsk, PermissionFull: VerdictAllow,
 		}},
 		{ActionUseFolderFile, map[string]Verdict{
-			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAsk, PermissionYolo: VerdictAllow,
+			PermissionReadOnly: VerdictDeny, PermissionWorkspace: VerdictAsk, PermissionFull: VerdictAllow,
 		}},
 	}
 	for _, tc := range cases {
@@ -334,7 +418,7 @@ func TestChangingModeClearsAlwaysAllowed(t *testing.T) {
 	if !current.alwaysAllowed[ActionRunEmployee] {
 		t.Fatalf("总是允许应记在会话里：%v", current.alwaysAllowed)
 	}
-	f.mustMode(PermissionAsk)
+	f.mustMode(PermissionWorkspace)
 	current, _ = f.manager.load(f.id)
 	if len(current.alwaysAllowed) != 0 {
 		t.Fatalf("换模式应清空：%v", current.alwaysAllowed)

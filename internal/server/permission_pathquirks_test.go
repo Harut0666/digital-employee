@@ -43,7 +43,7 @@ func TestWindowsPathQuirksCannotWriteTheProgramFolders(t *testing.T) {
 		{"./交付/x.md", "交付"},
 		{`材料\x.md`, "材料"},
 	}
-	for _, mode := range []string{session.PermissionAsk, session.PermissionAcceptEdits, session.PermissionAuto, session.PermissionYolo} {
+	for _, mode := range []string{session.PermissionWorkspace, session.PermissionFull} {
 		t.Run(mode, func(t *testing.T) {
 			h := newHarness(t, frontdeskScript(modelSays("占位")))
 			// 一条回复的工具轮次有上限（20），分批：每批 10 次调用后说一句话结束这一轮
@@ -106,7 +106,7 @@ func TestWindowsPathQuirksCannotWriteAnExistingMaterialFolder(t *testing.T) {
 	}
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("写不了。"))...))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "随便写")
 
@@ -136,7 +136,7 @@ func TestOrdinaryFileNamesStillWork(t *testing.T) {
 	}
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("都写好了。"))...))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleInitiator, "写")
 

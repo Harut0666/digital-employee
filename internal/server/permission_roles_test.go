@@ -1,4 +1,4 @@
-// 审查 0007 的修复（角色与留痕）：写文件和目录文件自动确认只认发起人的话；放开模式直接开工的目录文件要留痕。
+// 审查 0007 的修复（角色与留痕）：写文件和目录文件自动确认只认发起人的话；完全权限模式直接开工的目录文件要留痕。
 package server_test
 
 import (
@@ -12,7 +12,7 @@ import (
 // 不是发起人（审核人、操作员）的话触发的这一轮：写文件、改文件不管哪个模式都被拒绝并留痕，不弹确认、不落盘。
 func TestOnlyTheInitiatorsWordsCanWriteFiles(t *testing.T) {
 	for _, role := range []contract.Role{contract.RoleReviewer, contract.RoleOperator} {
-		for _, mode := range []string{session.PermissionAsk, session.PermissionAcceptEdits, session.PermissionAuto, session.PermissionYolo} {
+		for _, mode := range session.PermissionModes {
 			t.Run(string(role)+"/"+mode, func(t *testing.T) {
 				h := newHarness(t, frontdeskScript(
 					modelCalls(contract.ToolWriteFile, map[string]any{"path": "notes/新.md", "content": "审核人让写的"}),
@@ -68,7 +68,7 @@ func TestTheInitiatorCanWriteAfterAReviewerSpoke(t *testing.T) {
 		modelSays("写好了。"),
 	))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleReviewer, "你好")
 	h.say(created.ID, contract.RoleInitiator, "写一个")
@@ -78,9 +78,9 @@ func TestTheInitiatorCanWriteAfterAReviewerSpoke(t *testing.T) {
 	}
 }
 
-// 放开模式的目录文件自动确认也只认发起人：审核人说话时被拒绝，不复制进会话材料。
+// 完全权限模式的目录文件自动确认也只认发起人：审核人说话时被拒绝，不复制进会话材料。
 func TestOnlyTheInitiatorsWordsAutoConfirmFolderFiles(t *testing.T) {
-	for _, mode := range []string{session.PermissionAsk, session.PermissionYolo} {
+	for _, mode := range []string{session.PermissionWorkspace, session.PermissionFull} {
 		t.Run(mode, func(t *testing.T) {
 			h := newHarness(t, frontdeskScript(
 				modelCalls("use_folder_file", map[string]any{"path": folderSales, "reason": "本周销售明细"}),
@@ -111,17 +111,17 @@ func TestOnlyTheInitiatorsWordsAutoConfirmFolderFiles(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------- yolo 直接开工的留痕
+// ---------------------------------------------------------------- full 直接开工的留痕
 
-// 放开模式不弹表单直接开工时，自动确认了哪些目录文件也要写进会话日志（auto 下目录文件要人确认，不走这里）。
-func TestYoloDirectStartTracesTheFolderFilesItConfirmed(t *testing.T) {
+// 完全权限模式不弹表单直接开工时，自动确认了哪些目录文件也要写进会话日志（workspace 下目录文件要人确认，不走这里）。
+func TestFullDirectStartTracesTheFolderFilesItConfirmed(t *testing.T) {
 	h := newHarness(t, runScript(t,
 		runEmployeeCall(period44, folderSales, folderMinutes),
 		modelSays("已开工。"),
 	), withScriptedModel())
 	h.putFolderMaterials(t)
 	created := h.createSession()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "出周报")
 
@@ -137,7 +137,7 @@ func TestYoloDirectStartTracesTheFolderFilesItConfirmed(t *testing.T) {
 			args, _ := message.Args.(map[string]any)
 			path, _ := args["path"].(string)
 			folderTraces[path] = true
-			if !strings.Contains(message.Reason, "放开") || !strings.Contains(message.Reason, path) {
+			if !strings.Contains(message.Reason, "完全权限") || !strings.Contains(message.Reason, path) {
 				t.Fatalf("目录文件的留痕要写明模式和文件：%+v", message)
 			}
 		}
@@ -155,7 +155,7 @@ func TestDirectStartWithoutFolderFilesTracesOnce(t *testing.T) {
 	), withScriptedModel())
 	created := h.createSession()
 	uploadOK(h, created.ID, a01Files(t)...)
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "出周报")
 

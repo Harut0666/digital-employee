@@ -161,9 +161,9 @@ func TestRunEmployeeValidationFailuresGoBackToTheAgentWithoutAForm(t *testing.T)
 
 // ---------------------------------------------------------------- 员工表单卡：预填标记、材料来源、确认开工
 
-// ask 和 accept_edits 一定弹员工表单卡，即使表单完整有效、材料也齐了。
-func TestAskAndAcceptEditsAlwaysShowTheFormEvenWhenItIsComplete(t *testing.T) {
-	for _, mode := range []string{session.PermissionAsk, session.PermissionAcceptEdits} {
+// 仅限工作区一定弹员工表单卡，即使表单完整有效、材料也齐了。
+func TestWorkspaceModeAlwaysShowsTheFormEvenWhenItIsComplete(t *testing.T) {
+	for _, mode := range []string{session.PermissionWorkspace} {
 		t.Run(mode, func(t *testing.T) {
 			h := newHarness(t, runScript(t,
 				runEmployeeCall(period44, folderSales, folderMinutes),
@@ -404,29 +404,29 @@ func TestTheFormAsEditedByThePersonWins(t *testing.T) {
 
 // ---------------------------------------------------------------- 权限模式
 
-func TestPlanModeRefusesRunEmployee(t *testing.T) {
+func TestReadOnlyModeRefusesRunEmployee(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		runEmployeeCall(period44),
-		modelSays("计划模式下我只能给方案。"),
+		modelSays("仅可查看模式下我只能给方案。"),
 	), withScriptedModel())
 	created := h.createSession()
-	h.mustSetMode(created.ID, session.PermissionPlan)
+	h.mustSetMode(created.ID, session.PermissionReadOnly)
 
 	h.say(created.ID, contract.RoleInitiator, "出周报")
 
 	detail := h.readSession(created.ID)
 	denied := deniedTools(detail)
-	if len(denied) != 1 || denied[0].Tool != session.ToolRunEmployee || !strings.Contains(denied[0].Reason, "计划模式") {
-		t.Fatalf("plan 模式下的拒绝留痕 = %+v", denied)
+	if len(denied) != 1 || denied[0].Tool != session.ToolRunEmployee || !strings.Contains(denied[0].Reason, "仅可查看模式") {
+		t.Fatalf("read_only 模式下的拒绝留痕 = %+v", denied)
 	}
 	if len(formCards(detail)) != 0 || h.taskCount() != 0 {
-		t.Fatal("plan 模式下不弹表单、不开工")
+		t.Fatal("read_only 模式下不弹表单、不开工")
 	}
 }
 
-// auto：表单完整有效、必需开工清单项备齐，免确认直接开工（留痕）；不完整就弹表单。yolo 同。
-func TestAutoAndYoloStartDirectlyWhenTheFormIsCompleteAndOtherwiseAsk(t *testing.T) {
-	for _, mode := range []string{session.PermissionAuto, session.PermissionYolo} {
+// full：表单完整有效、必需开工清单项备齐，免确认直接开工（留痕）；不完整就弹表单。
+func TestFullStartsDirectlyWhenTheFormIsCompleteAndOtherwiseAsks(t *testing.T) {
+	for _, mode := range []string{session.PermissionFull} {
 		t.Run(mode+" 完整有效：直接开工", func(t *testing.T) {
 			h := newHarness(t, runScript(t,
 				runEmployeeCall(period44, "销售明细.xlsx", "周会纪要_2026W44.docx"),
@@ -497,43 +497,43 @@ func TestAutoAndYoloStartDirectlyWhenTheFormIsCompleteAndOtherwiseAsk(t *testing
 	}
 }
 
-// 目录文件用作材料：auto 要问（弹表单卡，由人确认）；yolo 自动确认，直接开工并复制。
-func TestOnlyYoloAutoConfirmsFolderFiles(t *testing.T) {
-	t.Run("auto：弹表单让人确认", func(t *testing.T) {
+// 目录文件用作材料：workspace 要问（弹表单卡，由人确认）；full 自动确认，直接开工并复制。
+func TestOnlyFullAutoConfirmsFolderFiles(t *testing.T) {
+	t.Run("workspace：弹表单让人确认", func(t *testing.T) {
 		h := newHarness(t, runScript(t,
 			runEmployeeCall(period44, folderSales, folderMinutes),
 			modelSays("好。"),
 		), withScriptedModel())
 		h.putFolderMaterials(t)
 		created := h.createSession()
-		h.mustSetMode(created.ID, session.PermissionAuto)
+		h.mustSetMode(created.ID, session.PermissionWorkspace)
 		stream := h.openStream(created.ID)
 		defer stream.close()
 		turn := h.sayAsync(created.ID, contract.RoleInitiator, "出周报")
 
 		card := h.waitForm(created.ID)
 		if h.taskCount() != 0 {
-			t.Fatal("auto 下目录文件要人确认，不该直接开工")
+			t.Fatal("workspace 下目录文件要人确认，不该直接开工")
 		}
 		h.mustConfirmForm(created.ID, card, nil)
 		h.waitTurn(stream, turn)
 		expectState(t, h.settled(startedTask(t, h.readSession(created.ID))), contract.StateAwaitingReview)
 	})
 
-	t.Run("yolo：自动确认并复制，直接开工", func(t *testing.T) {
+	t.Run("full：自动确认并复制，直接开工", func(t *testing.T) {
 		h := newHarness(t, runScript(t,
 			runEmployeeCall(period44, folderSales, folderMinutes),
 			modelSays("已开工。"),
 		), withScriptedModel())
 		h.putFolderMaterials(t)
 		created := h.createSession()
-		h.mustSetMode(created.ID, session.PermissionYolo)
+		h.mustSetMode(created.ID, session.PermissionFull)
 
 		h.say(created.ID, contract.RoleInitiator, "出周报")
 
 		detail := h.readSession(created.ID)
 		if len(formCards(detail)) != 0 {
-			t.Fatalf("yolo 下不该弹表单：%+v", formCards(detail))
+			t.Fatalf("full 下不该弹表单：%+v", formCards(detail))
 		}
 		if len(detail.Attachments) != 2 {
 			t.Fatalf("目录文件应在开工时复制进会话材料：%+v", detail.Attachments)
@@ -542,17 +542,15 @@ func TestOnlyYoloAutoConfirmsFolderFiles(t *testing.T) {
 	})
 }
 
-// use_folder_file（提议把目录文件用作材料）也过权限关口：plan 拒绝，yolo 自动确认，其余发“使用目录文件”卡由人确认。
+// use_folder_file（提议把目录文件用作材料）也过权限关口：read_only 拒绝，full 自动确认，workspace 发“使用目录文件”卡由人确认。
 func TestUseFolderFileFollowsThePermissionMode(t *testing.T) {
 	cases := []struct {
 		mode string
 		want string // deny / card / auto
 	}{
-		{session.PermissionPlan, "deny"},
-		{session.PermissionAsk, "card"},
-		{session.PermissionAcceptEdits, "card"},
-		{session.PermissionAuto, "card"},
-		{session.PermissionYolo, "auto"},
+		{session.PermissionReadOnly, "deny"},
+		{session.PermissionWorkspace, "card"},
+		{session.PermissionFull, "auto"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {
@@ -569,8 +567,8 @@ func TestUseFolderFileFollowsThePermissionMode(t *testing.T) {
 			detail := h.readSession(created.ID)
 			switch tc.want {
 			case "deny":
-				if denied := deniedTools(detail); len(denied) != 1 || !strings.Contains(denied[0].Reason, "计划模式") || len(detail.Attachments) != 0 {
-					t.Fatalf("plan 下的拒绝 = %+v，材料 %+v", denied, detail.Attachments)
+				if denied := deniedTools(detail); len(denied) != 1 || !strings.Contains(denied[0].Reason, "仅可查看模式") || len(detail.Attachments) != 0 {
+					t.Fatalf("read_only 下的拒绝 = %+v，材料 %+v", denied, detail.Attachments)
 				}
 			case "card":
 				card := cardOf(t, detail.Messages, session.CardUseFile)
@@ -579,7 +577,7 @@ func TestUseFolderFileFollowsThePermissionMode(t *testing.T) {
 				}
 			case "auto":
 				if len(detail.Attachments) != 1 || detail.Attachments[0].Name != "销售明细.xlsx" {
-					t.Fatalf("yolo 自动确认后的材料 = %+v", detail.Attachments)
+					t.Fatalf("full 自动确认后的材料 = %+v", detail.Attachments)
 				}
 				if allowed := entriesOf(detail.Messages, session.KindPermissionAllowed); len(allowed) != 1 || allowed[0].Tool != "use_folder_file" {
 					t.Fatalf("自动确认要留痕：%+v", allowed)
@@ -591,7 +589,7 @@ func TestUseFolderFileFollowsThePermissionMode(t *testing.T) {
 
 // 任何模式都不能让 Agent 审核、重试、终止：这些工具不存在，调用被拒绝并留痕，任务不动。
 func TestNoModeLetsTheAgentReviewRetryOrTerminate(t *testing.T) {
-	for _, mode := range []string{session.PermissionAsk, session.PermissionYolo} {
+	for _, mode := range []string{session.PermissionWorkspace, session.PermissionFull} {
 		t.Run(mode, func(t *testing.T) {
 			h := newHarness(t, runScript(t,
 				runEmployeeCall(period44, "销售明细.xlsx", "周会纪要_2026W44.docx"),
@@ -608,7 +606,7 @@ func TestNoModeLetsTheAgentReviewRetryOrTerminate(t *testing.T) {
 			stream := h.openStream(created.ID)
 			defer stream.close()
 			turn := h.sayAsync(created.ID, contract.RoleInitiator, "出第 44 周周报")
-			if mode == session.PermissionAsk {
+			if mode == session.PermissionWorkspace {
 				card := h.waitForm(created.ID)
 				h.mustConfirmForm(created.ID, card, map[string]any{"attachments": []string{"销售明细.xlsx", "周会纪要_2026W44.docx"}})
 			}
@@ -645,7 +643,7 @@ func TestRunEmployeeIsRefusedWhileATaskIsOpenAndWorksAgainAfterDelivery(t *testi
 	)), withScriptedModel())
 	created := h.createSession()
 	uploadOK(h, created.ID, a01Files(t)...)
-	h.mustSetMode(created.ID, session.PermissionAuto)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "出第 44 周周报")
 	first := startedTask(t, h.readSession(created.ID))

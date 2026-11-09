@@ -47,7 +47,7 @@ func TestShortNamesCannotWriteTheProgramFolders(t *testing.T) {
 	}
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("写不了。"))...))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "随便写")
 

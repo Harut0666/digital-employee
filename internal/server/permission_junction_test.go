@@ -58,7 +58,7 @@ func TestWritesThroughJunctionsFollowTheSameBoundaries(t *testing.T) {
 	calls = append(calls, modelCalls(contract.ToolWriteFile, map[string]any{"path": "到笔记/联接内.md", "content": "正常"}))
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("完了。"))...))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "随便写")
 
@@ -105,7 +105,7 @@ func TestWritesThroughDanglingJunctionsAreDenied(t *testing.T) {
 	}
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("写不了。"))...))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "随便写")
 

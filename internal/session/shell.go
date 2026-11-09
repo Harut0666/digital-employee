@@ -7,12 +7,12 @@
 // │ 也就是说，shell 打破了 ADR-0007 里“写操作只限工作区、审核只有人能做”的硬边界。          │
 // │ 下面做的是缓解，不是防护：                                                              │
 // │  (a) 命令里出现本服务的监听地址/端口或 localhost/127.0.0.1 时，确认卡加醒目警告，        │
-// │      放开（yolo）模式下也改为询问；                                                     │
+// │      完全权限（full）模式下也改为询问；                                                 │
 // │  (b) 命令明显指向“交付”“材料”或工作区外的绝对路径时，确认卡加警告（尽力而为的提示，      │
 // │      靠字符串识别，换个写法就能绕过，不是安全边界）；                                    │
 // │  (c) 服务端对会改变审核/退回/终止状态的接口额外要求浏览器的同源标记（internal/server/origin.go），│
 // │      命令行 curl 默认不带——只是提高门槛，伪造这个头很容易。                              │
-// │ 真正的边界只有一条：权限模式。plan 拒绝、ask/accept_edits/auto 每次问、yolo 才放行；      │
+// │ 真正的边界只有一条：权限模式。read_only 拒绝、workspace 每次问、full 才放行；            │
 // │ 说话人不是发起人时任何模式都拒绝。把 shell 交给谁，就是把这台机器上该用户的权限交给谁。    │
 // └─────────────────────────────────────────────────────────────────────────────────────────┘
 //
@@ -113,7 +113,7 @@ var (
 
 // shellRisk 对一条命令的提示。
 type shellRisk struct {
-	// Loopback 命令里出现了本机服务地址：yolo 也要问
+	// Loopback 命令里出现了本机服务地址：full 也要问
 	Loopback bool
 	Warnings []string
 }
@@ -143,7 +143,7 @@ func analyzeShell(command, root string, local []string) shellRisk {
 	}
 	if loopback {
 		risk.Loopback = true
-		risk.Warnings = append(risk.Warnings, "命令里出现了本机服务地址或端口（localhost / 127.0.0.1 / 本程序的监听端口）。命令行可以直接调用本程序的 HTTP 接口，绕过界面上“审核只有人能做”的限制。请确认这条命令确实没有在调用本程序的接口；放开模式下这类命令也必须由你确认。")
+		risk.Warnings = append(risk.Warnings, "命令里出现了本机服务地址或端口（localhost / 127.0.0.1 / 本程序的监听端口）。命令行可以直接调用本程序的 HTTP 接口，绕过界面上“审核只有人能做”的限制。请确认这条命令确实没有在调用本程序的接口；完全权限模式下这类命令也必须由你确认。")
 	}
 	if strings.Contains(command, "交付") || strings.Contains(command, "材料") {
 		risk.Warnings = append(risk.Warnings, "命令提到了“交付”或“材料”文件夹。这两处由程序写入，Agent 的文件工具不能写，命令行没有这个限制。")
@@ -390,8 +390,8 @@ func formatShellOutput(stdout, stderr *tailBuffer, exitCode int, timedOut bool, 
 	return out.String()
 }
 
-// shellTool shell。动作类别是“运行命令”：plan 拒绝，ask / accept_edits / auto 每次问，yolo 放行
-// （命令里出现本机服务地址时 yolo 也问）；“本会话总是允许”不提供；说话人不是发起人时任何模式都拒绝。
+// shellTool shell。动作类别是“运行命令”：read_only 拒绝，workspace 每次问，full 放行并写日志
+// （命令里出现本机服务地址时 full 也问）；“本会话总是允许”不提供；说话人不是发起人时任何模式都拒绝。
 func (loop *turnLoop) shellTool() tool {
 	t := func() *turn { return loop.turn }
 	return tool{
@@ -400,7 +400,7 @@ func (loop *turnLoop) shellTool() tool {
 			Description: "在工作区目录里运行一条命令行命令（Windows 上是 pwsh，其他平台是 bash）。每次调用是新进程，不保留状态；工作目录是工作区（或工作区内的 workdir）。" +
 				"输出是 stdout，加 [stderr] 段，非零退出码写 [exit code: N]（不是工具错误，你自己判断）；超时会杀掉整个进程树。" +
 				"优先用专用工具：找文件用 find_files，搜内容用 search_content，读文件用 read_file，写文件用 write_file / edit_file，不要用命令行 ls / cat / grep / echo >。" +
-				"命令行没有沙箱，每次运行都要发起人确认（放开模式除外）；计划模式下不能用，请把打算运行的命令写在方案里。" +
+				"命令行没有沙箱，每次运行都要发起人确认（完全权限模式除外）；仅可查看模式下不能用，请把打算运行的命令写在方案里。" +
 				"不要用命令行调用本程序自己的 HTTP 接口。",
 			Parameters: map[string]any{"type": "object", "required": []any{"description", "command"}, "properties": map[string]any{
 				"description": map[string]any{"type": "string", "description": "一句话说明这条命令要做什么（必填，会显示在确认卡上）"},
@@ -435,7 +435,7 @@ func (loop *turnLoop) shellTool() tool {
 			}
 			risk := analyzeShell(request.command, t().workspaceDir(), loop.job.manager.localAddrs())
 			if risk.Loopback {
-				return true, "命令里出现本机服务地址或端口，放开模式下也要发起人确认"
+				return true, "命令里出现本机服务地址或端口，完全权限模式下也要发起人确认"
 			}
 			return false, ""
 		},
@@ -471,10 +471,10 @@ func (m *Manager) localAddrs() []string {
 // shellModeLine 系统提示词里说明 shell 在当前模式下的处理。
 func shellModeLine(mode string) string {
 	switch mode {
-	case PermissionPlan:
-		return "shell（命令行）在计划模式下会被直接拒绝：不要调用它，把打算运行的命令和理由写进方案里，等发起人切换模式。"
-	case PermissionYolo:
-		return "shell（命令行）在放开模式下不用确认，但命令里出现本机服务地址（localhost、127.0.0.1、本程序端口）时仍会弹确认卡；你不应该用命令行调用本程序自己的 HTTP 接口。命令行没有沙箱，务必只做用户要求的事。"
+	case PermissionReadOnly:
+		return "shell（命令行）在仅可查看模式下会被直接拒绝：不要调用它，把打算运行的命令和理由写进方案里，等发起人切换模式。"
+	case PermissionFull:
+		return "shell（命令行）在完全权限模式下不用确认，但命令里出现本机服务地址（localhost、127.0.0.1、本程序端口）时仍会弹确认卡；你不应该用命令行调用本程序自己的 HTTP 接口。命令行没有沙箱，务必只做用户要求的事。"
 	}
 	return "shell（命令行）每次运行都会弹确认卡，由发起人看过命令后允许一次或拒绝（没有“总是允许”）；被拒绝后换办法，不要原样再试。命令行没有沙箱，不要用它去碰工作区之外的东西，也不要调用本程序自己的 HTTP 接口。"
 }

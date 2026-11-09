@@ -32,13 +32,13 @@ func TestFindFilesGlobSortedByModTimeAndSkipsVCS(t *testing.T) {
 		}
 	}
 	created := h.folderSession()
-	h.mustSetMode(created.ID, session.PermissionPlan) // 只读：plan 下也允许
+	h.mustSetMode(created.ID, session.PermissionReadOnly) // 只读：read_only 下也允许
 
 	h.say(created.ID, contract.RoleInitiator, "找文件")
 
 	detail := h.readSession(created.ID)
 	if len(deniedTools(detail)) != 0 || len(permissionCards(detail)) != 0 {
-		t.Fatalf("find_files 在 plan 下不该被拒绝或询问：%+v", detail.Messages)
+		t.Fatalf("find_files 在 read_only 下不该被拒绝或询问：%+v", detail.Messages)
 	}
 	calls := toolMessages(detail, "find_files")
 	if len(calls) != 3 {
@@ -86,7 +86,7 @@ func TestSearchContentGroupsByFileAndSkipsBinaries(t *testing.T) {
 	h.writeWorkspaceFile(t, "c.bin", []byte("华南\x00下降"))
 	h.writeWorkspaceFile(t, ".git/x.md", []byte("华南环比下降"))
 	created := h.folderSession()
-	h.mustSetMode(created.ID, session.PermissionPlan)
+	h.mustSetMode(created.ID, session.PermissionReadOnly)
 
 	h.say(created.ID, contract.RoleInitiator, "搜")
 
