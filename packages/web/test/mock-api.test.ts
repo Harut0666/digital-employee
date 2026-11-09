@@ -125,7 +125,7 @@ describe("模拟数据模式的会话", () => {
     expect(await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).toMatchObject({ ok: false, error: "form_settled" });
   });
 
-  test("员工表单：必需项不齐不能确认；不是这个员工；只有发起人能答；plan 模式拒绝", async () => {
+  test("员工表单：必需项不齐不能确认；不是这个员工；只有发起人能答；read_only 模式拒绝", async () => {
     const { api, setRole } = asRole("initiator");
     const created = await api.createSession();
     await api.sendMessage(created.id, "出周报");
@@ -145,7 +145,7 @@ describe("模拟数据模式的会话", () => {
     expect(detail.taskId).toBeUndefined();
 
     const planned = await api.createSession();
-    await api.setPermissionMode(planned.id, "plan");
+    await api.setPermissionMode(planned.id, "read_only");
     await api.sendMessage(planned.id, "出周报");
     const denied = await waitFor(api, planned.id, (messages) => messages.some((m) => m.kind === "tool_denied"));
     expect(denied.messages.some((m) => m.card?.type === "employee_form")).toBe(false);
@@ -322,84 +322,84 @@ describe("模拟数据模式的权限模式（T48）", () => {
     return { ...asRoleApi, id: created.id };
   }
 
-  test("新会话是询问；只有发起人能选；选了留一条说明并写进会话", async () => {
+  test("新会话是仅限工作区；只有发起人能选；旧值映射成新值；选了写进会话", async () => {
     const { api, setRole, id } = await drafting();
-    expect((await api.getSession(id)).permissionMode).toBe("ask");
+    expect((await api.getSession(id)).permissionMode).toBe("workspace");
     setRole("reviewer");
-    expect(await api.setPermissionMode(id, "yolo")).toMatchObject({ ok: false, error: "forbidden_role" });
+    expect(await api.setPermissionMode(id, "full")).toMatchObject({ ok: false, error: "forbidden_role" });
     setRole("initiator");
     expect(await api.setPermissionMode(id, "god" as never)).toMatchObject({ ok: false, error: "invalid_input" });
-    const set = await api.setPermissionMode(id, "accept_edits");
-    expect(set.ok && set.session.permissionMode).toBe("accept_edits");
+    const set = await api.setPermissionMode(id, "full");
+    expect(set.ok && set.session.permissionMode).toBe("full");
+    // 后端也收旧五档的值（映射成新值）；落盘和会话视图都只有新值
+    const legacy = await api.setPermissionMode(id, "plan" as never);
+    expect(legacy.ok && legacy.session.permissionMode).toBe("read_only");
     const detail = await api.getSession(id);
-    expect(detail.messages.filter((m) => m.kind === "permission_mode_set").map((m) => m.mode)).toEqual(["accept_edits"]);
-    expect((await api.createSession()).permissionMode).toBe("ask");
+    expect(detail.messages.filter((m) => m.kind === "permission_mode_set").map((m) => m.mode)).toEqual(["full", "read_only"]);
+    expect((await api.createSession()).permissionMode).toBe("workspace");
   });
 
-  test("询问：写文件先弹确认卡，允许后写出并留一行写文件的工具行", async () => {
+  test("仅限工作区：写文件直接写并留痕，不再弹确认；运行命令先弹确认卡，允许后运行", async () => {
     const { api, id } = await drafting();
     await api.sendMessage(id, "把要点整理成一个文件");
+    const wrote = await waitFor(api, id, settled);
+    expect(wrote.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    expect(wrote.messages.some((m) => m.kind === "permission_allowed" && m.tool === "write_file")).toBe(true);
+    expect(wrote.messages.find((m) => m.kind === "tool_called" && m.tool === "write_file")?.result).toMatchObject({ action: "created" });
+
+    await api.sendMessage(id, "运行命令看看有多少个文件");
     const asked = await waitFor(api, id, pending);
     const card = asked.messages.find((m) => m.card?.type === "permission")!.card!;
-    expect(card).toMatchObject({ action: "write_file", actionLabel: "写入文件", pending: true });
-    expect(card.choices?.map((c) => c.decision)).toEqual(["allow_once", "always_allow", "deny"]);
+    expect(card).toMatchObject({ action: "run_command", actionLabel: "运行命令", pending: true });
+    expect(card.choices?.map((c) => c.decision)).toEqual(["allow_once", "deny"]);
     expect((await api.decidePermission(id, card.requestId!, "allow_once")).ok).toBe(true);
     expect(await api.decidePermission(id, card.requestId!, "deny")).toMatchObject({ ok: false, error: "permission_settled" });
-    const done = await waitFor(api, id, settled);
+    const done = await waitFor(api, id, (messages) => messages.filter((m) => m.kind === "assistant").length === 2);
     expect(done.messages.find((m) => m.card?.type === "permission")?.card).toMatchObject({ pending: false, decision: "allow_once" });
-    const written = done.messages.find((m) => m.kind === "tool_called" && m.tool === "write_file");
-    expect(written?.result).toMatchObject({ action: "created" });
+    expect(done.messages.filter((m) => m.kind === "assistant").at(-1)?.text).toContain("命令跑完了");
   });
 
-  test("拒绝：不写文件，留下拒绝；本会话总是允许之后同类不再问", async () => {
+  test("拒绝：命令不运行，留下发起人拒绝", async () => {
     const { api, id } = await drafting();
-    await api.sendMessage(id, "把要点整理成一个文件");
-    const first = (await waitFor(api, id, pending)).messages.find((m) => m.card?.type === "permission")!.card!;
-    await api.decidePermission(id, first.requestId!, "deny");
+    await api.sendMessage(id, "运行命令看看有多少个文件");
+    const card = (await waitFor(api, id, pending)).messages.find((m) => m.card?.type === "permission")!.card!;
+    await api.decidePermission(id, card.requestId!, "deny");
     const denied = await waitFor(api, id, settled);
-    expect(denied.messages.some((m) => m.kind === "tool_denied" && m.decision === "deny" && m.reason?.startsWith("发起人拒绝"))).toBe(true);
-    expect(denied.messages.some((m) => m.kind === "tool_called" && m.tool === "write_file")).toBe(false);
-
-    await api.sendMessage(id, "再把要点保存成文件");
-    const again = await waitFor(api, id, (messages) => messages.filter((m) => m.card?.type === "permission" && m.card.pending).length === 1);
-    const second = again.messages.filter((m) => m.card?.type === "permission").at(-1)!.card!;
-    await api.decidePermission(id, second.requestId!, "always_allow");
-    await waitFor(api, id, (messages) => messages.filter((m) => m.kind === "assistant").length === 2);
-
-    // 同一会话里下一次不再问，留一条放行说明
-    await api.sendMessage(id, "还要写一个文件");
-    const third = await waitFor(api, id, (messages) => messages.filter((m) => m.kind === "assistant").length === 3);
-    expect(third.messages.filter((m) => m.card?.type === "permission")).toHaveLength(2);
-    expect(third.messages.some((m) => m.kind === "permission_allowed")).toBe(true);
-    // 换模式清空
-    await api.setPermissionMode(id, "ask");
-    await api.sendMessage(id, "最后再写一个文件");
-    await waitFor(api, id, pending);
+    expect(denied.messages.some((m) => m.kind === "tool_denied" && m.tool === "shell" && m.decision === "deny" && m.reason?.startsWith("发起人拒绝"))).toBe(true);
+    expect(denied.messages.some((m) => m.kind === "assistant" && m.text?.includes("命令跑完了"))).toBe(false);
   });
 
-  test("计划：直接拒绝；接受编辑：直接写并留痕", async () => {
-    const plan = await drafting();
-    await plan.api.setPermissionMode(plan.id, "plan");
-    await plan.api.sendMessage(plan.id, "把要点整理成一个文件");
-    const planned = await waitFor(plan.api, plan.id, settled);
-    expect(planned.messages.some((m) => m.kind === "tool_denied" && m.reason?.includes("计划模式"))).toBe(true);
+  test("仅可查看：写文件、运行命令直接拒绝；完全权限：直接写、直接运行并留痕", async () => {
+    const readOnly = await drafting();
+    await readOnly.api.setPermissionMode(readOnly.id, "read_only");
+    await readOnly.api.sendMessage(readOnly.id, "把要点整理成一个文件");
+    const planned = await waitFor(readOnly.api, readOnly.id, settled);
+    expect(planned.messages.some((m) => m.kind === "tool_denied" && m.reason?.includes("仅可查看模式"))).toBe(true);
     expect(planned.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    await readOnly.api.sendMessage(readOnly.id, "运行命令看看");
+    const refused = await waitFor(readOnly.api, readOnly.id, (messages) => messages.filter((m) => m.kind === "tool_denied").length === 2);
+    expect(refused.messages.some((m) => m.kind === "tool_denied" && m.tool === "shell" && m.reason?.includes("仅可查看模式"))).toBe(true);
 
-    const accept = await drafting();
-    await accept.api.setPermissionMode(accept.id, "accept_edits");
-    await accept.api.sendMessage(accept.id, "把要点整理成一个文件");
-    const written = await waitFor(accept.api, accept.id, settled);
-    expect(written.messages.some((m) => m.kind === "permission_allowed")).toBe(true);
+    const full = await drafting();
+    await full.api.setPermissionMode(full.id, "full");
+    await full.api.sendMessage(full.id, "把要点整理成一个文件");
+    const written = await waitFor(full.api, full.id, settled);
+    expect(written.messages.some((m) => m.kind === "permission_allowed" && m.tool === "write_file" && m.reason?.includes("完全权限模式"))).toBe(true);
     expect(written.messages.some((m) => m.kind === "tool_called" && m.tool === "write_file")).toBe(true);
+    await full.api.sendMessage(full.id, "运行命令看看");
+    const ran = await waitFor(full.api, full.id, (messages) => messages.filter((m) => m.kind === "assistant").length === 2);
+    expect(ran.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    expect(ran.messages.some((m) => m.kind === "permission_allowed" && m.tool === "shell")).toBe(true);
+    expect(ran.messages.filter((m) => m.kind === "assistant").at(-1)?.text).toContain("命令跑完了");
   });
 
-  test("等确认时点停止：确认卡记为已取消，文件没写", async () => {
+  test("等确认时点停止：确认卡记为已取消，命令没运行", async () => {
     const { api, id } = await drafting();
-    await api.sendMessage(id, "把要点整理成一个文件");
+    await api.sendMessage(id, "运行命令看看有多少个文件");
     await waitFor(api, id, pending);
     expect(await api.stopTurn(id)).toMatchObject({ ok: true, stopped: true });
     const stopped = await waitFor(api, id, (messages) => messages.some((m) => m.card?.type === "permission" && !m.card.pending));
     expect(stopped.messages.find((m) => m.card?.type === "permission")?.card).toMatchObject({ pending: false, decision: "cancelled" });
-    expect(stopped.messages.some((m) => m.kind === "tool_called" && m.tool === "write_file" && m.result && typeof m.result === "object")).toBe(false);
+    expect(stopped.messages.some((m) => m.kind === "assistant" && m.text?.includes("命令跑完了"))).toBe(false);
   });
 });
