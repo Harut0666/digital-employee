@@ -100,7 +100,7 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Summary{View: detail.View, StatusDot: StatusDotIdle}, nil
+		return &Summary{View: detail.View, StatusDot: StatusDotIdle, Archived: detail.View.Archived}, nil
 	}
 	current, err := m.load(id)
 	if err != nil {
@@ -202,7 +202,11 @@ func (m *Manager) Summarize(role contract.Role, workspaceName func(id string) st
 		if bound[summary.ID] {
 			continue
 		}
-		out = append(out, m.summaryOf(sessionState{view: m.legacyStatus(summary)}, role, workspaceName))
+		view := m.legacyStatus(summary)
+		if view.Archived && !includeArchived {
+			continue
+		}
+		out = append(out, m.summaryOf(sessionState{view: view}, role, workspaceName))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil
@@ -275,6 +279,9 @@ func (m *Manager) summaryOf(state sessionState, role contract.Role, workspaceNam
 	out := Summary{View: view, StatusDot: dot, Unread: unread}
 	if state.current != nil {
 		out.Archived = state.current.archived
+	} else {
+		// 旧任务推导出的会话没有会话日志，归档状态在投影里
+		out.Archived = view.Archived
 	}
 	if workspaceName != nil && view.WorkspaceID != "" {
 		out.WorkspaceName = workspaceName(view.WorkspaceID)
@@ -412,6 +419,9 @@ func (m *Manager) Rename(id string, role contract.Role, title string) (*Summary,
 
 // Archive 人归档或取消归档会话。归档不改任务，只让会话默认不出现在列表里。
 func (m *Manager) Archive(id string, role contract.Role, archived bool) (*Summary, error) {
+	if strings.HasPrefix(id, legacyPrefix) {
+		return m.archiveLegacy(id, role, archived)
+	}
 	t, done, err := m.begin(id, role)
 	if err != nil {
 		return nil, err
@@ -426,6 +436,26 @@ func (m *Manager) Archive(id string, role contract.Role, archived bool) (*Summar
 	}
 	summary := m.summaryOf(sessionState{current: current, view: m.view(current)}, role, nil)
 	return &summary, nil
+}
+
+// archiveLegacy 归档或取消归档旧任务推导出的只读会话：它没有会话日志，归档状态单独存文件。
+// 这是它唯一允许的写操作，发消息、重命名、选模型等仍然由 load 拒绝为只读。
+func (m *Manager) archiveLegacy(id string, role contract.Role, archived bool) (*Summary, error) {
+	if !idPattern.MatchString(id) {
+		return nil, notFound(id)
+	}
+	for _, summary := range m.deps.Engine.List() {
+		if legacyPrefix+summary.ID != id {
+			continue
+		}
+		if err := m.legacyArchived.set(id, archived); err != nil {
+			return nil, err
+		}
+		view := m.legacyStatus(summary)
+		out := m.summaryOf(sessionState{view: view}, role, nil)
+		return &out, nil
+	}
+	return nil, notFound(id)
 }
 
 // Records 记录 tab：所有工作区里已开工的任务（任务、状态、所在会话；状态点按读的人的角色由 DotFor 现算）。
