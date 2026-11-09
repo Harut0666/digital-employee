@@ -67,6 +67,22 @@ describe("工作区接口（Spec 0006：没有切换）", () => {
     ]);
   });
 
+  test("选目录：选中、取消、失败都是结果，不抛错；请求体可空", async () => {
+    const picked = fakeFetch({ "POST /api/workspaces/pick-folder": [200, { ok: true, path: "D:\\de\\华南区" }] });
+    expect(await createWorkspaceApi("http://local", picked.impl).pickFolder()).toEqual({ ok: true, path: "D:\\de\\华南区" });
+    expect(picked.calls[0]).toMatchObject({ method: "POST", path: "/api/workspaces/pick-folder" });
+
+    const cancelled = fakeFetch({ "POST /api/workspaces/pick-folder": [200, { ok: true, cancelled: true }] });
+    expect(await createWorkspaceApi("http://local", cancelled.impl).pickFolder()).toEqual({ ok: true, cancelled: true });
+
+    const failed = fakeFetch({ "POST /api/workspaces/pick-folder": [501, { ok: false, error: "unsupported", message: "当前不是桌面窗口，请直接输入目录" }] });
+    expect(await createWorkspaceApi("http://local", failed.impl).pickFolder()).toEqual({ ok: false, error: "unsupported", message: "当前不是桌面窗口，请直接输入目录" });
+
+    const missing = fakeFetch({});
+    const res = await createWorkspaceApi("http://local", missing.impl).pickFolder();
+    expect(res.ok).toBe(false);
+  });
+
   test("读取列表失败时抛错；单目录模式带只读原因", async () => {
     const { impl } = fakeFetch({ "GET /api/workspaces": [500, { ok: false, error: "internal", message: "读取工作区登记失败" }] });
     await expect(createWorkspaceApi("http://local", impl).list()).rejects.toThrow("读取工作区登记失败");

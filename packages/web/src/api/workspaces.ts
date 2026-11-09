@@ -34,6 +34,8 @@ export type CreateWorkspaceResult = { ok: true; workspace: WorkspaceItem } | Wor
 export type UpdateWorkspaceResult = { ok: true; workspace: WorkspaceItem } | WorkspaceRefusal;
 export type DeleteWorkspaceResult = { ok: true; id: string } | WorkspaceRefusal;
 export type OpenWorkspaceResult = { ok: true; path: string } | WorkspaceRefusal;
+/** 选目录：选中 `{ok:true,path}`；人取消 `{ok:true,cancelled:true}`；做不到（不是桌面窗口等）`{ok:false,message}` */
+export type PickFolderResult = { ok: true; path: string } | { ok: true; cancelled: true } | WorkspaceRefusal;
 
 export interface WorkspaceApi {
   /** ?archived=1 连归档的会话一起带（默认不带） */
@@ -47,6 +49,8 @@ export interface WorkspaceApi {
   unregister(id: string): Promise<DeleteWorkspaceResult>;
   /** 在资源管理器里打开工作区目录 */
   open(id: string): Promise<OpenWorkspaceResult>;
+  /** 弹出系统的选择目录对话框（POST /api/workspaces/pick-folder，请求体可空），“添加工作区”里的“浏览…”用 */
+  pickFolder(): Promise<PickFolderResult>;
 }
 
 type Json = Record<string, unknown>;
@@ -83,6 +87,7 @@ export function createWorkspaceApi(origin: string = window.location.origin, fetc
     rename: (id, name) => act<UpdateWorkspaceResult>("PATCH", url(`/${encodeURIComponent(id)}`), { name }),
     unregister: (id) => act<DeleteWorkspaceResult>("DELETE", url(`/${encodeURIComponent(id)}`)),
     open: (id) => act<OpenWorkspaceResult>("POST", url(`/${encodeURIComponent(id)}/open`)),
+    pickFolder: () => act<PickFolderResult>("POST", url("/pick-folder")),
   };
 }
 
@@ -137,6 +142,10 @@ export function createMockWorkspaceApi(sessionState: MockSessionSources): Worksp
       const target = state.find((w) => w.id === id);
       if (!target) return { ok: false, error: "not_found", message: `工作区不存在：${id}` };
       return { ok: true, path: target.path };
+    },
+    async pickFolder() {
+      // 模拟模式没有系统对话框：给一个示例路径，名称缺省时用目录名补全
+      return { ok: true, path: `C:\\Users\\demo\\Documents\\示例项目${seq + 1}` };
     },
   };
 }

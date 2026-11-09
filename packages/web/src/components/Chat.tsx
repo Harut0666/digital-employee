@@ -21,6 +21,7 @@ import { StepList } from "./StepList";
 import { StageBar } from "./StageBar";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
 import { enterAction } from "../pages/settings/preferences";
+import type { NewChatTarget } from "../view/new-chat";
 
 const STATE_COLOR: Record<TaskState, string> = {
   draft: "default",
@@ -570,6 +571,9 @@ export function NewConversation({
   role,
   modelOptions,
   defaultModel,
+  target,
+  onChangeWorkspace,
+  onAddWorkspace,
 }: {
   preflight: PreflightResult | undefined;
   openSettings: () => void;
@@ -580,7 +584,14 @@ export function NewConversation({
   /** 新会话沿用的模型（设置的 lastModel）：右下角先显示它，可以有可用模型时换（T39、T45） */
   modelOptions?: readonly ModelConnectionOption[];
   defaultModel?: SessionDetail["model"];
+  /** 新对话开在哪个工作区，或被拦住（先添加工作区） */
+  target?: NewChatTarget;
+  onChangeWorkspace?: (workspaceId: string) => void;
+  onAddWorkspace?: () => void;
 }) {
+  void onChangeWorkspace;
+  void onAddWorkspace;
+  void target;
   // 新对话页选的模型：没换过时显示设置里的 lastModel；换过就是人选的
   const [picked, setPicked] = useState<ModelRef | undefined>();
   const selected = picked ?? defaultModel;
