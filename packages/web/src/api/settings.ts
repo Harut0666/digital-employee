@@ -32,8 +32,6 @@ export interface SettingsView {
   ok: true;
   /** 最近一次在会话里选的模型（T39）；还没选过为 null */
   lastModel: ModelRef | null;
-  /** DEEPSEEK_API_KEY 优先于文件 */
-  envOverride: boolean;
   connections: SettingsConnectionView[];
 }
 
@@ -277,7 +275,7 @@ const appDir = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee-app";
 
 /** 模拟的 /models 返回：按连接名给一份固定剧本，不访问网络。 */
 const MOCK_MODEL_CATALOG: Record<string, string[]> = {
-  DeepSeek: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"],
+  示例厂商: ["demo-chat", "demo-reasoner", "demo-coder"],
   通义千问: ["qwen-plus", "qwen-max", "qwen-long", "qwen-turbo"],
 };
 
@@ -301,13 +299,13 @@ function mockFetchModels(
   return { ok: true, models };
 }
 
-function createMockSettingsApi(): SettingsApi {
+export function createMockSettingsApi(): SettingsApi {
   let connections: MockConnection[] = [
     {
-      name: "DeepSeek",
-      baseUrl: "https://api.deepseek.com",
+      name: "示例厂商",
+      baseUrl: "https://api.example.com/v1",
       apiKey: "sk-demo-0000-a3f9",
-      models: ["deepseek-chat", "deepseek-reasoner"],
+      models: ["demo-chat", "demo-reasoner"],
       apiKeyLast4: "a3f9",
       hasKey: true,
       source: "file",
@@ -324,9 +322,9 @@ function createMockSettingsApi(): SettingsApi {
       isDefault: false,
     },
   ];
-  let defaultConnection = "DeepSeek";
+  let defaultConnection = "示例厂商";
   // 最近一次在会话里选的模型（Spec 0006）；模拟环境和会话模块一样，新会话默认用它
-  let lastModel: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+  let lastModel: ModelRef = { connection: "示例厂商", model: "demo-chat" };
   let demoTools: Partial<Record<string, FaultMode>> = {};
   let demo = { corruptTraceability: false, crashOnNextStep: false };
   const tools: DemoTool[] = [
@@ -378,7 +376,6 @@ function createMockSettingsApi(): SettingsApi {
     lastModel: { ...lastModel },
     demo: { toolFaults: demoTools, ...demo },
     extra: {},
-    envOverride: false,
   });
   const documentJson = (includeKeys: boolean): Record<string, unknown> => ({
     version: SETTINGS_VERSION,
@@ -405,7 +402,6 @@ function createMockSettingsApi(): SettingsApi {
       later({
         ok: true as const,
         lastModel: { ...lastModel },
-        envOverride: false,
         connections: connections.map(view),
       }),
     saveConnection: (name, input) =>
@@ -434,7 +430,7 @@ function createMockSettingsApi(): SettingsApi {
         return { ok: true as const, connections: connections.map(view) };
       }),
     testConnection: (name, model) =>
-      later({ ok: true, latencyMs: 320, model: model ?? connections.find((c) => c.name === name)?.models[0] ?? "deepseek-chat" }, 400),
+      later({ ok: true, latencyMs: 320, model: model ?? connections.find((c) => c.name === name)?.models[0] ?? "demo-chat" }, 400),
     // ---- 拉取模型（T37）：规则照搬 Go 的 handleFetchModels，用固定剧本代替网络
     fetchModels: (name, input) =>
       later<FetchModelsResult>(mockFetchModels(name, input, connections)).then((result) =>

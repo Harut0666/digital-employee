@@ -1,4 +1,4 @@
-// 真实模型提供者：用 OpenAI 兼容的 /chat/completions 接口接 DeepSeek 等模型。
+// 真实模型提供者：用 OpenAI 兼容的 /chat/completions 接口接各类模型（不绑定某个厂商）。
 // 连接的 baseUrl、apiKey 来自本机设置文件（ModelSettings），不进仓库。
 // 另提供“测试连接”：发一条极短请求，只报告可用性、延迟与错误（错误里不包含 API Key）。
 //
@@ -81,7 +81,7 @@ func (p *RealProvider) Resolve(_ string, ref *contract.ModelRef) (*ResolvedStepM
 		connectionName = p.settings.Default.Connection
 	}
 	if connectionName == "" {
-		return nil, fmt.Errorf("还没有可用的模型：请到设置里填写模型的 Key")
+		return nil, fmt.Errorf("还没有可用的模型：请到设置里添加连接并填写 Key")
 	}
 	var connection *contract.ModelConnection
 	for index := range p.settings.Connections {

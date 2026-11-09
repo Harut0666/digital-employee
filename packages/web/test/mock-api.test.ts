@@ -189,13 +189,13 @@ describe("模拟数据模式的会话", () => {
   test("建会话时带模型、任务交付后换模型（T45）：和 Go 的规则一致", async () => {
     const { api, setRole } = asRole("initiator");
     // 带模型：从第一句话起就是它；不在连接列表里的模型被拒绝
-    const created = await api.createSession(undefined, { connection: "DeepSeek", model: "deepseek-reasoner" });
-    expect((await api.getSession(created.id)).model).toEqual({ connection: "DeepSeek", model: "deepseek-reasoner" });
-    await expect(api.createSession(undefined, { connection: "DeepSeek", model: "nope" })).rejects.toThrow("不在连接");
+    const created = await api.createSession(undefined, { connection: "示例厂商", model: "demo-reasoner" });
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "示例厂商", model: "demo-reasoner" });
+    await expect(api.createSession(undefined, { connection: "示例厂商", model: "nope" })).rejects.toThrow("不在连接");
     // 旧任务推导出的只读会话仍拒绝；只有发起人能选
-    expect(await api.selectModel("task-mock-42", "DeepSeek", "deepseek-chat")).toMatchObject({ ok: false, error: "session_read_only" });
+    expect(await api.selectModel("task-mock-42", "示例厂商", "demo-chat")).toMatchObject({ ok: false, error: "session_read_only" });
     setRole("reviewer");
-    expect(await api.selectModel(created.id, "DeepSeek", "deepseek-chat")).toMatchObject({ ok: false, error: "forbidden_role" });
+    expect(await api.selectModel(created.id, "示例厂商", "demo-chat")).toMatchObject({ ok: false, error: "forbidden_role" });
 
     // 交付之后：只改会话的选择，不写任务事件
     setRole("initiator");
@@ -211,9 +211,9 @@ describe("模拟数据模式的会话", () => {
     expect((await api.command(taskId!, { type: "terminate" })).ok).toBe(true);
     expect((await api.getTask(taskId!))?.state).toBe("terminated");
     const eventsBefore = (await api.getEvents(taskId!)).length;
-    expect((await api.selectModel(created.id, "DeepSeek", "deepseek-chat")).ok).toBe(true);
+    expect((await api.selectModel(created.id, "示例厂商", "demo-chat")).ok).toBe(true);
     expect((await api.getEvents(taskId!)).length).toBe(eventsBefore);
-    expect((await api.getSession(created.id)).model).toEqual({ connection: "DeepSeek", model: "deepseek-chat" });
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "示例厂商", model: "demo-chat" });
   });
 
   test("正在说的时候发的话排进这一轮；点停止，已说的部分以“已中断”保存", async () => {
