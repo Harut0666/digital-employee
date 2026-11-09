@@ -138,6 +138,36 @@ describe("模拟数据模式的会话", () => {
     expect((await api.getTask(taskId!))?.form).toMatchObject({ allowMissingMinutes: true });
   });
 
+  test("建会话时带模型、任务交付后换模型（T45）：和 Go 的规则一致", async () => {
+    const { api, setRole } = asRole("initiator");
+    // 带模型：从第一句话起就是它；不在连接列表里的模型被拒绝
+    const created = await api.createSession(undefined, { connection: "DeepSeek", model: "deepseek-reasoner" });
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "DeepSeek", model: "deepseek-reasoner" });
+    await expect(api.createSession(undefined, { connection: "DeepSeek", model: "nope" })).rejects.toThrow("不在连接");
+    // 旧任务推导出的只读会话仍拒绝；只有发起人能选
+    expect(await api.selectModel("task-mock-42", "DeepSeek", "deepseek-chat")).toMatchObject({ ok: false, error: "session_read_only" });
+    setRole("reviewer");
+    expect(await api.selectModel(created.id, "DeepSeek", "deepseek-chat")).toMatchObject({ ok: false, error: "forbidden_role" });
+
+    // 交付之后：只改会话的选择，不写任务事件
+    setRole("initiator");
+    await api.confirmEmployee(created.id, "weekly-report");
+    await api.uploadAttachments(created.id, [new File(["x"], "销售明细.csv"), new File(["y"], "周会纪要_2026W44.docx")]);
+    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 } });
+    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    // 只有 CSV 销售明细、缺门店和目标维表，准入校验（约 0.6 秒）后任务停在待发起人补充；终止它就算结束了（不用等模拟任务自己走到待审核）
+    for (let waited = 0; (await api.getTask(taskId!))?.state !== "awaiting_initiator"; waited += 50) {
+      if (waited > 5000) throw new Error(`准入校验没有结束：${(await api.getTask(taskId!))?.state}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect((await api.command(taskId!, { type: "terminate" })).ok).toBe(true);
+    expect((await api.getTask(taskId!))?.state).toBe("terminated");
+    const eventsBefore = (await api.getEvents(taskId!)).length;
+    expect((await api.selectModel(created.id, "DeepSeek", "deepseek-chat")).ok).toBe(true);
+    expect((await api.getEvents(taskId!)).length).toBe(eventsBefore);
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "DeepSeek", model: "deepseek-chat" });
+  });
+
   test("正在说的时候发的话排进这一轮；点停止，已说的部分以“已中断”保存", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();

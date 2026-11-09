@@ -206,14 +206,36 @@ func (m *Manager) WorkspaceOf(id string) (string, error) {
 	return current.workspaceID, nil
 }
 
-// Create 在 workspaceID 工作区里开一个新会话；工作区必须登记过。
-func (m *Manager) Create(workspaceID string) (*View, error) {
+// Create 在 workspaceID 工作区里开一个新会话。model 是可选的新对话页选的模型
+// （Spec 0007「会话模型的选择」）：校验规则和会话里选模型一样，选中的模型决定这个会话从第一句话起用哪个；
+// nil 时沿用设置：先按 lastModel，再按第一个可用模型（没人明确选过，不写 lastModel）。
+func (m *Manager) Create(workspaceID string, model *contract.ModelRef) (*View, error) {
 	if m.deps.Workspace == nil || !m.deps.Workspace(workspaceID) {
 		return nil, failure(ErrWorkspaceUnknown, "工作区不存在：%s", workspaceID)
+	}
+	var chosen *contract.ModelRef
+	if model != nil {
+		ref := contract.ModelRef{Connection: strings.TrimSpace(model.Connection), Model: strings.TrimSpace(model.Model)}
+		if ref.Connection == "" || ref.Model == "" {
+			return nil, failure(contract.ErrInvalidInput, "选模型要同时给出连接和模型")
+		}
+		if err := m.checkSelectable(ref); err != nil {
+			return nil, err
+		}
+		chosen = &ref
 	}
 	id := newID(m.deps.Now())
 	if _, err := m.store.append(id, Message{Kind: kindCreated, WorkspaceID: workspaceID}); err != nil {
 		return nil, err
+	}
+	if chosen != nil {
+		if _, err := m.store.append(id, Message{Kind: kindModelSelected, Model: chosen, Selected: true}); err != nil {
+			return nil, err
+		}
+		// 和会话里选模型一样记进 lastModel，新会话沿用它
+		if err := m.saveLastModel(*chosen); err != nil {
+			return nil, err
+		}
 	}
 	current, err := m.load(id)
 	if err != nil {

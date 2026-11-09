@@ -264,7 +264,19 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	view, err := s.sessions.Create(workspaceID)
+	// 新对话页的模型下拉（Spec 0007「会话模型的选择」）：可选的 model {connection, model}，校验规则同会话里选模型
+	var model *contract.ModelRef
+	if raw, present := body["model"]; present && raw != nil {
+		fields, ok := raw.(map[string]any)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "model 必须是 {connection, model} 对象"))
+			return
+		}
+		connection, _ := fields["connection"].(string)
+		name, _ := fields["model"].(string)
+		model = &contract.ModelRef{Connection: connection, Model: name}
+	}
+	view, err := s.sessions.Create(workspaceID, model)
 	if err != nil {
 		writeSessionError(w, err)
 		return
@@ -272,8 +284,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, view)
 }
 
-// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型。
-// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务运行中再写一条“模型已切换”任务事件。
+// handleSelectSessionModel PUT /api/sessions/{id}/model：人在输入框右下角选模型，任何状态下都能选。
+// 写进会话日志（“选择模型”事件），同时更新设置的 lastModel；任务还没结束时再写一条“模型已切换”任务事件。
 func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request) {
 	role, ok := roleOf(r)
 	if !ok {

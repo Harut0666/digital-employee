@@ -5,9 +5,9 @@ import { DownOutlined, FolderOpenOutlined, RobotOutlined, SettingOutlined, UserO
 import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, CloseCircleFilled, LoadingOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
-import type { ModelConnectionOption, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
+import type { ModelConnectionOption, ModelRef, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
 import type { AgentToolView } from "../api/types";
-import { modelLabel, modelMenuItems, parseModelValue } from "../view/session-model";
+import { modelLabel, modelMenuItems, newSessionModelMenu, parseModelValue } from "../view/session-model";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
 import { deriveStepRows } from "../view/step-rows";
@@ -468,6 +468,52 @@ export function PreflightNotice({ preflight, openSettings }: { preflight: Prefli
   );
 }
 
+/**
+ * 新对话页右下角的模型下拉（T45）：和会话里的下拉同一份数据，选中的模型决定这个会话从第一句话起用哪个；
+ * 没有可用模型时写“还没有可用的模型”并给设置入口。
+ */
+function NewSessionModelPicker({
+  options,
+  current,
+  onPick,
+  openSettings,
+}: {
+  options: readonly ModelConnectionOption[];
+  current: SessionDetail["model"];
+  onPick: (model: ModelRef) => void;
+  openSettings: () => void;
+}) {
+  const menu = newSessionModelMenu(options, current);
+  return (
+    <Dropdown
+      trigger={["click"]}
+      placement="topRight"
+      menu={{
+        selectedKeys: menu.selectedValue ? [menu.selectedValue] : [],
+        items: menu.items.map((item) =>
+          item.type === "group"
+            ? { type: "group" as const, key: item.key, label: item.label, children: item.children }
+            : { key: item.key, label: item.label, disabled: item.type === "item" && item.disabled },
+        ),
+        onClick: ({ key }) => {
+          if (key === "settings") {
+            openSettings();
+            return;
+          }
+          if (key === "empty") return;
+          const picked = parseModelValue(key);
+          if (picked.connection && picked.model) onPick(picked);
+        },
+      }}
+    >
+      <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={menu.label}>
+        {menu.label}
+        <DownOutlined />
+      </Button>
+    </Dropdown>
+  );
+}
+
 export function NewConversation({
   preflight,
   openSettings,
@@ -479,13 +525,17 @@ export function NewConversation({
 }: {
   preflight: PreflightResult | undefined;
   openSettings: () => void;
-  onStart: (text: string) => Promise<boolean>;
+  /** 发出第一句话：带上右下角选中的模型（没选时 undefined，服务端沿用 lastModel） */
+  onStart: (text: string, model?: ModelRef) => Promise<boolean>;
   onSample: () => void;
   role: UiRole;
-  /** 新会话沿用的模型（设置的 lastModel）：右下角显示，开了会话就定了（T39） */
+  /** 新会话沿用的模型（设置的 lastModel）：右下角先显示它，可以有可用模型时换（T39、T45） */
   modelOptions?: readonly ModelConnectionOption[];
   defaultModel?: SessionDetail["model"];
 }) {
+  // 新对话页选的模型：没换过时显示设置里的 lastModel；换过就是人选的
+  const [picked, setPicked] = useState<ModelRef | undefined>();
+  const selected = picked ?? defaultModel;
   return (
     <>
       <div className="chat-body">
@@ -519,25 +569,10 @@ export function NewConversation({
       </div>
       <ChatInput
         placeholder="例如：帮我出第 44 周的经营周报"
-        onSend={onStart}
+        onSend={(text) => onStart(text, picked)}
         modelPicker={
           modelOptions ? (
-            <Dropdown
-              trigger={["click"]}
-              placement="topRight"
-              menu={{
-                items: [
-                  { key: "hint", disabled: true, label: "发出第一句话后就能在会话里换模型" },
-                  { key: "settings", label: "去设置里配置模型连接" },
-                ],
-                onClick: ({ key }) => key === "settings" && openSettings(),
-              }}
-            >
-              <Button size="small" type="text" className="model-picker" icon={<RobotOutlined />} title={modelLabel(defaultModel)}>
-                {modelLabel(defaultModel)}
-                <DownOutlined />
-              </Button>
-            </Dropdown>
+            <NewSessionModelPicker options={modelOptions} current={selected} onPick={setPicked} openSettings={openSettings} />
           ) : undefined
         }
       />
