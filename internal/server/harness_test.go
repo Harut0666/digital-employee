@@ -91,6 +91,8 @@ type harnessConfig struct {
 	extraEmployees []string
 	// appMode 应用目录模式：工作区是单独一个目录，应用目录在应用目录下的 app/
 	appMode bool
+	// freshAppDir 应用目录模式：应用目录不预置任何设置（全新应用目录，没有任何连接）
+	freshAppDir bool
 	// serial 这个测试对时序敏感（模型调用中途插话、停止等），不和别的测试并行跑
 	serial bool
 }
@@ -107,6 +109,15 @@ func withSerial() harnessOption {
 // 用来验证工作区目录里有什么、没有什么。
 func withAppMode() harnessOption {
 	return func(config *harnessConfig) { config.appMode = true }
+}
+
+// withFreshAppDir 应用目录模式，而且应用目录不预置任何设置（T46：全新应用目录里没有任何连接）。
+// 设置、员工以外的内容都在应用目录里；会话由人显式确认员工。
+func withFreshAppDir() harnessOption {
+	return func(config *harnessConfig) {
+		config.appMode = true
+		config.freshAppDir = true
+	}
 }
 
 // withEmployee 再复制一个仓库里的员工进工作区（比如知识库问答员工）。
@@ -188,13 +199,15 @@ type harness struct {
 	// frontdesk 不为 nil 时前台 Agent 改用它，比如接本地假服务的真实提供者
 	frontdesk agent.ModelProvider
 	// model 引擎用的模型，前台 Agent 默认也用它
-	model     agent.ModelProvider
-	scripted  bool
-	env       map[string]string
-	registry  contract.ToolClient
-	faults    *contract.FaultHooks
-	workspace string
-	employees string
+	model    agent.ModelProvider
+	scripted bool
+	// strictPreflight 提交前检查不因剧本模式而跳过（全新应用目录的装置）
+	strictPreflight bool
+	env             map[string]string
+	registry        contract.ToolClient
+	faults          *contract.FaultHooks
+	workspace       string
+	employees       string
 	// appDir 应用目录模式下的应用目录（单目录模式下是空串，应用目录就是工作区目录）
 	appDir string
 	// workspaces 应用目录模式下登记的工作区
@@ -253,9 +266,6 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if env == nil {
 		env = map[string]string{}
 	}
-	// 测试不读进程里真实的 DEEPSEEK_API_KEY（沙箱里 DSH 会设一个）：服务端按注入的 Env 读，
-	// 没给就是这个空值（withEnv 注入的照样生效）
-	env["DEEPSEEK_API_KEY"] = config.env["DEEPSEEK_API_KEY"]
 	// Spec 0006：设置、员工、知识库在应用目录里。主接缝默认是单目录模式：工作区目录同时是应用目录。
 	if config.appMode {
 		env["DE_APP_DIR"] = appDir
@@ -269,9 +279,20 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if config.connection != nil {
 		connections = []contract.ModelConnection{*config.connection}
 	}
-	// 设置写在应用目录里（单目录模式下就是工作区目录）
+	// 设置写在应用目录里（单目录模式下就是工作区目录）；不预置连接，要用模型的测试显式配连接
+	var appSettings func(mutate func(doc *contract.SettingsDocument)) error
+	if config.freshAppDir {
+		appSettings = func(mutate func(doc *contract.SettingsDocument)) error {
+			return freshAppSettings(appDir, mutate)
+		}
+	} else {
+		appSettings = func(mutate func(doc *contract.SettingsDocument)) error {
+			_, err := settings.Update(appDir, mutate)
+			return err
+		}
+	}
 	if len(connections) > 0 {
-		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
+		if err := appSettings(func(doc *contract.SettingsDocument) {
 			doc.Connections = connections
 			doc.LastModel = &contract.ModelRef{Connection: connections[0].Name, Model: connections[0].Models[0]}
 		}); err != nil {
@@ -281,7 +302,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	} else if config.scriptedModel && config.connection == nil {
 		// 剧本模式不走网络，但提交前检查照常检查会话模型（Spec 0006）：
 		// 给一个能通过检查的连接（指向本机、不存在的端口），否则会话里提交不了任务。
-		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
+		if err := appSettings(func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{scriptedConnection}
 			doc.LastModel = &contract.ModelRef{Connection: scriptedConnection.Name, Model: scriptedConnection.Models[0]}
 		}); err != nil {
@@ -289,7 +310,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		}
 	} else if config.scriptedModel {
 		// 指定了连接（比如没配 Key 的那个来测提交前检查）：引擎仍用剧本模型，设置按原样写
-		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
+		if err := appSettings(func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{*config.connection}
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
@@ -299,7 +320,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if config.connection == nil && config.system != nil {
 		// 引擎的模型写进设置并设为默认（会话模型）：读设置得到的就是它；前台 Agent 仍用剧本模型
 		connection := *config.system
-		if _, err := settings.Update(appDir, func(doc *contract.SettingsDocument) {
+		if err := appSettings(func(doc *contract.SettingsDocument) {
 			doc.Connections = []contract.ModelConnection{connection}
 			doc.LastModel = &contract.ModelRef{Connection: connection.Name, Model: connection.Models[0]}
 		}); err != nil {
@@ -333,12 +354,15 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	// 清理是后进先出：这条在 t.TempDir 之后登记，所以先于临时目录清理执行。
 	t.Cleanup(func() { waitTasksSettled(t, eng) })
 	h := &harness{
-		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil && len(config.connections) == 0, env: env,
+		t: t, engine: eng, provider: provider, model: model, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
 	}
 	if config.connection == nil && config.system != nil {
 		h.frontdesk = frontdesk
 	}
+	h.scripted = config.connection == nil && len(config.connections) == 0
+	// 全新应用目录的装置：模型仍是剧本模型，但提交前检查按设置里的连接检查（演示模式才整个跳过）
+	h.strictPreflight = config.freshAppDir
 	if config.appMode {
 		h.appDir = appDir
 		h.workspaces = []server.Workspace{{ID: appWorkspaceID, Path: workspace}}
@@ -349,6 +373,18 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 
 // appWorkspaceID 应用目录模式里的工作区 ID。
 const appWorkspaceID = "ws-app"
+
+// freshAppSettings 全新应用目录改设置：没有 settings.json 时先写一份（没有任何连接），再按修改写回。
+// 测试想在这里放一个“老设置文档”（比如老用户的 deepseek 连接），直接写 settings.Path(appDir)。
+func freshAppSettings(appDir string, mutate func(doc *contract.SettingsDocument)) error {
+	if _, err := os.Stat(settings.Path(appDir)); os.IsNotExist(err) {
+		if _, err := settings.Write(appDir, settings.Normalize(map[string]any{})); err != nil {
+			return err
+		}
+	}
+	_, err := settings.Update(appDir, mutate)
+	return err
+}
 
 // waitTasksSettled 等这个装置里还在执行的任务停下来，最多等几秒。
 //
@@ -386,7 +422,7 @@ func (h *harness) serve() string {
 		EmployeesDir: h.employees,
 		ToolClient:   h.registry,
 		Faults:       h.faults,
-		Scripted:     h.scripted,
+		Scripted:     h.scripted && !h.strictPreflight,
 		Model: func() agent.ModelProvider {
 			if h.frontdesk != nil {
 				return h.frontdesk

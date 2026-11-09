@@ -185,7 +185,7 @@ $env:DE_PORT='8790'
 ### 3. 第一次使用：配模型、跑通一条任务
 
 1. 打开界面 → **设置** → **模型连接**
-2. 填 Base URL（如 `https://api.deepseek.com`）与 API Key → **测试连接** → **拉取模型** → 勾选模型 → 保存
+2. 全新安装时设置里没有任何连接：点 **添加连接**，填名称、地址（任何 OpenAI 兼容服务的 Base URL）与 Key → **拉取模型** → 勾选模型 → 保存（可再 **测试连接**）
 3. 左栏「工作区」→「+ 新对话」；输入框右下角选模型（显示“连接 / 模型”）
 4. 欢迎页点 **载入公开样例**（或在输入框用 `@` 选目录里的材料），按流程卡片提交
 5. 任务依次经过 准入校验 → 执行中 → 质检中 → 待审核；工作区 `交付\` 里出现 Word；审核通过后变已交付
@@ -282,7 +282,6 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 | `DE_EMPLOYEES_DIR` / `DE_WEB_DIST` | 覆盖员工配置目录 / 前端静态资源目录（开发用） |
 | `DE_SCRIPTED` | 剧本式假模型文件（离线演示 / 测试，不联网） |
 | `DE_FONT_PATHS` | 图表中文回退字体路径（不设则用系统字体） |
-| `DEEPSEEK_API_KEY` | 优先于 `settings.json` 里的 Key |
 
 ## 任务流程
 

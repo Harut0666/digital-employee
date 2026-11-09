@@ -14,19 +14,16 @@ import (
 	"digital-employee/internal/settings"
 )
 
-// 生产环境不注入 Env：环境变量里的 Key 必须能被看到，否则只配环境变量的人提交不了任务。
-// 和 submit 走同一条路（服务进程读的是进程环境）；测试里只替换这个进程变量，不读真实的 Key。
-func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
-	// 先清掉可能存在的（沙箱里 DSH 会设一个），再换成这个测试自己的
+// T46：Key 只来自设置里人填写的内容。环境变量 DEEPSEEK_API_KEY 不再覆盖任何连接的 Key，
+// 即使服务端不注入 Env（生产路径读进程环境）也一样。
+func TestProcessEnvironmentKeyNoLongerFillsConnections(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "")
-	key := "sk-process-env-" + strings.Repeat("x", 8)
-	t.Setenv("DEEPSEEK_API_KEY", key)
-	// 设置只影响以后读（模块初始化时已经记下了进程环境，Setenv 改不到它）
+	t.Setenv("DEEPSEEK_API_KEY", "sk-process-env-"+strings.Repeat("x", 8))
 	settings.ResetProcessEnv()
+	t.Cleanup(settings.ResetProcessEnv)
 	workspace := t.TempDir()
-	// 连接要有模型列表：模型列表从接口拉取（T37）之后，手工填的模型只在旧文档里还有
 	if _, err := settings.Update(workspace, func(doc *contract.SettingsDocument) {
-		// 文件里没有 Key：Key 只能来自进程环境变量（这里只证明“能看到进程环境”）
+		// 文件里没有 Key：环境变量也不该把它补上
 		doc.Connections = []contract.ModelConnection{{Name: "deepseek", BaseURL: "http://127.0.0.1:9/v1", Models: []string{"deepseek-chat"}}}
 	}); err != nil {
 		t.Fatal(err)
@@ -36,9 +33,8 @@ func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
 		AppDir:       workspace,
 		WorkspaceDir: workspace,
 		EmployeesDir: filepath.Join("..", "..", "employees"),
-		// 进程环境在启动时读一次（服务端不存 Env，按需读进程环境）：这里就是生产路径。
-		// 测试里不连真实的模型服务（沙箱可能带真实的 DEEPSEEK_API_KEY）
-		Env:    map[string]string{"DE_MODEL_SERVICE_ENABLED": "0"},
+		// 测试里不连真实的模型服务
+		Env:    map[string]string{},
 		Logger: NewLogger(LevelError, func(string, string) {}),
 	})
 	ts := httptest.NewServer(srv.Handler())
@@ -53,8 +49,8 @@ func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil {
 		t.Fatal(err)
 	}
-	if !reply.OK {
-		t.Fatalf("环境变量里有 Key 时应通过：%+v", reply)
+	if reply.OK || reply.Error != contract.ErrModelNotConfigured || !strings.Contains(reply.Message, "Key") {
+		t.Fatalf("环境变量不应让连接变得可用：%+v", reply)
 	}
 }
 
@@ -123,8 +119,11 @@ func TestSettingsConnectionsCRUD(t *testing.T) {
 	var view map[string]any
 	decodeJSON(t, body, &view)
 	connections := view["connections"].([]any)
-	if len(connections) != 1 {
-		t.Fatalf("默认连接数应为 1：%s", body)
+	if len(connections) != 0 {
+		t.Fatalf("全新应用目录不应有任何连接：%s", body)
+	}
+	if _, present := view["envOverride"]; present {
+		t.Fatalf("设置视图里不应再有环境变量覆盖：%s", body)
 	}
 	// 会话模型取代了“默认模型”：视图里给出最近一次在会话里选的模型（还没选过为空）
 	if value, present := view["lastModel"]; !present || value != nil {
@@ -160,15 +159,15 @@ func TestSettingsConnectionsCRUD(t *testing.T) {
 		t.Fatalf("高级参数未保存：%s", body)
 	}
 
-	// 默认连接应保持原值（deepseek 仍存在）
+	// 原有连接保持原值（新加的那条不影响它）
 	status, body, _ = jsonRequest(t, http.MethodGet, base+"/api/settings/app", "", nil)
 	if status != 200 {
 		t.Fatalf("GET app：%d %s", status, body)
 	}
 	var appView map[string]any
 	decodeJSON(t, body, &appView)
-	if len(appView["connections"].([]any)) != 2 {
-		t.Fatalf("连接数应为 2：%s", body)
+	if len(appView["connections"].([]any)) != 1 {
+		t.Fatalf("连接数应为 1：%s", body)
 	}
 
 	// 删除

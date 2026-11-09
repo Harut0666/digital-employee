@@ -122,10 +122,10 @@ function dotOf(role: UiRole, status: string, state: string | undefined, unread: 
   return "idle";
 }
 
-/** 模拟模式可选的模型（和 settings.ts 的模拟连接一致：只有 DeepSeek 配了 Key）。 */
-const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }];
+/** 模拟模式可选的模型（和 settings.ts 的模拟连接一致：只有示例厂商配了 Key）。 */
+const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "示例厂商", models: ["demo-chat", "demo-reasoner"] }];
 /** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
-const MOCK_DEFAULT_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+const MOCK_DEFAULT_MODEL: ModelRef = { connection: "示例厂商", model: "demo-chat" };
 
 export function createMockSessions(
   employees: EmployeeInfo[],

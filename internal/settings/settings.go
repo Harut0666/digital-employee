@@ -22,17 +22,7 @@ import (
 // FileName 设置文件名（应用目录根目录下；单目录模式下就是工作区目录）。
 const FileName = "settings.json"
 
-// 默认模型连接：没有任何 settings.json 时用它。
-const (
-	DefaultConnectionName = "deepseek"
-	DefaultDefaultModel   = "deepseek-chat"
-	DefaultBaseURL        = "https://api.deepseek.com"
-)
-
-// DefaultConnections 默认连接列表。
-var DefaultConnections = []contract.ModelConnection{
-	{Name: DefaultConnectionName, BaseURL: DefaultBaseURL, APIKey: "", Models: []string{DefaultDefaultModel}},
-}
+// 没有任何 settings.json 时：设置里没有任何连接（不预置任何厂商），lastModel 也为空（Spec 0007「设置与连接」）。
 
 // knownTopLevelKeys 由本模块认识的顶层键；其余键进 Extra 原样保留。
 // defaultConnection / defaultModel 是旧文档的键：读时换算成 lastModel，写出时不再出现。
@@ -50,12 +40,12 @@ type Env map[string]string
 // processEnv 进程环境在启动时读一份：之后按它查，不再去读（测试改了进程变量也不会串到别的测试）。
 var processEnv = os.Environ()
 
-// ResetProcessEnv 重新读进程环境（测试换了 DEEPSEEK_API_KEY 时用）。
+// ResetProcessEnv 重新读进程环境。
 func ResetProcessEnv() { processEnv = os.Environ() }
 
 func (e Env) get(key string) string {
 	if e != nil {
-		// 注入的 Env 里没有这个变量时按进程环境算（服务端只注入 DE_*，DEEPSEEK_API_KEY 仍从进程读）
+		// 注入的 Env 里没有这个变量时按进程环境算（服务端只注入 DE_*）
 		if value, ok := e[key]; ok {
 			return strings.TrimSpace(value)
 		}
@@ -412,14 +402,13 @@ func Normalize(raw map[string]any) contract.SettingsDocument {
 	doc.Diagnostics = normalizeDiagnostics(raw["diagnostics"])
 	doc.Permissions = normalizePermissions(raw["permissions"])
 
+	// 没有 connections 键（或连一个合法连接都没有）时就是没有连接：不补任何预置厂商（Spec 0007）
 	if rawList, ok := raw["connections"].([]any); ok {
 		for _, item := range rawList {
 			if conn, ok := normalizeConnection(item); ok {
 				doc.Connections = append(doc.Connections, conn)
 			}
 		}
-	} else {
-		doc.Connections = cloneConnections(DefaultConnections)
 	}
 	doc.LastModel = normalizeLastModel(raw)
 	if s, ok := raw["defaultEmployee"].(string); ok {
@@ -546,28 +535,6 @@ func Ensure(dir string) (contract.SettingsDocument, error) {
 
 // ---------------------------------------------------------------- 运行期视图
 
-// IsDeepSeekConnection 按名称或地址判断：只有它会用 DEEPSEEK_API_KEY 覆盖文件里的 Key。
-func IsDeepSeekConnection(conn contract.ModelConnection) bool {
-	return strings.EqualFold(conn.Name, DefaultConnectionName) || strings.Contains(conn.BaseURL, "deepseek.com")
-}
-
-// WithEnvKeys 环境变量里的 DEEPSEEK_API_KEY 优先于文件里的 Key。
-func WithEnvKeys(models contract.ModelSettings, env Env) contract.ModelSettings {
-	key := env.get("DEEPSEEK_API_KEY")
-	if key == "" {
-		return models
-	}
-	for i := range models.Connections {
-		if IsDeepSeekConnection(models.Connections[i]) {
-			models.Connections[i].APIKey = key
-		}
-	}
-	// 缺省模型要看补过 Key 之后的连接：还没选过模型时它是对“第一个有 Key 的连接”的快照，
-	// 在这里重新算一遍（否则只有环境变量 Key 的人永远选不出模型）
-	models.Default = defaultModelOf(models, models.Default)
-	return models
-}
-
 // ModelSettingsOf 文档里的连接，加上步骤没指定模型时的缺省模型。
 // 缺省模型优先用 lastModel；还没选过时用第一个有 Key 的连接的第一个模型（Spec 0006「会话模型」）。
 func ModelSettingsOf(doc contract.SettingsDocument) contract.ModelSettings {
@@ -587,12 +554,7 @@ func derefModel(ref *contract.ModelRef) contract.ModelRef {
 // DefaultModelOf 缺省模型：lastModel 在连接列表里且连接有 Key 时用它，否则第一个有 Key 的连接的第一个模型。
 // 连接没配模型列表时，旧的 defaultModel 记下的模型仍可以用（那是人手工填的模型）。
 func DefaultModelOf(models contract.ModelSettings) contract.ModelRef {
-	return defaultModelOf(models, models.Default)
-}
-
-// defaultModelOf 同上，但 lastModel 由调用方给出（补环境变量里的 Key 之后要对连接重新算一遍）。
-func defaultModelOf(models contract.ModelSettings, last contract.ModelRef) contract.ModelRef {
-	if last.Connection != "" && last.Model != "" {
+	if last := models.Default; last.Connection != "" && last.Model != "" {
 		if connection, ok := FindConnection(models.Connections, last.Connection); ok && connection.APIKey != "" &&
 			(len(connection.Models) == 0 || slices.Contains(connection.Models, last.Model)) {
 			return last
@@ -616,9 +578,10 @@ func FindConnection(connections []contract.ModelConnection, name string) (contra
 	return contract.ModelConnection{}, false
 }
 
-// LoadModelSettings 读应用目录里的 settings.json；DEEPSEEK_API_KEY 优先于文件里的 Key。
+// LoadModelSettings 读应用目录里的 settings.json。Key 只来自设置里人填写的内容（Spec 0007：
+// 不再有 DEEPSEEK_API_KEY 之类的环境变量覆盖），env 只为兼容调用方保留。
 func LoadModelSettings(dir string, env Env) contract.ModelSettings {
-	return WithEnvKeys(ModelSettingsOf(Read(dir)), env)
+	return ModelSettingsOf(Read(dir))
 }
 
 // LoadDemo 读取演示开关。
@@ -675,22 +638,14 @@ type AppView struct {
 	DefaultEmployee string                `json:"defaultEmployee"`
 	Demo            contract.DemoSettings `json:"demo"`
 	Extra           map[string]any        `json:"extra"`
-	EnvOverride     bool                  `json:"envOverride"`
 }
 
-func effectiveKey(conn contract.ModelConnection, env Env) (key, source string) {
-	envKey := env.get("DEEPSEEK_API_KEY")
-	if envKey != "" && IsDeepSeekConnection(conn) {
-		return envKey, "env"
+// connectionView 一个连接的脱敏视图：Key 只来自设置文件（Spec 0007），source 只会是 file / none。
+func connectionView(conn contract.ModelConnection) ConnectionView {
+	key, source := conn.APIKey, "file"
+	if key == "" {
+		source = "none"
 	}
-	if conn.APIKey != "" {
-		return conn.APIKey, "file"
-	}
-	return "", "none"
-}
-
-func connectionView(conn contract.ModelConnection, env Env) ConnectionView {
-	key, source := effectiveKey(conn, env)
 	view := ConnectionView{
 		Name: conn.Name, BaseURL: conn.BaseURL,
 		Models: append([]string{}, conn.Models...),
@@ -716,10 +671,11 @@ func connectionView(conn contract.ModelConnection, env Env) ConnectionView {
 }
 
 // View v2 文档的脱敏视图：密钥只出末 4 位 + hasKey + source。
+// env 不再影响视图（不再有“环境变量覆盖”）。
 func View(doc contract.SettingsDocument, env Env) AppView {
 	connections := make([]ConnectionView, 0, len(doc.Connections))
 	for _, conn := range doc.Connections {
-		connections = append(connections, connectionView(conn, env))
+		connections = append(connections, connectionView(conn))
 	}
 	extra := map[string]any{}
 	for key, value := range doc.Extra {
@@ -738,7 +694,7 @@ func View(doc contract.SettingsDocument, env Env) AppView {
 		UI: doc.UI, Execution: execution, Diagnostics: doc.Diagnostics, Permissions: doc.Permissions,
 		Connections: connections, LastModel: doc.LastModel,
 		DefaultEmployee: doc.DefaultEmployee,
-		Demo:            demo, Extra: extra, EnvOverride: env.get("DEEPSEEK_API_KEY") != "",
+		Demo:            demo, Extra: extra,
 	}
 }
 

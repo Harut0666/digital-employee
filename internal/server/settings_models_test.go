@@ -128,7 +128,7 @@ func TestFetchModelsReturnsListFromSavedConnection(t *testing.T) {
 		t.Fatalf("响应里不应出现 Key：%s", body)
 	}
 	conn := settingsDocument(t, workspace)
-	if len(conn.Connections) != 2 {
+	if len(conn.Connections) != 1 {
 		t.Fatalf("设置里的连接数不应变化：%+v", conn.Connections)
 	}
 	for _, c := range conn.Connections {

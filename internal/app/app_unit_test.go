@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"digital-employee/internal/settings"
 )
 
 func TestChoosePort(t *testing.T) {
@@ -76,6 +78,10 @@ func TestPrepareAppDir(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(workspace, "settings.json")) {
 		t.Fatal("settings.json 不存在")
+	}
+	// T46：全新的应用目录里不预置任何厂商的连接，lastModel 为空
+	if doc := settings.Read(workspace); len(doc.Connections) != 0 || doc.LastModel != nil {
+		t.Fatalf("全新应用目录不应预置连接：%+v %+v", doc.Connections, doc.LastModel)
 	}
 
 	// 用户改过的员工配置与样例第二次释放不覆盖；web 产物覆盖
