@@ -27,8 +27,14 @@ const (
 	KindToolCalled  = "tool_called"
 	KindToolDenied  = "tool_denied"
 	KindModelFailed = "model_failed"
+	// KindPermissionModeSet 发起人选了权限模式（T48）：Mode 记下选的是哪一档；留痕，也是“本会话总是允许”清空的时刻
+	KindPermissionModeSet = "permission_mode_set"
+	// KindPermissionAllowed 权限模式或“本会话总是允许”让一个动作免问放行（T48）：留痕，轨迹里能看到
+	KindPermissionAllowed = "permission_allowed"
 
 	kindCreated = "created"
+	// kindPermissionDecided 权限确认卡有了答复（RequestID、Decision、Action）；只改变会话状态，卡片上体现
+	kindPermissionDecided = "permission_decided"
 	// kindModelSelected 人在会话里选了模型（Spec 0006“会话模型”）；Model 记下选的是哪个
 	kindModelSelected   = "model_selected"
 	kindEmployeeSet     = "employee_set"
@@ -98,6 +104,12 @@ type Message struct {
 	Archived bool `json:"archived,omitempty"`
 	// UpTo 已读到哪一条消息（read）
 	UpTo int64 `json:"upTo,omitempty"`
+	// Mode 选择的权限模式（permission_mode_set）
+	Mode string `json:"mode,omitempty"`
+	// RequestID、Decision、Action 权限确认的答复（permission_decided）
+	RequestID string `json:"requestId,omitempty"`
+	Decision  string `json:"decision,omitempty"`
+	Action    string `json:"action,omitempty"`
 }
 
 // visible 读取历史时是否返回（状态变更已体现在会话字段上）。
@@ -135,6 +147,10 @@ type record struct {
 	archived bool
 	// readUpTo 已读到哪一条消息：最后一条消息的序号比它大就是有新消息
 	readUpTo int64
+	// permissionMode 权限模式；空串表示没选过，也就是新会话的默认 ask（T48）
+	permissionMode string
+	// alwaysAllowed 本会话总是允许的动作类别；换权限模式时清空
+	alwaysAllowed map[string]bool
 }
 
 func (r *record) apply(message Message) {
@@ -148,6 +164,16 @@ func (r *record) apply(message Message) {
 		r.workspaceID = message.WorkspaceID
 	case kindModelSelected:
 		r.model = message.Model
+	case KindPermissionModeSet:
+		r.permissionMode = message.Mode
+		r.alwaysAllowed = nil
+	case kindPermissionDecided:
+		if message.Decision == DecisionAlwaysAllow {
+			if r.alwaysAllowed == nil {
+				r.alwaysAllowed = map[string]bool{}
+			}
+			r.alwaysAllowed[message.Action] = true
+		}
 	case kindEmployeeSet:
 		r.employee = message.Employee
 	case kindDraftSet:

@@ -25,6 +25,8 @@ const (
 	CardFiling = "knowledge_filing"
 	// CardUseFile 使用目录文件：前台 Agent 提议把工作区目录里的文件用作材料，人确认后才复制进会话
 	CardUseFile = "folder_file"
+	// CardPermission 权限确认（T48）：权限模式要求先问人时，Agent 想做的动作和三个答复按钮
+	CardPermission = "permission"
 )
 
 // 员工确认卡片的来源。
@@ -80,6 +82,27 @@ type Card struct {
 	Size int64  `json:"size,omitempty"`
 	// Confirmed 人已经确认过：材料已经在会话里
 	Confirmed bool `json:"confirmed,omitempty"`
+
+	// permission：RequestID 是答复时用的编号；Action 是动作类别，ActionLabel 是它的说法；
+	// Tool 是 Agent 调的工具，Object 是动作的对象（文件路径、员工），Detail 是一句话说明。
+	// Pending 还在等人答复；答复之后 Decision 是 allow_once、always_allow、deny 之一，停止时是 cancelled
+	RequestID   string `json:"requestId,omitempty"`
+	Action      string `json:"action,omitempty"`
+	ActionLabel string `json:"actionLabel,omitempty"`
+	Tool        string `json:"tool,omitempty"`
+	Object      string `json:"object,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Pending     bool   `json:"pending,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	// Choices 等答复时的三个按钮；答复之后、取消之后没有
+	Choices []PermissionChoice `json:"choices,omitempty"`
+}
+
+// PermissionChoice 权限确认卡上的一个答复按钮：Decision 就是答复时提交的决定。
+type PermissionChoice struct {
+	Decision string `json:"decision"`
+	Label    string `json:"label"`
+	Style    string `json:"style"`
 }
 
 func confirmCard(employees []Employee, proposed, source, reason string) Card {

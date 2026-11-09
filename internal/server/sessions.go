@@ -22,6 +22,8 @@ var sessionErrorStatus = map[string]int{
 	session.ErrSessionReadOnly: http.StatusConflict,
 	session.ErrSessionBusy:     http.StatusConflict,
 	session.ErrEmployeeMissing: http.StatusConflict,
+	// 这张权限确认已经答复或取消了
+	session.ErrPermissionSettled: http.StatusConflict,
 	// 必需项不齐：会话的现状不允许开工
 	session.ErrChecklistIncomplete: http.StatusConflict,
 	// 工作区没有登记过，也查不到它的目录
@@ -288,6 +290,48 @@ func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request
 	connection, _ := body["connection"].(string)
 	model, _ := body["model"].(string)
 	reply, err := s.sessions.SelectModel(r.PathValue("id"), role, connection, model)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleSetPermissionMode PUT /api/sessions/{id}/permission-mode：发起人在输入框左下角选权限模式。
+func (s *Server) handleSetPermissionMode(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	mode, _ := body["mode"].(string)
+	reply, err := s.sessions.SetPermissionMode(r.PathValue("id"), role, mode)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleDecidePermission POST /api/sessions/{id}/permissions/{requestId}：发起人答复一张权限确认。
+func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	decision, _ := body["decision"].(string)
+	reply, err := s.sessions.DecidePermission(r.PathValue("id"), role, r.PathValue("requestId"), decision)
 	if err != nil {
 		writeSessionError(w, err)
 		return

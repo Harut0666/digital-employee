@@ -1,13 +1,14 @@
 import { Prompts, Sender, Welcome } from "@ant-design/x";
 import type { SenderRef } from "@ant-design/x/es/sender/interface";
 import { Alert, Button, Collapse, Dropdown, Tag, Typography } from "antd";
-import { DownOutlined, FolderOpenOutlined, RobotOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
+import { DownOutlined, FolderOpenOutlined, RobotOutlined, SafetyCertificateOutlined, SettingOutlined, UserOutlined } from "@ant-design/icons";
 import { CaretDownOutlined, CaretRightOutlined, CheckCircleFilled, CloseCircleFilled, LoadingOutlined, StopOutlined, ToolOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
-import type { ModelConnectionOption, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
+import type { ModelConnectionOption, PermissionMode, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
 import type { AgentToolView } from "../api/types";
 import { modelLabel, modelMenuItems, parseModelValue } from "../view/session-model";
+import { permissionHint, permissionMenuItems, permissionModeLabel } from "../view/permission-mode";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
 import { deriveStepRows } from "../view/step-rows";
@@ -183,9 +184,50 @@ function ModelPicker({
   );
 }
 
+/** 输入框左下角的权限模式下拉（T48）：显示当前模式，点开列出五个模式和各自的一句说明。 */
+function PermissionModePicker({
+  current,
+  disabled,
+  onPick,
+}: {
+  current: PermissionMode | undefined;
+  disabled?: boolean;
+  onPick: (mode: PermissionMode) => Promise<boolean>;
+}) {
+  const items = permissionMenuItems(current);
+  return (
+    <Dropdown
+      trigger={["click"]}
+      placement="topLeft"
+      disabled={disabled}
+      menu={{
+        selectedKeys: items.filter((i) => i.selected).map((i) => i.value),
+        items: items.map((item) => ({
+          key: item.value,
+          label: (
+            <div className="mode-item">
+              <b>{item.label}</b>
+              <span className="chat-sub">{item.hint}</span>
+            </div>
+          ),
+        })),
+        onClick: ({ key }) => {
+          if (key !== (current ?? "ask")) void onPick(key as PermissionMode);
+        },
+      }}
+    >
+      <Button size="small" type="text" className="mode-picker" icon={<SafetyCertificateOutlined />} title={permissionHint(current)} disabled={disabled}>
+        {permissionModeLabel(current)}
+        <DownOutlined />
+      </Button>
+    </Dropdown>
+  );
+}
+
 function ChatInput({
   placeholder,
   disabled,
+  modePicker,
   modelPicker,
   folderFiles = [],
   onUseFolderFile,
@@ -195,6 +237,8 @@ function ChatInput({
 }: {
   placeholder: string;
   disabled?: boolean;
+  /** 左下角的权限模式下拉（T48） */
+  modePicker?: React.ReactNode;
   modelPicker?: React.ReactNode;
   /** 工作区目录里可选的文件（相对路径） */
   folderFiles?: string[];
@@ -305,7 +349,12 @@ function ChatInput({
           return undefined;
         }}
       />
-      {modelPicker && <div className="chat-foot-bar">{modelPicker}</div>}
+      {(modePicker || modelPicker) && (
+        <div className="chat-foot-bar">
+          {modePicker && <div className="chat-foot-left">{modePicker}</div>}
+          {modelPicker}
+        </div>
+      )}
     </div>
   );
 }
@@ -327,6 +376,7 @@ export function SessionChat({
   folderFiles,
   modelOptions,
   onSelectModel,
+  onSelectMode,
   openSettings,
   onSend,
   live,
@@ -342,6 +392,8 @@ export function SessionChat({
   /** 输入框右下角的模型下拉（T39）：可选模型、选模型、去设置 */
   modelOptions: readonly ModelConnectionOption[];
   onSelectModel: (connection: string, model: string) => Promise<boolean>;
+  /** 输入框左下角的权限模式下拉（T48）：选模式 */
+  onSelectMode: (mode: PermissionMode) => Promise<boolean>;
   openSettings: () => void;
   /** 会话绑定任务时的事件和步骤，用来画状态机和轨迹 */
   events: TaskEvent[];
@@ -440,6 +492,7 @@ export function SessionChat({
         folderFiles={detail.taskId ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
         onSend={onSend}
+        modePicker={<PermissionModePicker current={detail.permissionMode} disabled={detail.readOnly} onPick={onSelectMode} />}
         modelPicker={
           <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />
         }

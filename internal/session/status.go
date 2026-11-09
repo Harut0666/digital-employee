@@ -64,6 +64,10 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 	if id == "" {
 		return StatusDotIdle
 	}
+	if role == contract.RoleInitiator && m.pendingPermission(id) {
+		// 权限确认在等发起人答复
+		return StatusDotWaiting
+	}
 	if m.runningOf(id) {
 		// 前台 Agent 正在回复
 		return StatusDotRunning
@@ -119,6 +123,9 @@ type Record struct {
 // 待人工处理不是发起人、审核人能推进的状态（只有工具故障、模型不可用时发起人能重试），
 // 不点亮“等你处理”，由操作员看记录 tab。
 func (m *Manager) StatusDot(id string, view *View, role contract.Role) (string, bool) {
+	if role == contract.RoleInitiator && m.pendingPermission(id) {
+		return StatusDotWaiting, false
+	}
 	if m.busy(id) {
 		return StatusDotRunning, false
 	}

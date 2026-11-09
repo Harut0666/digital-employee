@@ -105,7 +105,8 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
             return prev;
         }
       });
-      if (event.type === "turn_end") ended.current();
+      // 流程卡片（权限确认等）在这一轮进行中就要让人看到：一轮停在确认上，不会有 turn_end
+      if (event.type === "turn_end" || (event.type === "message" && event.message?.card)) ended.current();
     };
     return api.subscribeSession(id, apply);
   }, [api, id]);

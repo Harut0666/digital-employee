@@ -4,7 +4,7 @@ import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { LeftOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
-import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
+import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type PermissionMode, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createWorkspaces } from "./api";
 import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask } from "./hooks/data";
@@ -153,6 +153,14 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     return res.ok;
   };
 
+  /** 输入框左下角选权限模式（T48）：每个会话各自记住；Agent 等着确认时也能换 */
+  const selectMode = async (mode: PermissionMode): Promise<boolean> => {
+    if (!sessionId) return false;
+    const res = await settle(api.setPermissionMode(sessionId, mode));
+    if (!res.ok) message.error(res.message);
+    return res.ok;
+  };
+
   const startConversation = async (text: string): Promise<boolean> => {
     try {
       // 新对话开在哪个工作区：从选中的“新对话”或第一个登记的工作区来；
@@ -204,6 +212,12 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       session.reload();
     },
     openKnowledge: () => setSelection({ kind: "page", page: "knowledge" }),
+    // 权限确认卡上的三个按钮：答复之后这一轮接着往下走，会话由 settle 重读
+    async decidePermission(requestId, decision) {
+      if (!sessionId) return;
+      const res = await settle(api.decidePermission(sessionId, requestId, decision));
+      if (!res.ok) message.error(res.message);
+    },
   };
 
   /** 开工清单上确认跳过一项（只有发起人） */
@@ -270,9 +284,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const items = useMemo(
     () =>
       detail
-        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live)
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live, role)
         : [],
-    [detail, task.snapshot, stream.live, task.events],
+    [detail, task.snapshot, stream.live, task.events, role],
   );
   /** 新会话沿用的模型：设置的 lastModel（T39） */
   const [lastModel, setLastModel] = useState<ModelRef | undefined>();
@@ -342,6 +356,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         }
         modelOptions={modelOptions}
         onSelectModel={selectModel}
+        onSelectMode={selectMode}
         openSettings={actions.openSettings}
         onSend={send}
         live={stream.live}

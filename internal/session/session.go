@@ -117,6 +117,9 @@ type Manager struct {
 	// views 会话的投影缓存：消息条数和更新时间没变就沿用（侧栏每几秒读一次全部会话）
 	views map[string]cachedView
 	// recordsCache 记录 tab 的缓存：任务列表没变时不用再读每个会话的日志
+	// waits 正在等人答复的权限确认（T48），permMu 保护它和里面的 settled
+	permMu       sync.Mutex
+	waits        map[string]*permissionWait
 	recordsMu    sync.Mutex
 	recordsStamp string
 	records      []Record
@@ -131,8 +134,8 @@ func New(deps Deps) *Manager {
 	return &Manager{
 		deps: deps, store: newStore(deps.Dir, deps.Now),
 		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
-		humanLocks: map[string]*sync.Mutex{},
-		scanEvery:  time.Second, scannedAt: deps.Now().Add(-time.Hour),
+		humanLocks: map[string]*sync.Mutex{}, waits: map[string]*permissionWait{},
+		scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour),
 	}
 }
 
@@ -181,6 +184,8 @@ type View struct {
 	Archived bool `json:"archived"`
 	// Unread 任务交付或终止之后还没打开过
 	Unread bool `json:"unread"`
+	// PermissionMode 权限模式（T48）：plan、ask、accept_edits、auto、yolo；新会话总是 ask
+	PermissionMode string `json:"permissionMode"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -238,7 +243,7 @@ func (m *Manager) read(id string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	messages := visibleMessages(current.messages)
+	messages := m.projectPermissions(visibleMessages(current.messages), current)
 
 	if current.taskID != "" {
 		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
@@ -314,7 +319,7 @@ func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*tu
 	}, nil
 }
 func (m *Manager) reply(t *turn) (*Reply, error) {
-	messages := visibleMessages(t.out)
+	messages := m.projectPermissions(visibleMessages(t.out), t.current)
 	// t.current 是写入之前的快照：补上这次新写进去的草稿和材料，清单按写完的样子显示
 	for _, message := range t.out {
 		if message.Kind == kindAttachmentAdded || message.Kind == kindDraftSet {
@@ -547,7 +552,7 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
 		Employee: summary.Employee, TaskID: summary.ID, Attachments: []Attachment{},
-		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{},
+		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk,
 	}
 	m.applySummary(view, summary)
 	if snapshot, found := m.deps.Engine.Get(summary.ID); found && snapshot.Model != nil {
@@ -619,7 +624,7 @@ func (m *Manager) view(current *record) *View {
 		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
-		WaitingFor: []contract.Role{}, Archived: current.archived,
+		WaitingFor: []contract.Role{}, Archived: current.archived, PermissionMode: current.mode(),
 	}
 	if current.employee != "" {
 		view.Status = StatusDrafting

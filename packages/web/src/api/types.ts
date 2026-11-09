@@ -180,7 +180,13 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission";
+
+/** 权限模式（T48）：计划只读、询问（默认）、接受编辑、自动、放开 */
+export type PermissionMode = "plan" | "ask" | "accept_edits" | "auto" | "yolo";
+
+/** 人对权限确认卡的答复 */
+export type PermissionDecision = "allow_once" | "always_allow" | "deny";
 
 /** 流程卡片：内容和按钮都由后端填写，字段按 type 取用。 */
 export interface SessionCard {
@@ -215,6 +221,25 @@ export interface SessionCard {
   name?: string;
   size?: number;
   confirmed?: boolean;
+  // permission：答复时用的编号、动作类别（write_file / run_employee / use_folder_file）和说法、Agent 调的工具、
+  // 动作的对象和一句话说明；pending 还在等人答复，之后 decision 是 allow_once / always_allow / deny / cancelled
+  requestId?: string;
+  action?: string;
+  actionLabel?: string;
+  tool?: string;
+  object?: string;
+  detail?: string;
+  pending?: boolean;
+  decision?: string;
+  /** 等答复时的三个按钮（由后端配好）；答复、取消之后没有 */
+  choices?: PermissionChoice[];
+}
+
+/** 权限确认卡上的一个答复按钮：decision 就是答复时提交的决定 */
+export interface PermissionChoice {
+  decision: PermissionDecision;
+  label: string;
+  style: "primary" | "default" | "danger";
 }
 
 /** 工作区目录里的一项（@ 选择和 Agent 的 list_files 用）；路径相对工作区目录，用 / 分隔 */
@@ -231,7 +256,16 @@ export interface FolderListing {
   truncated: boolean;
 }
 
-export type SessionMessageKind = "user" | "assistant" | "notice" | "card" | "tool_called" | "tool_denied" | "model_failed";
+export type SessionMessageKind =
+  | "user"
+  | "assistant"
+  | "notice"
+  | "card"
+  | "tool_called"
+  | "tool_denied"
+  | "model_failed"
+  | "permission_mode_set"
+  | "permission_allowed";
 
 export interface SessionMessage {
   id: string;
@@ -247,6 +281,8 @@ export interface SessionMessage {
   reason?: string;
   /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
   model?: ModelRef;
+  /** permission_mode_set：选的权限模式 */
+  mode?: PermissionMode;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
@@ -301,6 +337,8 @@ export interface SessionSummary {
   model?: ModelRef;
   /** 会话里明确选过模型 */
   modelSelected?: boolean;
+  /** 权限模式（T48）；新会话总是 ask */
+  permissionMode?: PermissionMode;
   /** 状态点（后端按读的人的角色算）：等你处理 / 运行中 / 已完成未读 / 空闲 */
   statusDot: StatusDot;
   /** 任务交付或终止之后还没打开过 */
@@ -405,7 +443,8 @@ export interface SessionAgentEvent {
   isErr?: boolean;
   error?: string;
   /** message：写进会话的一条消息（卡片随它一起到） */
-  msg?: SessionMessage;
+  /** type 为 message 时：写进会话日志的那条消息（服务端字段名是 message） */
+  message?: SessionMessage;
 }
 
 /** 侧栏在模拟模式下额外要的两项：全部会话和记录（真实模式没有，见 api/index.ts）。 */

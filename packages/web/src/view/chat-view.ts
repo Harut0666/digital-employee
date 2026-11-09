@@ -5,6 +5,7 @@
 import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
 import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
 import { modelNotices, selectedModelNotice } from "./session-model";
+import { derivePermissionCard, fileChangeOf, permissionModeLabel, traceOf, type FileChangeView, type PermissionCardView, type PermissionTrace } from "./permission-mode";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -42,6 +43,12 @@ export type ChatItem =
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
   | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
+  /** 权限确认（T48）：Agent 想做的动作和三个答复按钮；答复后只剩一行结果 */
+  | (ItemBase & { kind: "permission" } & PermissionCardView)
+  /** Agent 写的文件：一行说明，点开看改动 */
+  | (ItemBase & { kind: "file_change" } & FileChangeView)
+  /** 自动放行、被拒绝的留痕 */
+  | (ItemBase & { kind: "trace" } & PermissionTrace)
   /** 正在说的一轮里已经调用的工具（可折叠成一行） */
   | (ItemBase & { kind: "tools"; turn: number; items: AgentToolView[] })
   /** 正在说的一轮里已经说出的部分（还没写成会话里的消息） */
@@ -91,8 +98,8 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
   items.splice(start, 0, item);
 }
 
-export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn): ChatItem[] {
-  const items = deriveMessages(session, task, events);
+export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn, role: UiRole = "initiator"): ChatItem[] {
+  const items = deriveMessages(session, task, events, role);
   if (!live || (!live.text && live.tools.length === 0)) return items;
   // 还没写成消息的这一轮排在最后一条之后
   const ts = session.updatedAt;
@@ -104,7 +111,8 @@ export function deriveChat(session: SessionDetail, task?: ChatTask, events: read
   return items;
 }
 
-function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[]): ChatItem[] {  const items: ChatItem[] = [];
+function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[], role: UiRole): ChatItem[] {
+  const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const card = session.messages[i]?.card;
@@ -134,6 +142,21 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
         else if (m.card) items.push(cardItem(base, m.card, index));
         break;
+      case "permission_mode_set":
+        items.push({ ...base, kind: "notice", text: `权限模式切换为「${permissionModeLabel(m.mode)}」` });
+        break;
+      case "tool_called": {
+        // 写文件的工具行：点开看改了什么；别的工具留痕只进会话日志
+        const change = fileChangeOf(m);
+        if (change) items.push({ ...base, kind: "file_change", ...change });
+        break;
+      }
+      case "permission_allowed":
+      case "tool_denied": {
+        const trace = traceOf(m);
+        if (trace) items.push({ ...base, kind: "trace", ...trace });
+        break;
+      }
       default:
         // 工具留痕和模型失败只进会话日志，不进对话
         break;
@@ -201,6 +224,8 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
       }
       case "knowledge_filing":
         return filingItem(base, card);
+      case "permission":
+        return { ...base, kind: "permission", ...derivePermissionCard(card, { writable, role }) };
       case "folder_file":
         return {
           ...base,
