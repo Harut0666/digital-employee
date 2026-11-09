@@ -5,8 +5,7 @@
 import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
 import { deriveStepRows, type StepRow, type StepRowDef } from "./step-rows";
 import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
-import { modelNotices, selectedModelNotice } from "./session-model";
-import { derivePermissionCard, fileChangeOf, permissionModeLabel, traceOf, type FileChangeView, type PermissionCardView, type PermissionTrace } from "./permission-mode";
+import { derivePermissionCard, fileChangeOf, traceOf, type FileChangeView, type PermissionCardView, type PermissionTrace } from "./permission-mode";
 import { latestTaskId } from "./task-runs";
 import { deriveTodoCard, latestTodoId, type TodoCardView } from "./todo";
 import { deriveQuestionCard, type QuestionCardView } from "./question";
@@ -19,8 +18,7 @@ interface ItemBase {
 
 export type ChatItem =
   | (ItemBase & { kind: "user"; text: string; role?: UiRole })
-  | (ItemBase & { kind: "agent"; text: string })
-  // 模型切换说明（T39）不用单独的 kind：是程序说明，按 kind: "notice" 显示
+  | (ItemBase & { kind: "agent"; text: string; turn?: number })
   | (ItemBase & { kind: "notice"; text: string })
   /** 旧会话里已发出的“确认员工”卡（T49 之前）：只读显示，不再有按钮 */
   | (ItemBase & {
@@ -64,9 +62,9 @@ export type ChatItem =
   /** 自动放行、被拒绝的留痕 */
   | (ItemBase & { kind: "trace" } & PermissionTrace)
   /** 正在说的一轮里已经调用的工具（可折叠成一行） */
-  | (ItemBase & { kind: "tools"; turn: number; items: AgentToolView[] })
+  | (ItemBase & { kind: "tools"; turn: number; items: AgentToolView[]; running: boolean; startedAt?: number; endedAt?: number })
   /** 正在说的一轮里已经说出的部分（还没写成会话里的消息） */
-  | (ItemBase & { kind: "streaming"; turn: number; text: string })
+  | (ItemBase & { kind: "streaming"; turn: number; text: string; running: boolean })
   | (ItemBase & {
       kind: "filing";
       taskId: string;
@@ -104,10 +102,9 @@ export interface LiveTurn {
   tools: AgentToolView[];
   /** 这一轮已经开始 */
   running?: boolean;
-}
-
-function noticeItem(notice: { key: string; ts: string; text: string }): ChatItem {
-  return { key: notice.key, ts: notice.ts, kind: "notice", text: notice.text };
+  /** 这一轮开始、结束的时间（毫秒时间戳，前端收到事件的时刻），用来显示“用时” */
+  startedAt?: number;
+  endedAt?: number;
 }
 
 /** 一条说明按时间插进前面：同一时间点的插在已有消息之后。 */
@@ -123,6 +120,23 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
   items.splice(start, 0, item);
 }
 
+/** 写文件的工具：会话里已经有对应的“改动”行，不再在工具行里重复 */
+const FILE_CHANGE_TOOLS = new Set(["write_file", "edit_file"]);
+
+/**
+ * 流式内容和正式消息是同一个节点：这一轮的正式回复一进会话（按轮次认；旧消息没有轮次时按文字对得上认），
+ * 流式的临时文字就让位，对话里只留正式消息；说话中、或出错没有正式回复时才显示流式文字。
+ */
+function liveSettled(session: SessionDetail, live: LiveTurn): boolean {
+  const finals = session.messages.filter((m) => m.kind === "assistant");
+  if (finals.some((m) => m.turn === live.turn)) return true;
+  if (live.running) return false;
+  const spoken = live.text.trim();
+  const last = finals.at(-1)?.text?.trim() ?? "";
+  // 没有轮次的旧消息：说完之后最后一条回复与流式文字互相包含，就是同一条
+  return spoken !== "" && last !== "" && !finals.some((m) => m.turn !== undefined) && (last.includes(spoken) || spoken.includes(last));
+}
+
 export function deriveChat(
   session: SessionDetail,
   task?: ChatTask,
@@ -132,17 +146,32 @@ export function deriveChat(
   role: UiRole = "initiator",
 ): ChatItem[] {
   const items = deriveMessages(session, task, events, past, role);
-  if (!live || (!live.text && live.tools.length === 0)) return items;
-  // 还没写成消息的这一轮排在最后一条之后
-  const ts = session.updatedAt;
-  if (live.tools.length > 0) {
-    // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
-    items.push({ key: `tools-${live.turn}-${live.tools.length}`, ts, kind: "tools", turn: live.turn, items: live.tools });
+  // 同一轮的正式回复和流式内容共用一个 key（同一个节点），文字增长不换 key
+  const turnKey = (turn: number) => `turn-${turn}`;
+  const claimed = new Set<number>();
+  for (const item of items) {
+    if (item.kind !== "agent" || item.turn === undefined || claimed.has(item.turn)) continue;
+    claimed.add(item.turn);
+    item.key = turnKey(item.turn);
   }
-  if (live.text) items.push({ key: `streaming-${live.turn}-${live.text.length}`, ts, kind: "streaming", turn: live.turn, text: live.text });
+  if (!live || (!live.text && live.tools.length === 0)) return items;
+  const settled = liveSettled(session, live);
+  // 写文件已经有“改动”行了：工具行里不重复
+  const written = new Set(session.messages.filter((m) => m.kind === "tool_called" && m.turn === live.turn && FILE_CHANGE_TOOLS.has(m.tool ?? "")).map((m) => m.tool));
+  const tools = live.tools.filter((t) => !(t.ended && written.has(t.tool)));
+  const ts = session.updatedAt;
+  const running = live.running ?? false;
+  if (tools.length > 0) {
+    // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
+    const row: ChatItem = { key: `tools-${live.turn}`, ts, kind: "tools", turn: live.turn, items: tools, running, startedAt: live.startedAt, endedAt: live.endedAt };
+    // 这一轮的正式回复已经在会话里：过程行排在它之前
+    const at = items.findIndex((i) => i.kind === "agent" && i.turn === live.turn);
+    if (settled && at >= 0) items.splice(at, 0, row);
+    else items.push(row);
+  }
+  if (live.text && !settled) items.push({ key: turnKey(live.turn), ts, kind: "streaming", turn: live.turn, text: live.text, running });
   return items;
 }
-
 function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[], past: readonly PastRun[], role: UiRole): ChatItem[] {
   const items: ChatItem[] = [];
   const writable = !session.readOnly;
@@ -156,7 +185,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         items.push({ ...base, kind: "user", text: m.text ?? "", role: m.role });
         break;
       case "assistant":
-        items.push({ ...base, kind: "agent", text: m.text ?? "" });
+        items.push({ ...base, kind: "agent", text: m.text ?? "", turn: m.turn });
         break;
       case "notice":
         items.push({ ...base, kind: "notice", text: m.text ?? "" });
@@ -168,9 +197,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
       case "todo_written":
         items.push({ ...base, kind: "todo", ...deriveTodoCard(m, m.id === latestTodoId(session.messages)) });
         break;
-      case "permission_mode_set":
-        items.push({ ...base, kind: "notice", text: `权限模式切换为「${permissionModeLabel(m.mode)}」` });
-        break;
+      // 权限模式切换：输入框左下角的下拉已显示当前模式，轨迹里留痕，对话里不再插说明
       case "tool_called": {
         // 写文件的工具行：点开看改了什么；别的工具留痕只进会话日志
         const change = fileChangeOf(m);
@@ -211,10 +238,6 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
     else items.push(filing);
   }
 
-  // 模型切换说明（T39）：会话里选的模型、任务运行中的切换，按时间插进对话
-  const selected = selectedModelNotice(session);
-  if (selected) items.push(noticeItem(selected));
-  for (const notice of modelNotices(events)) insertByTime(items, noticeItem(notice));
   return items;
 
   function filingItem(base: ItemBase, card: SessionCard): ChatItem {

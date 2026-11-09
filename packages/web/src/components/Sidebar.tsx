@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { App as AntApp, Button, Dropdown, Input, Modal, Segmented, Select, Skeleton, Switch, Tag, Tooltip } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { App as AntApp, Button, Dropdown, Input, Modal, Select, Skeleton, Tag, Tooltip } from "antd";
+import type { InputRef } from "antd";
 import {
   BookOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  ContainerOutlined,
   DownOutlined,
   FolderAddOutlined,
   FolderOpenOutlined,
@@ -13,13 +17,16 @@ import {
   ReloadOutlined,
   RightOutlined,
   RobotOutlined,
+  SearchOutlined,
   SettingOutlined,
+  SlidersOutlined,
   TeamOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { RecordItem, SessionSummary, UiRole } from "../api";
 import type { WorkspaceApi, WorkspaceList } from "../api/workspaces";
-import { flattenSessions, groupRecords, groupSessionsByWorkspace, recordSubtitle, runLabel, type WorkspaceGroup } from "../view/sidebar-tree";
+import { flatSessionList, flattenSessions, groupRecords, groupSessionsByWorkspace, recordSubtitle, runLabel, type WorkspaceGroup } from "../view/sidebar-tree";
+import { loadViewOptions, saveViewOptions, searchSessions, VIEW_OPTION_GROUPS, type WorkspaceViewOptions } from "../view/workspace-view";
 import { currentWorkspaceOf, newChatEntry, type NewChatEntry } from "../view/new-chat";
 import { sessionRowView, sessionTime, sessionTone, type Tone } from "../view/session-row";
 import { ROLE_LABELS } from "../view/permissions";
@@ -78,8 +85,6 @@ export function Sidebar({
   api,
   workspace,
   onRefresh,
-  includeArchived,
-  onIncludeArchived,
   tab,
   onTab,
   groups,
@@ -96,8 +101,6 @@ export function Sidebar({
   /** 工作区列表（带会话摘要和未归属）和会话的重命名、归档 */
   workspace: SidebarWorkspace;
   onRefresh: () => void;
-  includeArchived: boolean;
-  onIncludeArchived: (value: boolean) => void;
   tab: SidebarTab;
   onTab: (tab: SidebarTab) => void;
   /** 记录 tab 的分组（后端给的 group，展示前再按固定顺序排） */
@@ -112,17 +115,54 @@ export function Sidebar({
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [renaming, setRenaming] = useState<{ id: string; name: string }>();
   const [renamingSession, setRenamingSession] = useState<{ id: string; title: string }>();
+  // 视图选项记在本机；搜索关键字只在这次打开期间有效，不持久化
+  const [view, setView] = useState<WorkspaceViewOptions>(() => loadViewOptions());
+  const [viewOpen, setViewOpen] = useState(false);
+  const [showAll, setShowAll] = useState<string[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<InputRef>(null);
 
   const list = workspace.list;
+  const currentId = selection.kind === "session" ? selection.id : undefined;
   // 工作区列表里带每个工作区的会话，未归属单独一组
   const sessions = useMemo(() => flattenSessions(list), [list]);
   const tree = useMemo(
-    () => groupSessionsByWorkspace(list?.workspaces ?? [], sessions, collapsed, { includeArchived, currentId: selection.kind === "session" ? selection.id : undefined }),
-    [list, sessions, collapsed, includeArchived, selection],
+    () => groupSessionsByWorkspace(list?.workspaces ?? [], sessions, collapsed, { filter: view.filter, sort: view.sort, currentId, showAll }),
+    [list, sessions, collapsed, view.filter, view.sort, currentId, showAll],
   );
+  const flatRows = useMemo(() => flatSessionList(list?.workspaces ?? [], sessions, { filter: view.filter, sort: view.sort }), [list, sessions, view.filter, view.sort]);
+  const hits = useMemo(() => searchSessions(sessions, list?.workspaces ?? [], query), [sessions, list, query]);
   const noWorkspace = list !== undefined && list.workspaces.length === 0;
-  // 没有工作区时，“未归属”为空就不画一个空组
-  const visibleTree = tree.filter((group) => group.workspace !== undefined || group.count > 0);
+  // 没有工作区时，“未归属”为空就不画一个空组；只看已归档时没有归档会话的组也不画
+  const visibleTree = tree.filter((group) => (group.workspace !== undefined && view.filter !== "archived") || group.count > 0);
+  const emptyNote = view.filter === "archived" ? "没有已归档的会话" : "还没有会话";
+
+  const openSearch = () => {
+    setSearching(true);
+    // 输入框此刻还是 inert，等下一帧再聚焦
+    requestAnimationFrame(() => searchRef.current?.focus());
+  };
+  const closeSearch = () => {
+    setSearching(false);
+    setQuery("");
+  };
+  // 离开工作区 tab 时收起搜索
+  useEffect(() => {
+    if (tab !== "workspaces") closeSearch();
+  }, [tab]);
+  const changeView = (patch: Partial<WorkspaceViewOptions>) => {
+    const next = { ...view, ...patch };
+    setView(next);
+    saveViewOptions(next);
+  };
+  /** 搜索结果里点一行：打开会话，展开它所属的分组 */
+  const openHit = (id: string, workspaceId: string) => {
+    const groupKey = list?.workspaces.some((w) => w.id === workspaceId) ? workspaceId : "ungrouped";
+    setCollapsed((c) => c.filter((k) => k !== groupKey));
+    onSelect({ kind: "session", id });
+    closeSearch();
+  };
   const allRecords = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const recordGroups = useMemo(() => groupRecords(allRecords), [allRecords]);
   const entry = useMemo(() => newChatEntry(list, currentWorkspaceOf(list, selection)), [list, selection]);
@@ -182,6 +222,19 @@ export function Sidebar({
   };
 
   const toggle = (key: string) => setCollapsed((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]));
+
+  const renderRow = (s: SessionSummary, extra: { workspaceName?: string; stacked?: boolean; onOpen?: () => void } = {}) => (
+    <SessionRow
+      key={s.id}
+      session={s}
+      active={currentId === s.id}
+      workspaceName={extra.workspaceName}
+      stacked={extra.stacked}
+      onOpen={extra.onOpen ?? (() => onSelect({ kind: "session", id: s.id }))}
+      onRename={() => setRenamingSession({ id: s.id, title: s.title })}
+      onArchive={(archived) => void archiveSession(s.id, archived)}
+    />
+  );
 
   const groupHead = (group: WorkspaceGroup) => {
     const workspaceInfo = group.workspace;
@@ -251,17 +304,89 @@ export function Sidebar({
         <span className="brand-name">迷你数字员工</span>
       </div>
       <NewChatButton entry={entry} onStart={onStartChat} onAddWorkspace={guideToAdd} />
-      <Segmented
-        block
-        size="small"
-        className="side-tabs"
-        value={tab}
-        onChange={(value) => onTab(value as SidebarTab)}
-        options={[
-          { label: "工作区", value: "workspaces", icon: <FolderOutlined /> },
-          { label: "记录", value: "records", icon: <HistoryOutlined /> },
-        ]}
-      />
+      <div className={`side-bar ${searching ? "searching" : ""}`}>
+        <div className="side-bar-main" inert={searching}>
+          <div className="side-bar-tabs" role="tablist" aria-label="侧栏视图">
+            {(
+              [
+                { value: "workspaces", label: "工作区" },
+                { value: "records", label: "记录" },
+              ] as const
+            ).map((t) => (
+              <button key={t.value} type="button" role="tab" aria-selected={tab === t.value} className={`side-tab ${tab === t.value ? "active" : ""}`} onClick={() => onTab(t.value)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {tab === "workspaces" && (
+            <div className="side-bar-actions">
+              <Tooltip title="搜索会话">
+                <Button type="text" className="icon-btn" icon={<SearchOutlined />} aria-label="搜索会话" onClick={openSearch} />
+              </Tooltip>
+              <Dropdown
+                trigger={["click"]}
+                placement="bottomRight"
+                open={viewOpen}
+                // 点菜单项不收起：可以连着改几项，点外面才关
+                onOpenChange={(next, info) => {
+                  if (info.source !== "menu") setViewOpen(next);
+                }}
+                classNames={{ root: "ws-view-menu" }}
+                menu={{
+                  selectable: false,
+                  items: VIEW_OPTION_GROUPS.map((group) => ({
+                    type: "group" as const,
+                    key: group.key,
+                    label: group.label,
+                    children: group.options.map((option) => ({
+                      key: `${group.key}:${option.value}`,
+                      label: (
+                        <span className="view-opt">
+                          <span>{option.label}</span>
+                          {view[group.key] === option.value && <CheckOutlined aria-label="已选" />}
+                        </span>
+                      ),
+                    })),
+                  })),
+                  onClick: ({ key }) => {
+                    const [field, value] = key.split(":");
+                    if (field && value) changeView({ [field]: value } as Partial<WorkspaceViewOptions>);
+                  },
+                }}
+              >
+                <Tooltip title="视图选项">
+                  <Button type="text" className="icon-btn" icon={<SlidersOutlined />} aria-label="视图选项" />
+                </Tooltip>
+              </Dropdown>
+              <Tooltip title={list?.readOnly ? (list.reason ?? "工作区由环境变量指定，不能添加") : "添加工作区"}>
+                <Button
+                  type="text"
+                  className="icon-btn"
+                  icon={<FolderAddOutlined />}
+                  aria-label="添加工作区"
+                  disabled={list?.readOnly}
+                  onClick={() => onAddWorkspace()}
+                />
+              </Tooltip>
+            </div>
+          )}
+        </div>
+        <div className="side-bar-search" inert={!searching}>
+          <Input
+            ref={searchRef}
+            className="side-search-input"
+            prefix={<SearchOutlined />}
+            placeholder="搜索会话名称"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") closeSearch();
+            }}
+            aria-label="搜索会话名称"
+          />
+          <Button type="text" className="icon-btn" icon={<CloseOutlined />} aria-label="清除搜索并收起" onClick={closeSearch} />
+        </div>
+      </div>
       {error && (
         <div className="side-error" role="alert">
           <span>{error}</span>
@@ -288,38 +413,38 @@ export function Sidebar({
                 }
               />
             )}
-            {visibleTree.length > 0 && (
-              <label className="side-switch" title="显示已归档的会话">
-                <Switch size="small" checked={includeArchived} onChange={onIncludeArchived} aria-label="显示已归档" />
-                显示已归档
-              </label>
+            {searching ? (
+              <>
+                {query.trim() === "" && <div className="side-note">输入会话标题或工作区名称，立即筛选。</div>}
+                {query.trim() !== "" && hits.length === 0 && <div className="side-empty search-empty">没有匹配“{query.trim()}”的会话</div>}
+                {hits.map((hit) => renderRow(hit.session, { workspaceName: hit.workspaceName, stacked: true, onOpen: () => openHit(hit.session.id, hit.session.workspaceId) }))}
+              </>
+            ) : view.group === "flat" ? (
+              <>
+                {flatRows.length === 0 && list !== undefined && !noWorkspace && <div className="side-empty flat-empty">{view.filter === "archived" ? "没有已归档的会话" : "没有会话"}</div>}
+                {flatRows.map((row) => renderRow(row.session, { workspaceName: row.workspaceName }))}
+              </>
+            ) : (
+              visibleTree.map((group) => (
+                <div key={group.key} className="ws-group">
+                  {groupHead(group)}
+                  {group.expanded && group.sessions.length === 0 && <div className="side-empty">{group.workspace ? emptyNote : "没有会话"}</div>}
+                  {group.expanded && group.sessions.map((s) => renderRow(s))}
+                  {group.expanded && group.hidden > 0 && (
+                    <button type="button" className="ws-more" onClick={() => setShowAll((all) => [...all, group.key])}>
+                      展开 {group.hidden} 条
+                    </button>
+                  )}
+                  {group.expanded && group.showingAll && (
+                    <button type="button" className="ws-more" onClick={() => setShowAll((all) => all.filter((k) => k !== group.key))}>
+                      收起
+                    </button>
+                  )}
+                  {!group.workspace && group.expanded && group.count > 0 && <div className="side-note">这些会话所属的工作区已取消登记，仍可查看。</div>}
+                </div>
+              ))
             )}
-            {visibleTree.map((group) => (
-              <div key={group.key} className="ws-group">
-                {groupHead(group)}
-                {group.expanded && group.sessions.length === 0 && (
-                  <div className="side-empty">{group.workspace ? "还没有会话" : "没有会话"}</div>
-                )}
-                {group.expanded &&
-                  group.sessions.map((s) => (
-                    <SessionRow
-                      key={s.id}
-                      session={s}
-                      active={selection.kind === "session" && selection.id === s.id}
-                      onOpen={() => onSelect({ kind: "session", id: s.id })}
-                      onRename={() => setRenamingSession({ id: s.id, title: s.title })}
-                      onArchive={(archived) => void archiveSession(s.id, archived)}
-                    />
-                  ))}
-                {!group.workspace && group.expanded && group.count > 0 && <div className="side-note">这些会话所属的工作区已取消登记，仍可查看。</div>}
-              </div>
-            ))}
-            {list !== undefined && !noWorkspace && !list.readOnly && (
-              <Button type="text" block className="side-add" icon={<FolderAddOutlined />} onClick={() => onAddWorkspace()}>
-                添加工作区
-              </Button>
-            )}
-            {list?.readOnly && !noWorkspace && <div className="side-note">{list.reason ?? "工作区由环境变量指定，不能添加"}</div>}
+            {list?.readOnly && !noWorkspace && !searching && <div className="side-note">{list.reason ?? "工作区由环境变量指定，不能添加"}</div>}
           </>
         ) : (
           <>
@@ -386,27 +511,35 @@ export function Sidebar({
 function SessionRow({
   session,
   active,
+  workspaceName,
+  stacked,
   onOpen,
   onRename,
   onArchive,
 }: {
   session: SessionSummary;
   active: boolean;
+  /** 单列表与搜索结果里标出所属工作区 */
+  workspaceName?: string;
+  /** 搜索结果：标题下面再一行工作区名；否则工作区名放在标题后面 */
+  stacked?: boolean;
   onOpen: () => void;
   onRename: () => void;
   onArchive: (archived: boolean) => void;
 }) {
   const row = sessionRowView(session);
   const time = sessionTime(session.updatedAt);
+  const statusLabel = session.statusText || TONE_TITLE[sessionTone(session.statusDot)];
+  const archiveLabel = session.archived ? "取消归档" : "归档";
   return (
     <div
-      className={`session-item ${active ? "active" : ""} ${session.archived ? "archived" : ""}`}
+      className={`session-item ${active ? "active" : ""} ${session.archived ? "archived" : ""} ${stacked ? "stacked" : ""}`}
       onContextMenu={(e) => {
         e.preventDefault();
         if (row.canRename) onRename();
       }}
     >
-      <button type="button" className="session-main" onClick={onOpen} aria-current={active ? "true" : undefined} title={session.title}>
+      <button type="button" className="session-main" onClick={onOpen} aria-current={active ? "true" : undefined} title={`${session.title}\n${statusLabel}`}>
         <Dot tone={row.tone} title={TONE_TITLE[sessionTone(session.statusDot)]} />
         <span className="main">
           <span className="title-line">
@@ -417,31 +550,36 @@ function SessionRow({
                 <LockOutlined /> 只读
               </span>
             )}
+            {workspaceName && !stacked && <span className="row-ws">{workspaceName}</span>}
           </span>
-          <span className="sub">{session.statusText || TONE_TITLE[sessionTone(session.statusDot)]}</span>
+          {workspaceName && stacked && <span className="sub">{workspaceName}</span>}
         </span>
       </button>
       <span className="session-aside">
         <span className="time" title={session.updatedAt}>
           {time}
         </span>
-        <Dropdown
-          trigger={["click"]}
-          menu={{
-            items: row.menu.map((item) => ({ key: item.key, label: item.label })),
-            onClick: ({ key }) => {
-              if (key === "rename") onRename();
-              if (key === "archive") onArchive(!session.archived);
-            },
-          }}
-        >
-          <Button size="small" type="text" className="session-more" icon={<MoreOutlined />} aria-label={`${session.title}的更多操作`} />
-        </Dropdown>
+        <span className="row-actions">
+          <Tooltip title={archiveLabel}>
+            <Button size="small" type="text" className="icon-btn sm" icon={<ContainerOutlined />} aria-label={`${archiveLabel}：${session.title}`} onClick={() => onArchive(!session.archived)} />
+          </Tooltip>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: row.menu.map((item) => ({ key: item.key, label: item.label })),
+              onClick: ({ key }) => {
+                if (key === "rename") onRename();
+                if (key === "archive") onArchive(!session.archived);
+              },
+            }}
+          >
+            <Button size="small" type="text" className="icon-btn sm session-more" icon={<MoreOutlined />} aria-label={`${session.title}的更多操作`} />
+          </Dropdown>
+        </span>
       </span>
     </div>
   );
 }
-
 function RecordRow({ item, run, onOpen, active }: { item: RecordItem; run?: string; onOpen?: () => void; active: boolean }) {
   const tone = sessionTone(item.statusDot);
   const subtitle = [run, recordSubtitle(item)].filter((part) => part).join(" · ");

@@ -61,7 +61,7 @@ export function useSession(id: string | undefined): SessionState {
 
 export interface LiveState {
   /** 正在说的一轮：逐字出现的文字和已经调用的工具（说完会变成会话里的消息） */
-  live?: { turn: number; text: string; tools: AgentToolView[]; running: boolean };
+  live?: { turn: number; text: string; tools: AgentToolView[]; running: boolean; startedAt?: number; endedAt?: number };
 }
 
 /**
@@ -80,12 +80,12 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
       setLive((prev) => {
         switch (event.type) {
           case "turn_start":
-            return { turn: event.turn, text: "", tools: [], running: true };
+            return { turn: event.turn, text: "", tools: [], running: true, startedAt: Date.now() };
           case "text_delta":
             if (prev && prev.turn === event.turn) return { ...prev, running: true, text: prev.text + (event.text ?? "") };
-            return { turn: event.turn, text: event.text ?? "", tools: [], running: true };
+            return { turn: event.turn, text: event.text ?? "", tools: [], running: true, startedAt: Date.now() };
           case "tool_start": {
-            const base = prev && prev.turn === event.turn ? prev : { turn: event.turn, text: "", tools: [], running: true };
+            const base = prev && prev.turn === event.turn ? prev : { turn: event.turn, text: "", tools: [], running: true, startedAt: Date.now() };
             const tool: AgentToolView = { id: event.id ?? "", tool: event.tool ?? "", args: event.args, ended: false };
             return { ...base, running: true, tools: [...base.tools.filter((t) => t.id !== tool.id), tool] };
           }
@@ -99,7 +99,7 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
             };
           }
           case "turn_end":
-            if (prev && prev.turn === event.turn) return { ...prev, running: false };
+            if (prev && prev.turn === event.turn) return { ...prev, running: false, endedAt: Date.now() };
             return prev;
           default:
             // message：写进会话的卡片和其它消息，由一轮结束时重读会话补齐

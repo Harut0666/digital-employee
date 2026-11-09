@@ -52,7 +52,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const drawerMode = windowWidth < DRAWER_BELOW;
   // 侧栏两个 tab（T38）：工作区列表带会话摘要和未归属，记录 tab 按状态分组；状态点都由后端算
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("workspaces");
-  const [includeArchived, setIncludeArchived] = useState(false);
   const workspaceApi = useMemo(() => createWorkspaces(api), [api]);
   const workspaceState = useWorkspaceList(workspaceApi);
   const recordsState = useRecords(workspaceApi, sidebarTab === "records");
@@ -448,8 +447,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         api={workspaceApi}
         workspace={sidebarWorkspace}
         onRefresh={refreshSidebar}
-        includeArchived={includeArchived}
-        onIncludeArchived={setIncludeArchived}
         tab={sidebarTab}
         onTab={setSidebarTab}
         groups={recordsState.groups}

@@ -4,7 +4,8 @@
  *   base     重置、外框版式、焦点环、状态点 / 胶囊 / 空状态等通用小件
  *   sidebar  左栏
  *   chat     中栏：对话顶部、进度、步骤、消息流、输入区、欢迎页
- *   cards    对话里的流程卡片、开工清单、工具调用
+ *   markdown 消息正文（Markdown、代码块）与工具调用行
+ *   cards    对话里的流程卡片、开工清单、写文件行
  *   trace    轨迹详情
  *   panel    右栏：交付物预览与审核
  */
@@ -12,6 +13,7 @@
 @import "./styles/base.css";
 @import "./styles/sidebar.css";
 @import "./styles/chat.css";
+@import "./styles/markdown.css";
 @import "./styles/cards.css";
 @import "./styles/tl2-cards.css";
 @import "./styles/trace.css";

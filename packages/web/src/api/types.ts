@@ -346,6 +346,8 @@ export interface SessionMessage {
   kind: SessionMessageKind;
   role?: UiRole;
   text?: string;
+  /** 前台 Agent 的一轮编号：这一轮写下的消息都带着它（用户消息、旧任务推导的消息没有） */
+  turn?: number;
   card?: SessionCard;
   tool?: string;
   args?: Record<string, unknown>;

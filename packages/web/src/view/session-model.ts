@@ -1,8 +1,7 @@
-// 会话模型（T39）：输入框右下角的模型下拉，“连接 / 模型”，切换后在对话里插一条说明。
+// 会话模型（T39）：输入框右下角的模型下拉，“连接 / 模型”。切换模型不在对话里插说明（下拉本身显示当前模型，轨迹里保留“模型已切换”）。
 // 新对话页的模型下拉（T45）用同一份数据，选中的模型随建会话的请求发出，从第一句话起生效。
 // 纯函数，不依赖 React 与网络；选项来自后端 GET /api/settings/models（只列有 Key 的连接和它们列出的模型）。
-import type { TaskEvent } from "@de/core/contract";
-import type { ModelRef, ModelConnectionOption, SessionDetail } from "../api/types";
+import type { ModelRef, ModelConnectionOption } from "../api/types";
 
 export interface ModelChoice {
   /** 下拉的一项的值：连接名与模型名 */
@@ -100,38 +99,4 @@ export function parseModelValue(value: string): { connection: string; model: str
   const at = value.indexOf("/");
   if (at <= 0) return { connection: value, model: "" };
   return { connection: value.slice(0, at), model: value.slice(at + 1) };
-}
-
-/** 切换模型的说明（对话里插一条）。任务运行中还要说明从下一个判断步骤生效。 */
-export function modelSwitchNotice(model: ModelRef, taskRunning: boolean): string {
-  const label = modelLabel(model);
-  return taskRunning ? `模型已切换为 ${label}，从下一个判断步骤开始生效。` : `模型已切换为 ${label}。`;
-}
-
-/** 任务事件里的“模型已切换”：每条一条说明。 */
-export function modelSwitchedNotices(events: readonly TaskEvent[]): { key: string; ts: string; text: string }[] {
-  return events.flatMap((event) =>
-    event.type === "model_switched" && event.model
-      ? [{ key: `model:${event.seq}`, ts: event.ts, text: modelSwitchNotice(event.model, true) }]
-      : [],
-  );
-}
-
-/** 对话里的模型切换说明（任务运行中每次切换一条）。 */
-export function modelNotices(events: readonly TaskEvent[]): { key: string; ts: string; text: string }[] {
-  return modelSwitchedNotices(events);
-}
-
-/**
- * 会话里还没有任务时，选过模型就补一条切换说明。绑定任务之后由任务事件说明（见 modelNotices）：
- * 会话记录那次选择是在发起之前，对话里已经说过了。
- */
-export function selectedModelNotice(detail: Pick<SessionDetail, "model" | "modelSelected" | "taskId">): { key: string; ts: string; text: string } | undefined {
-  if (detail.taskId || !detail.modelSelected || !detail.model) return undefined;
-  return {
-    key: `model:selected:${detail.model.connection}:${detail.model.model}`,
-    // 排在这个会话已有的消息之后
-    ts: "9999-12-31T23:59:59.999Z",
-    text: modelSwitchNotice(detail.model, false),
-  };
 }
