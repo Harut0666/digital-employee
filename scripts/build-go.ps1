@@ -1,4 +1,5 @@
-﻿# 一键构建 Go 版（前端 dist + 单文件 exe）
+﻿# 构建 Go 版的“控制台版”exe（前端 dist + 单文件 exe + 冒烟），供脚本 / CI 里运行并读取输出与退出码。
+# 用户双击用的 GUI 版（无控制台窗口）请用 scripts/build-exe.ps1 -> dist/digital-employee.exe。
 #
 #   powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1 -SkipFrontend
@@ -8,7 +9,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipFrontend,
-    [string]$Out = "dist/digital-employee.exe"
+    [string]$Out = "dist/digital-employee-console.exe"
 )
 
 $ErrorActionPreference = "Stop"

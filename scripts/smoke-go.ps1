@@ -1,11 +1,11 @@
 ﻿<#
   冒烟测试（Go 版）：在临时工作区里跑单 exe，对标 scripts/smoke-exe.ps1。
-    1) go build -o dist/digital-employee.exe ./cmd/digital-employee
+    1) go build -o dist/digital-employee-console.exe ./cmd/digital-employee（控制台版：GUI 版从脚本里运行拿不到输出和退出码）
     2) exe init → 释放员工配置与公开样例、写默认 settings.json
     3) exe run-case A-01 --scripted → 断言 finalState=delivered 且 docx 交付物存在
     4) exe --serve-only → 解析控制台里的实际端口，校验 /api/employees、/api/tasks、
        /、/assets/*.js，并用 SSE 收到至少 1 条事件，然后关进程
-  用法：powershell -ExecutionPolicy Bypass -File scripts/smoke-go.ps1 [-Exe dist\digital-employee.exe] [-SkipBuild]
+  用法：powershell -ExecutionPolicy Bypass -File scripts/smoke-go.ps1 [-Exe dist\digital-employee-console.exe] [-SkipBuild]
   退出码 = 失败项数（0 表示通过）
 #>
 param(
@@ -20,7 +20,7 @@ $env:GOSUMDB = "sum.golang.org"
 $env:GOTOOLCHAIN = "auto"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-if ($Exe -eq "") { $Exe = Join-Path $root "dist\digital-employee.exe" }
+if ($Exe -eq "") { $Exe = Join-Path $root "dist\digital-employee-console.exe" }
 $Exe = [System.IO.Path]::GetFullPath($Exe)
 
 $script:failures = 0

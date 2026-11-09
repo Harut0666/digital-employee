@@ -7,7 +7,7 @@
 
 工作区就是电脑上的一个文件夹：会话和任务属于某个工作区，所有工作区同时可用、不用切换；设置、员工和知识库放在应用目录，所有工作区共用（见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)）。一个会话里可以先后运行多个任务（同一时刻最多一个未结束），交付后会话照常能聊、能换模型、能“再来一版”；前台 Agent 能做什么由输入框左下角的**权限模式**决定（见 [ADR-0007](docs/adr/0007-general-agent-employees-as-tools.md)）。
 
-> **评审/演示**：直接看 [快速开始](#快速开始)——打包一次 exe → 双击启动（浏览器）→ 添加自己的模型连接 → 跑任务。逐项真实模型验收见 [真实模型手动测试指南（Spec 0007）](docs/manual-test-0007.md)。
+> **评审/演示**：直接看 [快速开始](#快速开始)——打包一次 exe → 双击启动（直接打开原生窗口）→ 添加自己的模型连接 → 跑任务。逐项真实模型验收见 [真实模型手动测试指南（Spec 0007）](docs/manual-test-0007.md)。
 
 <img src="docs/ui/final/01-welcome.png" alt="欢迎页" width="760">
 
@@ -29,7 +29,7 @@
 - **工具在进程内调用**：Go 主进程直接调用工具，不另起 stdio 子进程；内置故障注入（超时 / 报错 / 非法输出），可现场演示工具故障与重试。
 - **权限在服务端校验**：发起人 / 审核人 / 操作员三种角色，越权操作被拒绝并留痕，状态机之外的流转一律拒绝；Agent 的写操作另有权限模式和固定边界（只限工作区目录内，不能写隐藏文件和“交付”“材料”文件夹；**例外：`shell` 命令行工具没有沙箱**，不受这些边界约束，只受权限模式管，见下文与 [ADR-0007 增补](docs/adr/0007-general-agent-employees-as-tools.md)）。
 - **单文件 exe**：把服务端、前端构建产物、员工配置和公开样例打进一个 exe；双击即用，首次启动建应用目录 `%APPDATA%\digital-employee-app`（`DE_APP_DIR` 可改：设置、员工、知识库、会话和任务都在这里），以及默认工作区「我的工作区」（`文档\数字员工`）；端口冲突自动换端口 —— 见[设计文档 §14](docs/design.md)、[ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
-- **原生桌面窗口**：同一个 Go 主进程内嵌服务端，原生窗口（MyGo + 系统 WebView2）只加载本机地址；用 `digital-employee.exe --window` 打开，与浏览器方式共用应用目录 —— 见下文「启动软件」与 [ADR-0004](docs/adr/0004-go-mainline.md)。
+- **原生桌面窗口，双击即用**：同一个 Go 主进程内嵌服务端（只监听 `127.0.0.1`），原生窗口（MyGo + 系统 WebView2）加载本机地址；exe 用 GUI 子系统构建，双击没有控制台窗口，窗口关闭程序即退出；单实例、记住窗口大小位置、日志写文件、启动失败弹消息框；想用浏览器就加 `--browser` —— 见下文「启动软件」与 [ADR-0004](docs/adr/0004-go-mainline.md)。
 - **Go 后端 + React 前端**：后端 Go（`net/http` + SSE），前端 React/Vite + antd；契约类型在 `internal/contract`（Go 版唯一事实来源），前端用 `packages/core/src/contract` 的 TS 类型，字段名逐字段一致。
 
 ## 目录结构
@@ -51,14 +51,14 @@ digital-employee/
 ├── samples/
 │   ├── scenario-a/         样例数据（销售明细、周会纪要、格式要求）
 │   └── cases/              36 条命令行用例（A / S / T 系列）及其剧本式假模型输出
-├── scripts/                构建与冒烟：build-go.ps1、smoke-go.ps1、gen-embedded.ts 等
+├── scripts/                构建与冒烟：build-exe.ps1、build-go.ps1、smoke-go.ps1、gen-embedded.ts 等
 ├── docs/                   设计文档、架构图、术语表、ADR、工单、界面稿
 └── README.md
 ```
 
 ## 快速开始
 
-> 评审演示只要三步：**打包一次 exe → 双击启动 → 浏览器里用**。使用者不需要安装 Go、Bun、数据库或其它运行时。
+> 评审演示只要三步：**打包一次 exe → 双击启动 → 在弹出的窗口里用**。使用者不需要安装 Go、Bun、数据库或其它运行时（Windows 10 需要已装 WebView2 Runtime，见下文排错）。
 
 ### 1. 打包软件
 
@@ -73,14 +73,14 @@ digital-employee/
 **一条命令**（在仓库根目录，PowerShell）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build-go.ps1
+powershell -ExecutionPolicy Bypass -File scripts\build-exe.ps1
 ```
 
 脚本做三件事：
 
 1. `bun install`（缺依赖时）+ `bun run --filter @de/web build` → 前端 `packages/web/dist`（`go:embed` 会把它嵌进 exe）
-2. `go build -trimpath -ldflags "-s -w" -o dist/digital-employee.exe ./cmd/digital-employee`
-3. 冒烟：在临时目录跑 `init` + A-01 剧本用例，断言任务到 delivered 且产出 docx
+2. `go build -trimpath -ldflags "-s -w -H=windowsgui -X main.appVersion=<版本>" -o dist/digital-employee.exe ./cmd/digital-employee`（`-H=windowsgui`：GUI 子系统，双击没有黑色控制台窗口；应用图标和版本信息在 `cmd\digital-employee\resource_windows_amd64.syso` 里，已入库，自动链接）
+3. 打印体积和 PE Subsystem，不是 GUI(2) 就报失败。脚本**不会运行**产出的 exe（运行会弹出窗口）
 
 产物：**`dist\digital-employee.exe`**，单文件约 **27MB**。
 
@@ -89,13 +89,15 @@ powershell -ExecutionPolicy Bypass -File scripts\build-go.ps1
 ```powershell
 bun install
 bun run --filter @de/web build
-go build -trimpath -ldflags "-s -w" -o dist/digital-employee.exe ./cmd/digital-employee
+go build -trimpath -ldflags "-s -w -H=windowsgui" -o dist/digital-employee.exe ./cmd/digital-employee
 ```
 
 - 必须先有 `packages\web\dist\index.html`，否则 `go:embed` 编译失败。
-- 已有前端产物时可用 `-SkipFrontend` 跳过前端构建。
+- 已有前端产物时可用 `-SkipFrontend` 跳过前端构建；`-Version` 指定版本号（缺省取 `main.go` 里 `appVersion` 的默认值）。
 - 脚本会自动设 `GOSUMDB=sum.golang.org`、`GOTOOLCHAIN=auto`；手动构建时同样要设，否则可能拉不到 1.27.3 工具链。
 - 构建产物 `dist\` 与 Go 缓存都不入库。
+- **控制台版**：`scripts\build-go.ps1` 产出 `dist\digital-employee-console.exe`（不带 `-H=windowsgui`，另含 init + A-01 冒烟）。脚本 / CI 里要读 exe 的输出和退出码时用它（`scripts\smoke-go.ps1` 默认就测这个）；给用户的始终是 `digital-employee.exe`。
+- 改了图标图案：`go run scripts\gen-icon.go`；改了版本信息或要重新生成资源：在 `cmd\digital-employee` 下 `go run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64 --out resource`。
 
 **构建环境常见问题**：
 
@@ -107,35 +109,38 @@ go build -trimpath -ldflags "-s -w" -o dist/digital-employee.exe ./cmd/digital-e
 | 杀毒软件拦截构建或产物 | 把仓库目录与 `dist\` 加入白名单 |
 | 中文用户名目录下构建异常 | 保持仓库路径为纯 ASCII，缓存目录不要指进工作树 |
 
-**构建后验证**：
+**构建后验证**（不用运行 exe）：
 
 ```powershell
-.\dist\digital-employee.exe --version
-# digital-employee 0.1.0-go
-
+# build-exe.ps1 末尾已打印：PE Subsystem：2（Windows GUI）
+powershell -ExecutionPolicy Bypass -File scripts\build-go.ps1 -SkipFrontend
 powershell -ExecutionPolicy Bypass -File scripts\smoke-go.ps1 -SkipBuild
-# 临时目录跑 A-01 到 delivered，再起服务端校验 /api/employees、/api/tasks、首页、前端脚本与 SSE
+# 控制台版：临时目录跑 A-01 到 delivered，再起服务端校验 /api/employees、/api/tasks、首页、前端脚本与 SSE
 # 退出码 = 失败项数（0 表示通过）
 ```
 
 **分发**：只用拷 `dist\digital-employee.exe` 一个文件给使用者；不需要附带仓库、Go、Bun 或数据库。
 
-### 2. 启动软件（浏览器 / Web 方式）
+### 2. 启动软件
 
-**双击启动**：资源管理器里双击 `digital-employee.exe`。
+**双击 `digital-employee.exe`**：直接打开原生窗口（标题「迷你数字员工」，默认 1280×860，最小 960×640），没有控制台窗口，也不会打开浏览器。**关闭窗口 = 退出程序**：内嵌服务端优雅关闭，不留后台进程。
 
-**命令行启动**（推荐，能看到端口与实际地址）：
+背后发生的事：
+
+- 内嵌服务端只监听 `127.0.0.1`，端口从 8787 起自动选空闲端口（被占就往后找，最多 20 个；`--port` / `DE_PORT` 可指定起点）；窗口加载这个本机地址，与浏览器方式共用同一个应用目录。
+- **记住窗口**：关闭时把大小、位置、是否最大化存到应用目录的 `window-state.json`，下次启动恢复；文件坏了或位置在屏幕外（拔了外接显示器）就回到默认大小居中。
+- **外链**：窗口里的 http / https 非本机链接用系统默认浏览器打开，不在窗口里跳转。右键菜单只保留撤销 / 重做 / 剪切 / 复制 / 粘贴 / 全选 / 复制链接，没有“重新加载”“检查”“另存为”。
+- **单实例**：同一个应用目录同时只运行一个实例。再次双击会把已有窗口带到前台（最小化的先还原），新进程静默退出。`DE_APP_DIR` 不同的实例互不影响，可以同时开（隔离测试数据用）。
+- **日志**：没有控制台，日志写到 **`<应用目录>\logs\digital-employee.log`**（默认 `%APPDATA%\digital-employee-app\logs\`）；超过 5MB 滚动成 `.1`、`.2`、`.3`，只留最近 3 份旧文件。未捕获的崩溃输出写 `logs\crash.log`（没崩溃就不会留下这个文件）。日志级别按设置页「诊断」里的设置。
+- **启动失败弹消息框**：窗口起不来（最典型是没装 WebView2）、端口全被占用、应用目录不可写等，会弹一个原生消息框说明原因和处理办法，同时写进日志。
+
+**用浏览器代替窗口**：
 
 ```powershell
-cd D:\program4claude\competition\digital-employee
-.\dist\digital-employee.exe
+.\dist\digital-employee.exe --browser
 ```
 
-启动后：
-
-- 控制台打印界面地址（默认 `http://localhost:8787`；端口被占用会自动往后找，并打印实际端口）
-- 自动用默认浏览器打开；没打开就手动复制控制台地址
-- 停止：控制台 `Ctrl+C`；`--window` 方式关窗口即退出
+启动服务端并用默认浏览器打开（这是 0007 之前无参数时的行为），监听所有网卡（局域网可访问；只想本机用加 `--host 127.0.0.1`）。**注意**：因为 exe 是 GUI 子系统，`--browser` 需要从终端运行才有控制台输出（见下文「命令行用法与限制」）；停止用 `Ctrl+C`（终端里）或在任务管理器里结束进程。
 
 **首次启动做了什么**（一次性；应用目录缺省 `%APPDATA%\digital-employee-app`，`DE_APP_DIR` 可改）：
 
@@ -147,6 +152,8 @@ cd D:\program4claude\competition\digital-employee
 | `workspaces.json` | 工作区登记；没有任何工作区时自动建「我的工作区」= `文档\数字员工` |
 | `sessions\` / `tasks\` | 所有工作区的会话与任务 |
 | `knowledge\` | 知识库（首次入库后写入） |
+| `logs\` | 日志（窗口模式） |
+| `window-state.json` | 窗口大小、位置、是否最大化（首次关闭窗口后写入） |
 
 > 若检测到旧版 `%APPDATA%\digital-employee` 的数据，首次启动会复制一份过来（原目录只读不删，标记文件 `migrated.json`）。
 
@@ -154,36 +161,46 @@ cd D:\program4claude\competition\digital-employee
 
 ```powershell
 $env:DE_APP_DIR='D:\program4claude\competition\de-test\app'
-$env:DE_PORT='8790'
 .\dist\digital-employee.exe
 ```
 
-**常用启动变体**：
+隔离实例有自己的单实例锁、日志和窗口状态（都在 `DE_APP_DIR` 下），和日常实例互不干扰。不设 `DE_PORT` 时端口自动选，不会撞上日常实例。
+
+**常用启动变体**（带参数就是从终端启动，需要的话见下节）：
 
 | 目的 | 命令 |
 |---|---|
-| 不自动开浏览器 | `.\dist\digital-employee.exe --serve-only`（或 `DE_NO_OPEN=1`） |
+| 用浏览器代替窗口 | `.\dist\digital-employee.exe --browser` |
+| 只起服务端（不开窗口也不开浏览器） | `.\dist\digital-employee.exe --serve-only`（或 `DE_NO_OPEN=1`） |
+| 打开窗口（与不带参数相同） | `.\dist\digital-employee.exe --window` |
 | 指定端口 | `.\dist\digital-employee.exe --port 8788` |
 | 端口被占时最多尝试几个 | `.\dist\digital-employee.exe --port 8788 --port-attempts 5` |
-| 只绑本机回环地址 | `.\dist\digital-employee.exe --host 127.0.0.1` |
-
-> 默认监听所有网卡（局域网内可访问）；只想本机使用时加 `--host 127.0.0.1` 或 `--serve-only` 后自己从浏览器访问本机地址。
-| 打开原生窗口（不用浏览器） | `.\dist\digital-employee.exe --window` |
+| 监听地址 | `.\dist\digital-employee.exe --host 127.0.0.1`（窗口模式缺省就是它；`--browser` / `--serve-only` 缺省监听所有网卡） |
 | 单目录模式（评测 / 命令行用例） | `$env:DE_WORKSPACE='D:\...\ws'; .\dist\digital-employee.exe` |
 | 只准备数据目录，不起服务 | `.\dist\digital-employee.exe init` |
 
-**注意**：不要同时开两个实例写同一个应用目录——本机没有单实例锁，两个进程会互相覆盖设置与会话日志。
+`--window`、`--browser`、`--serve-only` 只能选一个。
+
+**命令行用法与限制**（`run-cases`、`replay`、`init`、`--version`、`-h` 等）：
+
+exe 是 GUI 子系统，系统不会给它控制台。带命令行参数启动时，它会自动接到**父进程的控制台**上并把标准输出 / 标准错误指过去，所以从终端运行子命令照常能看到输出。已经被重定向到文件或管道的输出不会被改动（`> out.txt`、`| more`、脚本捕获都照常）。限制：
+
+- **cmd.exe / PowerShell 默认不会等 GUI 程序结束**：提示符会先回来，输出稍后才出现，也拿不到退出码。需要等待时：cmd 用 `start /wait .\dist\digital-employee.exe run-cases ...`；PowerShell 用 `Start-Process -Wait -NoNewWindow .\dist\digital-employee.exe -ArgumentList 'run-cases', ...`，或者在命令末尾接管道，例如 `.\dist\digital-employee.exe run-cases "samples/cases/*.json" --scripted | Out-Host`（管道会让 PowerShell 等到程序结束，`$LASTEXITCODE` 也有值）。
+- 在资源管理器 / 快捷方式里带参数启动（没有父控制台）时没有地方显示输出：参数写错会弹消息框，其它输出丢失。
+- 需要在脚本里可靠读输出和退出码时，用控制台版 `dist\digital-employee-console.exe`（`scripts\build-go.ps1`），或直接 `go run ./cmd/digital-employee <子命令>`。
 
 **启动失败排查**：
 
 | 现象 | 处理 |
 |---|---|
-| 浏览器没自动打开 | 手动打开控制台打印的地址；或 `--serve-only` 后自己开 |
-| 8787 被占用 | 程序自动换端口；也可用 `--port` 固定 |
-| Windows 防火墙弹窗 | 允许访问；默认监听所有网卡，只想本机访问就加 `--host 127.0.0.1` |
+| 弹出“启动失败：缺少 WebView2 Runtime” | 安装 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（选 Evergreen 版；Windows 11 自带，Windows 10 可能没有）；消息框里点“是”会直接打开下载页。装不了就先用 `--browser` |
+| 双击后什么都没出现 | 先看是不是已经有一个实例在运行（再次双击会把它的窗口带到前台）；再看 `<应用目录>\logs\digital-employee.log` 最后几行 |
+| 8787 被占用 | 程序自动换端口；20 个都被占会弹框，用 `--port` 或 `DE_PORT` 指定空闲端口 |
+| “应用目录不可写” | 检查目录权限或杀毒软件拦截；或设 `DE_APP_DIR` 指向可写目录 |
+| 窗口位置不对 / 想重置窗口 | 关掉程序后删掉应用目录里的 `window-state.json` |
+| Windows 防火墙弹窗 | `--browser` / `--serve-only` 监听所有网卡会触发；窗口模式只监听 `127.0.0.1`，不会弹。只想本机访问就加 `--host 127.0.0.1` |
 | SmartScreen「Windows 已保护你的电脑」 | 更多信息 → 仍要运行（exe 未签名） |
-| `--window` 窗口起不来 | 装 Microsoft Edge WebView2 Runtime；或改用浏览器方式 |
-| 控制台中文乱码 | 用 Windows Terminal，或先 `chcp 65001` 再启动 |
+| 终端里中文乱码 | 用 Windows Terminal，或先 `chcp 65001` 再启动 |
 | 想从头再来 | 关进程后删掉（或改名）应用目录；或改用新的 `DE_APP_DIR` |
 
 ### 3. 第一次使用：配模型、跑通一条任务
@@ -220,10 +237,12 @@ $env:DE_SCRIPTED="$env:APPDATA\digital-employee-app\samples\cases\scripts\A-01.j
 bun install
 bun run --filter @de/web build          # go:embed 需要 packages/web/dist
 $env:GOSUMDB='sum.golang.org'; $env:GOTOOLCHAIN='auto'
-go run ./cmd/digital-employee              # 起服务端 + 打开浏览器
+go run ./cmd/digital-employee              # 起服务端 + 原生窗口（与双击一致；日志在应用目录的 logs\）
+go run ./cmd/digital-employee --browser    # 起服务端 + 打开浏览器
 go run ./cmd/digital-employee --serve-only # 只起服务端
-go run ./cmd/digital-employee --window     # 原生窗口
 ```
+
+`go run` 构建的是控制台版（没有 `-H=windowsgui`），子命令（`run-cases` 等）的输出和退出码都正常；回归命令照旧用它。
 
 前端热更新：
 
@@ -257,9 +276,10 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 
 | 命令 | 说明 |
 |---|---|
-| `powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1` | 构建单文件 exe：`dist/digital-employee.exe`（含前端构建与冒烟） |
-| `powershell -ExecutionPolicy Bypass -File scripts/smoke-go.ps1 -SkipBuild` | 单 exe 冒烟：临时目录跑 A-01 + 起服务端校验接口、首页、前端脚本与 SSE |
-| `.\dist\digital-employee.exe --version` | 打印版本（`0.1.0-go`） |
+| `powershell -ExecutionPolicy Bypass -File scripts/build-exe.ps1` | 打包用户双击的 exe：`dist/digital-employee.exe`（GUI 子系统，含前端构建，打印体积和 PE Subsystem，不运行 exe） |
+| `powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1` | 构建控制台版 `dist/digital-employee-console.exe`（含前端构建与冒烟，供脚本 / CI 使用） |
+| `powershell -ExecutionPolicy Bypass -File scripts/smoke-go.ps1 -SkipBuild` | 控制台版冒烟：临时目录跑 A-01 + 起服务端校验接口、首页、前端脚本与 SSE |
+| `.\dist\digital-employee.exe --version` | 打印版本（`0.1.0-go`）；GUI 版从终端运行见「启动软件」里的命令行限制 |
 | `.\dist\digital-employee.exe init` | 只准备应用目录，不起服务 |
 | `go test ./...` | 全部 Go 测试（引擎、工具、质检、渲染、服务端、会话、CLI；剧本模型，不联网、不需要 Key） |
 | `bun test packages/web` | 前端纯函数与视图测试 |
@@ -277,8 +297,9 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 
 | 参数 / 环境变量 | 作用 |
 |---|---|
-| `--serve-only` / `--no-open` / `DE_NO_OPEN=1` | 启动服务端但不自动打开浏览器 |
-| `--window` | 启动服务端并打开 MyGo 原生窗口（系统 WebView2） |
+| （无参数）/ `--window` | 启动内嵌服务端（`127.0.0.1`）并打开 MyGo 原生窗口（系统 WebView2）；窗口关闭即退出。双击就是这个 |
+| `--browser` | 启动服务端并用默认浏览器打开（0007 之前无参数时的行为） |
+| `--serve-only` / `--no-open` / `DE_NO_OPEN=1` | 只启动服务端，不开窗口也不开浏览器（`DE_NO_OPEN=1` 只在没有 `--window` / `--browser` 时生效） |
 | `--port <端口>` / `DE_PORT` / `PORT` | 首选端口（默认 8787，被占自动往后找） |
 | `--port-attempts <次数>` | 端口被占时最多尝试几个 |
 | `--host <地址>` | 监听地址（默认本机；控制台打印的地址相应变化） |
@@ -476,8 +497,8 @@ employees/weekly-report/
 - Spec 0007 已落地（T45–T49，T50 收尾中）：新对话页能选模型、任何状态都能换模型；设置不再预置厂商（空状态 + 添加连接，去掉 `DEEPSEEK_API_KEY` 覆盖）；会话与任务一对多；三档权限模式（原五档已简化，见 ADR-0007 增补二）与 `write_file` / `edit_file`；员工当工具（`run_employee` + 员工表单卡，取代“确认员工 / 开工清单 / 提交”三张卡，公开样例改为预填表单）。真实模型手动测试按 [docs/manual-test-0007.md](docs/manual-test-0007.md) 由使用者执行。
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 36 条在剧本模式 36/36 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
-- 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 27MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
-- 原生窗口：同一个 exe 加 `--window` 用 MyGo 打开（系统 WebView2），与浏览器方式共用应用目录。
+- 单文件 exe：`scripts/build-exe.ps1` → `dist/digital-employee.exe`（约 27MB，GUI 子系统），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/build-go.ps1` + `scripts/smoke-go.ps1`（控制台版）覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
+- 原生窗口：双击（或不带参数）直接用 MyGo 打开（系统 WebView2），与 `--browser` 方式共用应用目录。
 - 已知限制：
   - 字体未嵌入。图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（缺失时由阅读端回退）。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
   - `samples/fixtures/`（约 12MB）不进 exe；需要变异数据时跑 `digital-employee fixtures`（输出到应用目录的 `samples/fixtures/`）或源码 `go run ./cmd/digital-employee fixtures`；8 条依赖夹具的 S 用例要先这样生成夹具才能跑。
@@ -488,4 +509,4 @@ employees/weekly-report/
   - 旧 TypeScript 包（`packages/{core,server,app,…}`，已冻结）里还保留着 DeepSeek 默认值和 `DEEPSEEK_API_KEY` 覆盖；Go 主线已去掉，TS 包不再同步。
   - 权限模式、`run_employee`、员工表单卡的真实模型行为（Agent 是否总能正确预填字段、推断统计周期）只用剧本模型和假模型服务覆盖过，真实模型要按 [0007 手动测试指南](docs/manual-test-0007.md) 跑一遍。
   - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。
-  - `--window` 只在 Windows 11 x64 + 系统 WebView2 上验证过；Windows 10 需要先装 WebView2 Runtime，否则用浏览器方式。
+  - 原生窗口只在 Windows 11 x64 + 系统 WebView2 上验证过；Windows 10 需要先装 WebView2 Runtime，否则用 `--browser`。GUI 子系统带来的限制：从 cmd / PowerShell 运行子命令时终端不会等它结束（见「启动软件」里的命令行用法与限制）。
