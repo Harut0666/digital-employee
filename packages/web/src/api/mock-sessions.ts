@@ -11,6 +11,9 @@ import type {
   SessionAgentEvent,
   ModelConnectionOption,
   ModelRef,
+  PermissionChoice,
+  PermissionDecision,
+  PermissionMode,
   RecordGroup,
   RecordItem,
   SessionAttachment,
@@ -75,6 +78,14 @@ interface MockSession {
   skipped: Set<string>;
   /** 会话里选择的模型（Spec 0006）；没选过时沿用设置的 lastModel */
   selected?: ModelRef;
+  /** 权限模式（T48）；新会话总是询问 */
+  permissionMode: PermissionMode;
+  /** 本会话总是允许的动作类别；换模式时清空 */
+  always: Set<string>;
+  /** 权限确认的答复（requestId → allow_once / always_allow / deny / cancelled） */
+  decisions: Map<string, string>;
+  /** 正在等人答复的权限确认 */
+  pending?: { requestId: string; resolve: (decision: string) => void };
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -128,6 +139,16 @@ function dotOf(role: UiRole, status: string, state: string | undefined, unread: 
 const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "DeepSeek", models: ["deepseek-chat", "deepseek-reasoner"] }];
 /** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
 const MOCK_DEFAULT_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
+
+const PERMISSION_MODE_VALUES: readonly string[] = ["plan", "ask", "accept_edits", "auto", "yolo"];
+const PERMISSION_BUTTONS: PermissionChoice[] = [
+  { decision: "allow_once", label: "允许一次", style: "primary" },
+  { decision: "always_allow", label: "本会话总是允许这一类", style: "default" },
+  { decision: "deny", label: "拒绝", style: "danger" },
+];
+/** 模拟模式不接模型：人说“把……写成文件”之类的话，就演示一次 write_file 经过权限关口 */
+const WRITE_REQUEST = /(写|存|保存|整理).{0,12}(文件|md|文档)/;
+const WRITE_ARGS = { path: "notes/周会要点.md", content: "# 周会要点\n- 华南环比下降\n- 华东持平\n" };
 
 export function createMockSessions(
   employees: EmployeeInfo[],
@@ -189,6 +210,7 @@ export function createMockSessions(
     return {
       // 绑定了任务时是任务的当前模型；还没任务时是选过的模型，没选过沿用 lastModel
       ...(s.taskId ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
+      permissionMode: s.permissionMode,
       id: s.id,
       workspaceId: s.workspaceId,
       status,
@@ -284,6 +306,22 @@ export function createMockSessions(
     }
   }
 
+  const modeName = (mode: string) => ({ plan: "计划", ask: "询问", accept_edits: "接受编辑", auto: "自动", yolo: "放开" })[mode] ?? mode;
+
+  /** 权限确认卡读取时配上状态：有没有答复、是不是还在等、能点的按钮（对应 Go 的 projectPermissions） */
+  function projectPermissions(s: MockSession, messages: SessionMessage[]): SessionMessage[] {
+    return messages.map((m) => {
+      const card = m.card;
+      if (!card || card.type !== "permission" || !card.requestId) return m;
+      const waiting = s.pending?.requestId === card.requestId;
+      const decision = s.decisions.get(card.requestId);
+      return {
+        ...m,
+        card: waiting ? { ...card, pending: true, decision: undefined, choices: PERMISSION_BUTTONS } : { ...card, pending: false, decision: decision ?? "cancelled", choices: undefined },
+      };
+    });
+  }
+
   const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: out, session: await view(s) });
 
   // ---- 正在说的一轮：和 Go 后端一样逐字出现，说完再写进消息、推 turn_end ----
@@ -345,6 +383,75 @@ export function createMockSessions(
     return turn;
   }
 
+  /** 一次 write_file 经过权限关口（对应 Go 的 turnLoop.gate）：计划拒绝、询问弹确认卡、其余放行，每一步都留痕 */
+  function startWriteTurn(s: MockSession): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    const args = { ...WRITE_ARGS };
+    const finish = (text: string, reason: "completed" | "stopped" = "completed") => {
+      if (text) write(s, { kind: "assistant", text }, []);
+      s.running = undefined;
+      emit(s, turn, { type: "turn_end", reason });
+    };
+    void (async () => {
+      emit(s, turn, { type: "tool_start", id: `mock_call_${turn}_write`, tool: "write_file", args });
+      await later(pace(30));
+      const end = (extra: Partial<SessionAgentEvent>) => emit(s, turn, { type: "tool_end", id: `mock_call_${turn}_write`, tool: "write_file", args, ...extra });
+      const deny = (reason: string) => {
+        write(s, { kind: "tool_denied", tool: "write_file", args, reason }, []);
+        emit(s, turn, { type: "message" });
+        end({ reason, isErr: true });
+      };
+      const run = () => {
+        write(s, { kind: "tool_called", tool: "write_file", args, result: { path: args.path, action: "created", bytes: new TextEncoder().encode(args.content).length } }, []);
+        emit(s, turn, { type: "message" });
+        end({ result: { path: args.path, action: "created" } });
+        finish(`已把要点写进 ${args.path}。`);
+      };
+      if (s.permissionMode === "plan") {
+        deny(`计划模式下只能读，不能写入文件：${args.path}。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`);
+        return finish("计划模式下我只能看不能动。打算把要点整理成 notes/周会要点.md，请切换模式后再让我写。");
+      }
+      if (s.permissionMode === "ask" && !s.always.has("write_file")) {
+        const requestId = Math.random().toString(16).slice(2, 10).padEnd(8, "0") + Date.now().toString(16).slice(-8).padStart(8, "0");
+        const cardOut: SessionMessage[] = [];
+        write(
+          s,
+          { kind: "card", card: { type: "permission", requestId, action: "write_file", actionLabel: "写入文件", tool: "write_file", object: args.path, path: args.path, detail: `新建文件，写入 ${args.content.length} 个字`, pending: true, choices: PERMISSION_BUTTONS } },
+          cardOut,
+        );
+        emit(s, turn, { type: "message", message: cardOut[0] });
+        const decision = await new Promise<string>((resolve) => {
+          s.pending = { requestId, resolve };
+        });
+        s.pending = undefined;
+        s.decisions.set(requestId, decision);
+        if (decision === "cancelled" || s.cancelled) {
+          s.decisions.set(requestId, "cancelled");
+          write(s, { kind: "tool_called", tool: "write_file", args, result: "已取消：这一轮被停止，工具没有执行。" }, []);
+          end({ reason: "已取消", isErr: true });
+          return finish("", "stopped");
+        }
+        if (decision === "deny") {
+          deny(`用户拒绝：发起人没有允许写入文件：${args.path}。请换个办法，或问问发起人想怎么做。`);
+          return finish("好的，那我不写了。");
+        }
+        if (decision === "always_allow") s.always.add("write_file");
+        return run();
+      }
+      write(
+        s,
+        { kind: "permission_allowed", tool: "write_file", args, reason: s.permissionMode === "ask" ? "本会话已选择总是允许「写入文件」" : `${modeName(s.permissionMode)}模式：写入文件不用确认` },
+        [],
+      );
+      emit(s, turn, { type: "message" });
+      run();
+    })();
+    return turn;
+  }
+
   function route(s: MockSession, text: string, out: SessionMessage[]) {
     const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
     if (guess) {
@@ -392,6 +499,7 @@ export function createMockSessions(
       statusDot: dotOf(getRole(), status, task.state, unread),
       unread,
       archived: false,
+      permissionMode: "ask",
       workspaceName: WORKSPACE_NAMES[workspaceId] ?? "",
       messages: [],
     };
@@ -426,6 +534,33 @@ export function createMockSessions(
       return reply(s, out);
     },
 
+    /** 选权限模式：规则照搬 Go 的 SetPermissionMode（只有发起人；换模式清空“本会话总是允许”） */
+    async setPermissionMode(id, mode) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以选权限模式");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (!PERMISSION_MODE_VALUES.includes(mode)) return fail("invalid_input", `没有这个权限模式：${mode}`);
+      s.permissionMode = mode;
+      s.always.clear();
+      const out: SessionMessage[] = [];
+      write(s, { kind: "permission_mode_set", mode }, out);
+      return reply(s, out);
+    },
+
+    /** 答复权限确认：只有发起人；只能答一次，已答复或已取消的确认不能再答 */
+    async decidePermission(id, requestId, decision: PermissionDecision) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以答复权限确认");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (!["allow_once", "always_allow", "deny"].includes(decision)) return fail("invalid_input", `答复必须是 allow_once、always_allow 或 deny，收到 ${decision}`);
+      if (!s.messages.some((m) => m.card?.type === "permission" && m.card.requestId === requestId)) return fail("not_found", `没有这张权限确认：${requestId}`);
+      const waiting = s.pending;
+      if (!waiting || waiting.requestId !== requestId) return fail("permission_settled", "这张权限确认已经答复或取消了");
+      s.pending = undefined;
+      waiting.resolve(decision);
+      return reply(s, []);
+    },
+
     async listSessions(workspaceId, options) {
       const own = await Promise.all(
         [...sessions.values()].filter((s) => (!workspaceId || s.workspaceId === workspaceId) && (options?.archived || !s.archived)).map(view),
@@ -452,7 +587,8 @@ export function createMockSessions(
       if (!s) throw new Error(`会话不存在：${id}`);
       // 打开会话就算已读（Go 后端写在会话日志里，模拟模式记在内存里）
       s.readUpTo = lastSeq(s.taskId);
-      const messages = s.messages.filter((m) => m.kind !== "tool_called");
+      // 写文件的工具行要给界面（Go 后端把全部工具留痕都返回，界面只取写文件的）；别的工具留痕模拟模式不给
+      const messages = projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file"));
       return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskIds.length > 0 ? await withTasks(messages, s.taskIds, s) : messages };
     },
 
@@ -477,6 +613,9 @@ export function createMockSessions(
         taskIds: [],
         readUpTo: 0,
         skipped: new Set(),
+        permissionMode: "ask",
+        always: new Set(),
+        decisions: new Map(),
         files: [],
         messages: [],
         turn: 0,
@@ -509,6 +648,7 @@ export function createMockSessions(
         });
         return { ok: true, turn };
       }
+      if (WRITE_REQUEST.test(text)) return { ok: true, turn: startWriteTurn(s) };
       if (s.taskId) {
         const turn = startTurn(s, [{ text: "模拟模式不接模型。任务进展见卡片和右栏，操作请点卡片上的按钮。" }]);
         return { ok: true, turn };
@@ -527,6 +667,8 @@ export function createMockSessions(
       if (!running) return { ok: true, stopped: false };
       s.cancelled = true;
       s.running = undefined;
+      // 等权限确认时被停止：未决的确认记为已取消
+      s.pending?.resolve("cancelled");
       return { ok: true, stopped: true, turn: running.turn };
     },
 

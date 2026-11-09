@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Checkbox, Input, message } from "antd";
+import { Button, Checkbox, Collapse, Input, message } from "antd";
 import {
   CheckCircleFilled,
   CheckOutlined,
@@ -7,6 +7,8 @@ import {
   DownloadOutlined,
   ExclamationCircleFilled,
   EyeOutlined,
+  EditOutlined,
+  SafetyCertificateOutlined,
   FileTextOutlined,
   FileWordOutlined,
   ReloadOutlined,
@@ -18,7 +20,7 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
@@ -60,6 +62,8 @@ export interface SessionActions {
   /** 入库卡片：人确认后放进知识库 */
   fileKnowledge: (filing: KnowledgeFiling) => Promise<void>;
   openKnowledge: () => void;
+  /** 权限确认卡上的答复（T48）：允许一次、本会话总是允许这一类、拒绝 */
+  decidePermission: (requestId: string, decision: PermissionDecision) => Promise<void>;
 }
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -396,6 +400,90 @@ export function UseFileCard({ item, actions, session }: { item: Extract<ChatItem
   );
 }
 
+/** 权限确认（T48）：Agent 想做什么、对谁做；发起人点三个按钮之一，答复后只剩一行结果。 */
+export function PermissionCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "permission" }>; actions: CardActions; session: SessionActions }) {
+  const [busy, setBusy] = useState<string>();
+  if (item.state !== "pending") {
+    return (
+      <div className={`card muted permission-done ${item.state}`}>
+        <SafetyCertificateOutlined /> {item.actionLabel}
+        {item.object ? `：${item.object}` : ""} · {item.stateText}
+      </div>
+    );
+  }
+  const answer = async (decision: PermissionDecision) => {
+    setBusy(decision);
+    try {
+      await session.decidePermission(item.requestId, decision);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  return (
+    <div className="card warn permission-card">
+      <div className="card-title" style={{ color: "var(--warn)" }}>
+        <SafetyCertificateOutlined /> 权限确认：{item.actionLabel}
+      </div>
+      <div className="card-body">
+        Agent 想{item.actionLabel}
+        {item.object && (
+          <>
+            ：<b>{item.object}</b>
+          </>
+        )}
+      </div>
+      {item.detail && <div className="card-body chat-sub">{item.detail}</div>}
+      {item.canAnswer ? (
+        <div className="card-actions">
+          {item.buttons.map((button) => (
+            <Button
+              key={button.decision}
+              type={button.style === "primary" ? "primary" : "default"}
+              danger={button.style === "danger"}
+              loading={busy === button.decision}
+              disabled={busy !== undefined}
+              onClick={() => void answer(button.decision)}
+            >
+              {button.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <Handoff handoff={{ text: item.stateText, switchTo: actions.role === "initiator" ? [] : ["initiator"] }} onRole={actions.onRole} />
+      )}
+    </div>
+  );
+}
+
+/** Agent 写的文件：对话里一行，点开看改了什么（edit_file 是差异，write_file 是写进去的文本）。 */
+export function FileChangeRow({ item }: { item: Extract<ChatItem, { kind: "file_change" }> }) {
+  const head = (
+    <span className={`file-change-head ${item.ok ? "" : "bad"}`}>
+      {item.ok ? <EditOutlined /> : <CloseCircleFilled />} {item.summary}
+    </span>
+  );
+  if (!item.body) return <div className="file-change">{head}</div>;
+  return (
+    <Collapse
+      className="file-change"
+      size="small"
+      bordered={false}
+      items={[
+        {
+          key: "body",
+          label: head,
+          children: <pre className={`file-change-body ${item.bodyKind ?? ""}`}>{item.body}</pre>,
+        },
+      ]}
+    />
+  );
+}
+
+/** 自动放行、被拒绝的留痕：一行小字。 */
+export function PermissionTraceRow({ item }: { item: Extract<ChatItem, { kind: "trace" }> }) {
+  return <div className={`notice permission-trace ${item.tone}`}>{item.text}</div>;
+}
+
 function formatBytes(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${Math.round(size / 1024)} KB`;
@@ -430,5 +518,11 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
     case "use_file":
       return <UseFileCard key={`${item.key}-${item.confirmed}`} item={item} actions={actions} session={session} />;
+    case "permission":
+      return <PermissionCard key={`${item.key}-${item.state}`} item={item} actions={actions} session={session} />;
+    case "file_change":
+      return <FileChangeRow key={item.key} item={item} />;
+    case "trace":
+      return <PermissionTraceRow key={item.key} item={item} />;
   }
 }

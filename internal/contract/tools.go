@@ -22,6 +22,14 @@ const (
 	ToolReadFile = "read_file"
 )
 
+// 前台 Agent 的文件写入工具（T48）：只在会话里开放，不属于员工工作流的工具白名单（不在 ToolNames 里）。
+const (
+	// ToolWriteFile 整文件写入工作区目录：新建或覆盖
+	ToolWriteFile = "write_file"
+	// ToolEditFile 把文件里恰好出现一次的一段原文换成新文本
+	ToolEditFile = "edit_file"
+)
+
 // ToolNames 全部工具名。
 var ToolNames = []string{
 	ToolValidateSubmission, ToolLoadSales, ToolComputeMetrics, ToolDetectContradictions,

@@ -164,3 +164,29 @@ describe("会话接口", () => {
     await expect(api.getSession("s-x")).rejects.toThrow("没有");
   });
 });
+
+describe("权限模式接口（T48）", () => {
+  test("选模式：PUT permission-mode，带角色头和模式", async () => {
+    const { calls, impl } = fakeFetch({
+      "PUT /api/sessions/s-1/permission-mode": [200, { ok: true, messages: [], session: { ...session, permissionMode: "accept_edits" } }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    const result = await api.setPermissionMode("s-1", "accept_edits");
+    expect(result.ok && result.session.permissionMode).toBe("accept_edits");
+    expect(calls[0]?.method).toBe("PUT");
+    expect(calls[0]?.headers["x-role"]).toBe("initiator");
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ mode: "accept_edits" });
+  });
+
+  test("答复权限确认：POST permissions/{requestId}，带决定；业务错误作为结果返回", async () => {
+    const { calls, impl } = fakeFetch({
+      "POST /api/sessions/s-1/permissions/00112233445566ff": [200, { ok: true, messages: [], session }],
+      "POST /api/sessions/s-1/permissions/aaaaaaaaaaaaaaaa": [409, { error: "permission_settled", message: "这张权限确认已经答复或取消了" }],
+    });
+    const api = createSessionApi("http://local", () => "initiator", impl);
+    expect((await api.decidePermission("s-1", "00112233445566ff", "always_allow")).ok).toBe(true);
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ decision: "always_allow" });
+    expect(calls[0]?.headers["x-role"]).toBe("initiator");
+    expect(await api.decidePermission("s-1", "aaaaaaaaaaaaaaaa", "deny")).toMatchObject({ ok: false, message: "这张权限确认已经答复或取消了" });
+  });
+});

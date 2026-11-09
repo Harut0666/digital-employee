@@ -1549,3 +1549,60 @@ button.checklist-line {
 .chat-foot .stop-button {
   color: var(--danger, #c0392b);
 }
+/* 输入框左下角的权限模式下拉（T48）：和右下角的模型下拉同一排 */
+.chat-foot-left {
+  margin-right: auto;
+}
+.chat-foot-bar .mode-picker {
+  color: var(--muted);
+  font-size: calc(var(--font-size) - 2px);
+  gap: 4px;
+}
+.mode-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+}
+/* 权限确认卡（T48）：待答复时醒目，答复后收成一行 */
+.permission-card .card-body b {
+  word-break: break-all;
+}
+.card.permission-done {
+  padding: 6px 14px;
+  font-size: calc(var(--font-size) - 1px);
+}
+.card.permission-done.denied,
+.card.permission-done.cancelled {
+  color: var(--danger, #c0392b);
+}
+/* Agent 写的文件：一行，点开看改动 */
+.file-change {
+  margin-left: 48px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 10px;
+  font-size: calc(var(--font-size) - 1px);
+}
+.file-change .ant-collapse-header {
+  padding: 0 !important;
+}
+.file-change .ant-collapse-content-box {
+  padding: 8px 0 0 !important;
+}
+.file-change-head.bad {
+  color: var(--danger, #c0392b);
+}
+.file-change-body {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: calc(var(--font-size) - 2px);
+  color: var(--text-2);
+}
+.permission-trace.denied {
+  color: var(--danger, #c0392b);
+}

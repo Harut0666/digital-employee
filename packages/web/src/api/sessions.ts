@@ -5,6 +5,8 @@
 import type {
   FolderListing,
   ModelConnectionOption,
+  PermissionDecision,
+  PermissionMode,
   PreflightResult,
   SessionAgentEvent,
   SessionDetail,
@@ -43,6 +45,10 @@ export interface SessionApi {
   /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
   modelOptions(): Promise<ModelConnectionOption[]>;
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
+  /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是询问 */
+  setPermissionMode(id: string, mode: PermissionMode): Promise<SessionResult>;
+  /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
+  decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
   /** 改会话的标题、归档 */
   updateSession(id: string, patch: { title?: string; archived?: boolean }): Promise<SessionSummary>;
   /** 提交前检查：默认模型连接有没有可用 Key；给了任务就用任务的会话模型 */
@@ -97,6 +103,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       }),
     modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
     selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
+    setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
+    decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
       const body = await read<{ session?: SessionSummary }>(session(id), {
