@@ -14,7 +14,8 @@ import (
 // T44 按 T35 第 6 项把 interpret_feedback 的提示词与 Schema 措辞改成“超范围意见回到待审核”
 // （最后这一处是有意不再与冻结的 TS 版逐字节相同）。
 // T44 已按新哈希更新 golden-a01 的 events/snapshot/qc_record 与 parity 基准，见 golden-a01/README.md。
-const goldenWeeklyReportHash = "4b955c8d43b5fe9a296b883c6eebbb8042be9e4fd7d5fdac7cd77c438572c0e5"
+// 哈希按检出内容的原始字节算（仓库 .gitattributes 统一 LF）：用 CRLF 检出或改写这些文件会得到不同的哈希。
+const goldenWeeklyReportHash = "c46572325f72603eceb2d09a125074a4a1d582d06ebba811f10276ee964b9547"
 
 func testEmployeeDir(t *testing.T) string {
 	t.Helper()

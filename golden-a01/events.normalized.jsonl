@@ -1,4 +1,4 @@
-{"type": "task_created", "employee": "weekly-report", "configHash": "4b955c8d43b5fe9a296b883c6eebbb8042be9e4fd7d5fdac7cd77c438572c0e5", "form": {"period": {"year": 2026, "week": 44}}, "attachments": [{"name": "销售明细.xlsx", "path": "<path>"}, {"name": "周会纪要_2026W44.docx", "path": "<path>"}], "seq": 1}
+{"type": "task_created", "employee": "weekly-report", "configHash": "c46572325f72603eceb2d09a125074a4a1d582d06ebba811f10276ee964b9547", "form": {"period": {"year": 2026, "week": 44}}, "attachments": [{"name": "销售明细.xlsx", "path": "<path>"}, {"name": "周会纪要_2026W44.docx", "path": "<path>"}], "seq": 1}
 {"type": "state_changed", "from": "draft", "to": "admission", "trigger": "submit", "actor": "initiator", "seq": 2}
 {"type": "step_started", "stepId": "admission", "attempt": 1, "reworkRound": 0, "seq": 3}
 {"type": "tool_called", "stepId": "admission", "callId": "87ac035d-0664-4a81-b6c6-7b1befb0ccf0", "tool": "validate_submission", "args": {"period": {"year": 2026, "week": 44}, "attachments": [{"name": "销售明细.xlsx", "path": "<path>"}, {"name": "周会纪要_2026W44.docx", "path": "<path>"}], "allowMissingMinutes": null, "allowPartialPeriod": null}, "attempt": 1, "seq": 4}

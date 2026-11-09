@@ -533,7 +533,7 @@ func TestEmployeeConfigFlow(t *testing.T) {
 		t.Fatalf("配置视图不对：%s", body)
 	}
 	// 配置哈希跟着员工配置走（唯一事实来源是 internal/config）；T44 改 interpret_feedback 措辞后已更新
-	const goldenConfigHash = "4b955c8d43b5fe9a296b883c6eebbb8042be9e4fd7d5fdac7cd77c438572c0e5"
+	const goldenConfigHash = "c46572325f72603eceb2d09a125074a4a1d582d06ebba811f10276ee964b9547"
 	if config["hash"] != goldenConfigHash {
 		t.Fatalf("配置哈希与 TS 版不一致：%v", config["hash"])
 	}
