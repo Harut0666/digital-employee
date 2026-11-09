@@ -10,6 +10,7 @@ import type {
   PermissionDecision,
   PermissionMode,
   PreflightResult,
+  QuestionAnswer,
   SessionAgentEvent,
   SessionDetail,
   SessionResult,
@@ -58,6 +59,8 @@ export interface SessionApi {
   loadSampleForm(id: string): Promise<SessionResult>;
   /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
   decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
+  /** 提问卡（ask_user_question）上的答复：每题选了什么、“其他”里写了什么；只有发起人能答 */
+  answerQuestion(id: string, requestId: string, answers: QuestionAnswer[]): Promise<SessionResult>;
   /** 改会话的标题、归档 */
   updateSession(id: string, patch: { title?: string; archived?: boolean }): Promise<SessionSummary>;
   /** 提交前检查：默认模型连接有没有可用 Key；给了任务就用任务的会话模型 */
@@ -120,6 +123,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     answerEmployeeForm: (id, requestId, answer) => act(session(id, `/employee-forms/${encodeURIComponent(requestId)}`), JSON.stringify(answer)),
     loadSampleForm: (id) => act(session(id, "/sample"), JSON.stringify({})),
     decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
+    answerQuestion: (id, requestId, answers) => act(session(id, `/questions/${encodeURIComponent(requestId)}`), JSON.stringify({ answers })),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
       const body = await read<{ session?: SessionSummary }>(session(id), {

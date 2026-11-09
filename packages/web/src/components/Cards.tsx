@@ -20,13 +20,16 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, QuestionAnswer, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
 import { EmployeeFormCard } from "./EmployeeFormCard";
 import { FilingCard } from "./FilingCard";
+import { TodoCard } from "./TodoCard";
+import { QuestionCard } from "./QuestionCard";
+import { ShellCommandBlock } from "./ShellCommand";
 import { StepList } from "./StepList";
 
 export interface CardActions {
@@ -67,6 +70,8 @@ export interface SessionActions {
   openKnowledge: () => void;
   /** 权限确认卡上的答复（T48）：允许一次、本会话总是允许这一类、拒绝 */
   decidePermission: (requestId: string, decision: PermissionDecision) => Promise<void>;
+  /** 提问卡上的答复（ask_user_question）；失败交给卡片显示 */
+  answerQuestion: (requestId: string, answers: QuestionAnswer[]) => Promise<SessionResult>;
 }
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -392,7 +397,11 @@ export function PermissionCard({ item, actions, session }: { item: Extract<ChatI
           </>
         )}
       </div>
-      {item.detail && <div className="card-body chat-sub">{item.detail}</div>}
+      {item.shell ? (
+        <ShellCommandBlock {...item.shell} description={item.detail} />
+      ) : (
+        item.detail && <div className="card-body chat-sub">{item.detail}</div>
+      )}
       {item.canAnswer ? (
         <div className="card-actions">
           {item.buttons.map((button) => (
@@ -482,6 +491,10 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <UseFileCard key={`${item.key}-${item.confirmed}`} item={item} actions={actions} session={session} />;
     case "permission":
       return <PermissionCard key={`${item.key}-${item.state}`} item={item} actions={actions} session={session} />;
+    case "todo":
+      return <TodoCard key={`${item.key}-${item.latest}`} item={item} />;
+    case "question":
+      return <QuestionCard key={`${item.key}-${item.view.state}`} item={item} actions={actions} session={session} />;
     case "file_change":
       return <FileChangeRow key={item.key} item={item} />;
     case "trace":

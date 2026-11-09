@@ -12,11 +12,11 @@ export interface PermissionModeInfo {
 
 /** 五个模式，从严到松；说明和 Spec 0007 的矩阵一致 */
 export const PERMISSION_MODES: readonly PermissionModeInfo[] = [
-  { value: "plan", label: "计划", hint: "只读：Agent 只看不动，给你一个方案" },
-  { value: "ask", label: "询问", hint: "写文件、运行员工前先问你" },
+  { value: "plan", label: "计划", hint: "只读：Agent 只看不动（不能写、不能运行命令），给你一个方案" },
+  { value: "ask", label: "询问", hint: "写文件、运行员工、运行命令前先问你" },
   { value: "accept_edits", label: "接受编辑", hint: "在工作区里写、改文件不用问" },
   { value: "auto", label: "自动", hint: "员工表单完整有效时直接开工" },
-  { value: "yolo", label: "放开", hint: "连目录文件的确认也免掉" },
+  { value: "yolo", label: "放开", hint: "连目录文件的确认和命令行也不再问（命令行没有沙箱）" },
 ];
 
 const DEFAULT_MODE: PermissionMode = "ask";
@@ -66,6 +66,8 @@ export interface PermissionCardView {
   /** 现在能不能答复：还在等、是发起人、会话可写 */
   canAnswer: boolean;
   buttons: PermissionButton[];
+  /** shell 确认卡（权限确认卡的变体）：原样显示将要运行的命令、工作目录和醒目的风险提示（尽力而为，不是安全边界） */
+  shell?: { command: string; workdir: string; warnings: string[] };
 }
 
 function stateOf(card: SessionCard): PermissionState {
@@ -100,12 +102,16 @@ export function derivePermissionCard(card: SessionCard, opts: { writable: boolea
     requestId: card.requestId ?? "",
     action: card.action ?? "",
     actionLabel: card.actionLabel ?? "",
-    object: card.object ?? card.path ?? "",
+    // shell 的对象就是命令块，不再重复一句“运行命令”
+    object: card.action === "run_command" ? "" : (card.object ?? card.path ?? ""),
     detail: card.detail || undefined,
     state,
     stateText: state === "pending" ? (canAnswer ? "等你答复" : "等待发起人答复") : STATE_TEXT[state],
     canAnswer,
     buttons,
+    ...(card.action === "run_command" || card.tool === "shell"
+      ? { shell: { command: card.command ?? "", workdir: card.workdir ?? "", warnings: card.warnings ?? [] } }
+      : {}),
   };
 }
 
@@ -178,12 +184,18 @@ export interface PermissionTrace {
 }
 
 /** 受权限关口管着的工具：它们的拒绝才算权限留痕（越权调用别的工具只进日志） */
-const GATED_TOOLS = new Set<string>([...WRITE_TOOLS, "run_employee", "use_folder_file"]);
+const GATED_TOOLS = new Set<string>([...WRITE_TOOLS, "run_employee", "use_folder_file", "shell"]);
 
 /** 自动放行、被边界或模式拒绝 → 对话里的一行；发起人拒绝已体现在确认卡上，不重复 */
 export function traceOf(message: SessionMessage): PermissionTrace | undefined {
   const target = (() => {
-    const path = record(message.args)?.path;
+    const args = record(message.args);
+    // shell：留痕里写出完整命令（长的只显示前面一段）
+    if (message.tool === "shell" && typeof args?.command === "string") {
+      const command = args.command.length > 200 ? `${args.command.slice(0, 200)}…` : args.command;
+      return `shell ${command}`;
+    }
+    const path = args?.path;
     return `${message.tool ?? ""}${typeof path === "string" ? ` ${path}` : ""}`;
   })();
   if (message.kind === "permission_allowed") return { tone: "allowed", text: `已放行 ${target}：${message.reason ?? ""}` };

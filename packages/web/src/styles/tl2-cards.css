@@ -1,0 +1,125 @@
+/*
+ * 新增工具的对话卡片：待办清单、提问、shell 确认卡的命令块。
+ * 只用 tokens.css 里的颜色和间距，浅色 / 深色都跟着走。
+ */
+
+/* ---- 待办清单 ---- */
+.todo-card {
+  --accent: var(--tone-running);
+}
+.todo-head {
+  font-weight: 500;
+}
+.todo-rows {
+  list-style: none;
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.todo-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--fs-md);
+}
+.todo-row .todo-icon {
+  flex: none;
+  width: 16px;
+  text-align: center;
+}
+.todo-row.completed .todo-icon {
+  color: var(--dot-done);
+}
+.todo-row.completed .todo-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.todo-row.in_progress .todo-icon {
+  color: var(--dot-running);
+}
+.todo-row.in_progress .todo-text {
+  font-weight: 500;
+}
+.todo-row.pending .todo-icon {
+  color: var(--dot-idle);
+}
+.todo-card.old .ant-collapse-header,
+.todo-card.old .ant-collapse-body {
+  padding-inline: 0;
+}
+
+/* ---- 提问 ---- */
+.question-block + .question-block {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px dashed var(--line);
+}
+.question-header {
+  display: inline-block;
+  margin-bottom: 2px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--tone-waiting-soft);
+  color: var(--tone-waiting);
+  font-size: var(--fs-sm);
+}
+.question-options {
+  margin-top: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.question-custom {
+  max-width: 360px;
+}
+.question-options-readonly {
+  margin: var(--sp-2) 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+.question-answers {
+  margin: 0;
+  padding-left: 18px;
+}
+.question-done.cancelled {
+  color: var(--tone-error);
+}
+.question-done-card .ant-collapse-header,
+.question-done-card .ant-collapse-body {
+  padding-inline: 0;
+}
+.danger-text {
+  color: var(--tone-error);
+}
+
+/* ---- shell 确认卡（权限确认卡的变体） ---- */
+.shell-command {
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow: auto;
+  user-select: text;
+}
+.shell-warning {
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-left: 3px solid var(--dot-error);
+  border-radius: var(--r-sm);
+  background: var(--tone-error-soft);
+  color: var(--tone-error);
+  font-size: var(--fs-md);
+  font-weight: 500;
+}
+.shell-note {
+  margin-bottom: var(--sp-2);
+}

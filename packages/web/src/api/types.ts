@@ -182,7 +182,32 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission" | "employee_form";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission" | "employee_form" | "question";
+
+/** Agent 的待办清单（todo_write）里的一项 */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+/** ask_user_question 的一个选项、一道问题、一道问题的答案 */
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+export interface QuestionItem {
+  id: string;
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiSelect?: boolean;
+}
+export interface QuestionAnswer {
+  id: string;
+  selected: string[];
+  custom?: string;
+}
 
 /** 员工表单上 Agent 给的一份材料：会话里已有的、工作区目录里的文件（确认开工时复制）、公开样例文件（确认开工时复制） */
 export interface FormMaterial {
@@ -271,6 +296,14 @@ export interface SessionCard {
   /** 弹出卡片时会话里已有的材料：之后新出现的是人在卡片上补传的 */
   baseline?: string[];
   standalone?: boolean;
+  // shell 确认卡（permission 卡的变体）：将要运行的命令（原样）、工作目录（真实路径）、醒目的风险提示（尽力而为，不是安全边界）；
+  // 命令的 description 在 detail 里
+  command?: string;
+  workdir?: string;
+  warnings?: string[];
+  // question（ask_user_question）：问题和（答复后的）答案；pending 在等人，decision 是 answered / cancelled
+  questions?: QuestionItem[];
+  answers?: QuestionAnswer[];
 }
 
 /** 权限确认卡上的一个答复按钮：decision 就是答复时提交的决定 */
@@ -303,7 +336,8 @@ export type SessionMessageKind =
   | "tool_denied"
   | "model_failed"
   | "permission_mode_set"
-  | "permission_allowed";
+  | "permission_allowed"
+  | "todo_written";
 
 export interface SessionMessage {
   id: string;
@@ -321,6 +355,8 @@ export interface SessionMessage {
   model?: ModelRef;
   /** permission_mode_set：选的权限模式 */
   mode?: PermissionMode;
+  /** todo_written：Agent 整表替换后的待办清单 */
+  todos?: TodoItem[];
   /** tool_denied：为 "deny" 表示是发起人自己拒绝的（权限确认卡上的“拒绝”、员工表单上的“不是这个员工”），不是程序按边界或模式拒绝的 */
   decision?: string;
 }
@@ -382,6 +418,8 @@ export interface SessionSummary {
   modelSelected?: boolean;
   /** 权限模式（T48）；新会话总是 ask */
   permissionMode?: PermissionMode;
+  /** Agent 最新的待办清单（todo_write）；没写过时为空 */
+  todos?: TodoItem[];
   /** 状态点（后端按读的人的角色算）：等你处理 / 运行中 / 已完成未读 / 空闲 */
   statusDot: StatusDot;
   /** 任务交付或终止之后还没打开过 */
