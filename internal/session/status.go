@@ -95,13 +95,13 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 
 // Record 记录 tab 里的一条：所有工作区里已开工的任务。
 type Record struct {
-	TaskID     string           `json:"taskId"`
-	Group      string           `json:"group"`
-	Title      string           `json:"title"`
-	Employee   string           `json:"employee"`
+	TaskID     string             `json:"taskId"`
+	Group      string             `json:"group"`
+	Title      string             `json:"title"`
+	Employee   string             `json:"employee"`
 	State      contract.TaskState `json:"state"`
-	StatusText string           `json:"statusText"`
-	StatusDot  string           `json:"statusDot"`
+	StatusText string             `json:"statusText"`
+	StatusDot  string             `json:"statusDot"`
 	// SessionID 任务所在的会话；直接从任务接口建的任务没有会话
 	SessionID string `json:"sessionId,omitempty"`
 	// WorkspaceID、WorkspaceName 任务属于哪个工作区

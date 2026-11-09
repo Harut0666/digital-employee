@@ -650,7 +650,9 @@ func TestUnregisterKeepsSessionsTasksAndFiles(t *testing.T) {
 	}
 	// 会话、任务和目录里的文件都还在
 	found := false
-	for _, item := range a.waitSessions("", func(list []session.View) bool { return slices.ContainsFunc(list, func(s session.View) bool { return s.ID == created.ID }) }) {
+	for _, item := range a.waitSessions("", func(list []session.View) bool {
+		return slices.ContainsFunc(list, func(s session.View) bool { return s.ID == created.ID })
+	}) {
 		if item.ID == created.ID {
 			found = true
 			if item.WorkspaceID != mine.ID {

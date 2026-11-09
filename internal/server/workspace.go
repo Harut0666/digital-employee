@@ -29,7 +29,7 @@ type workspaceSummaryView struct {
 
 // workspaceListView GET /api/workspaces 的响应。
 type workspaceListView struct {
-	ReadOnly bool `json:"readOnly"`
+	ReadOnly bool   `json:"readOnly"`
 	Reason   string `json:"reason,omitempty"`
 	// Workspaces 登记过的工作区，按登记的顺序
 	Workspaces []workspaceSummaryView `json:"workspaces"`

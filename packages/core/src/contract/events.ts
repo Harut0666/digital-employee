@@ -11,6 +11,8 @@ interface EventBase {
   /** ISO 时间 */
   ts: string;
   taskId: string;
+  /** 任务属于哪个工作区（Spec 0006；旧日志里没有这个字段） */
+  workspaceId?: string;
 }
 
 /** 模型引用见 `settings.ts` 的 ModelRef（设置里的连接名 + 连接列出的模型 ID）。 */

@@ -74,4 +74,3 @@ func TestSingleDirectoryModeKeepsTheLayout(t *testing.T) {
 		t.Fatal("单目录模式的任务在 tasks/ 下")
 	}
 }
-

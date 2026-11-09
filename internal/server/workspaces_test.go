@@ -449,6 +449,7 @@ func TestStatusDotRunningWhileTaskExecutes(t *testing.T) {
 
 // open 放行所有等待中的工具调用（只放一次，重复调用没关系）。
 func (c *heldTools) open() { c.once.Do(func() { close(c.release) }) }
+
 // --- 已读：记录在会话日志里，打开会话时写入 ---
 
 func TestOpenedSessionWritesReadToItsLog(t *testing.T) {
@@ -522,7 +523,9 @@ func sessionListOf(h *harness, query string) []struct {
 // alwaysQC 质检不卡住：记录分组只关心任务停在哪个状态。
 type alwaysQC struct{}
 
-func (alwaysQC) Run(input contract.QcInput) []contract.QcCheckResult { return qc.NewEngine().Run(input) }
+func (alwaysQC) Run(input contract.QcInput) []contract.QcCheckResult {
+	return qc.NewEngine().Run(input)
+}
 
 func TestRecordsGroupedByState(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
