@@ -78,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-go.ps1
 2. `go build -trimpath -ldflags "-s -w" -o dist/digital-employee.exe ./cmd/digital-employee`
 3. 冒烟：在临时目录跑 `init` + A-01 剧本用例，断言任务到 delivered 且产出 docx
 
-产物：**`dist\digital-employee.exe`**，单文件约 **28MB**。
+产物：**`dist\digital-employee.exe`**，单文件约 **27MB**。
 
 **手动分步**（等价，便于 CI 或自定义）：
 
@@ -419,7 +419,7 @@ employees/weekly-report/
 - Spec 0006 已落地（T36–T44）：工作区即目录（应用目录 + 工作区登记 + 旧数据一次性迁移 + 单目录模式）、设置里拉取模型、侧栏“工作区 | 记录”、会话模型与运行中切换、前台 Agent 流式循环、目录材料、交付物写入工作区、对话里的步骤行；收尾补齐了对拍基准、6 条新用例、目录链接防护、测试提速（server 包约 480s → 约 170s）。
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 36 条在剧本模式 36/36 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
-- 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 28MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
+- 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 27MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
 - 原生窗口：同一个 exe 加 `--window` 用 MyGo 打开（系统 WebView2），与浏览器方式共用应用目录。
 - 已知限制：
   - 字体未嵌入。图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（缺失时由阅读端回退）。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
