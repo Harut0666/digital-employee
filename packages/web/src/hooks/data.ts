@@ -3,6 +3,7 @@ import type { TaskEvent } from "@de/core/contract";
 import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, TaskSnapshot, WebApi } from "../api";
 import type { PastRun } from "../view/chat-view";
 import { deriveSessionView, type SessionView } from "../view/session-view";
+import { reloadOnEvent } from "../view/session-stream";
 export const ApiContext = createContext<WebApi | null>(null);
 export function useApi(): WebApi {
   const api = useContext(ApiContext);
@@ -65,14 +66,15 @@ export interface LiveState {
 }
 
 /**
- * 订阅一个会话的事件流（T40）：说的话逐字出现，工具调用逐个列出，一轮结束时让调用方重读会话。
+ * 订阅一个会话的事件流（T40）：说的话逐字出现，工具调用逐个列出；一轮开始、结束和出现流程卡片时让调用方重读会话
+ * （哪些事件要重读见 view/session-stream.ts）。
  * 切走会话时断开；正在说的那一轮在切回来时会重读会话补上。
  */
-export function useSessionStream(id: string | undefined, onTurnEnd: () => void): LiveState {
+export function useSessionStream(id: string | undefined, onReload: () => void): LiveState {
   const api = useApi();
   const [live, setLive] = useState<LiveState["live"]>();
-  const ended = useRef(onTurnEnd);
-  ended.current = onTurnEnd;
+  const reload = useRef(onReload);
+  reload.current = onReload;
   useEffect(() => {
     setLive(undefined);
     if (!id) return;
@@ -106,8 +108,7 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
             return prev;
         }
       });
-      // 流程卡片（权限确认等）在这一轮进行中就要让人看到：一轮停在确认上，不会有 turn_end
-      if (event.type === "turn_end" || (event.type === "message" && event.message?.card)) ended.current();
+      if (reloadOnEvent(event)) reload.current();
     };
     return api.subscribeSession(id, apply);
   }, [api, id]);

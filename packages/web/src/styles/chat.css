@@ -197,6 +197,9 @@
   overflow: auto;
   padding: 0 var(--sp-3) var(--sp-2);
 }
+.step-rows > * {
+  flex-shrink: 0;
+}
 .step-row {
   display: flex;
   align-items: center;
@@ -301,6 +304,13 @@
   flex-direction: column;
   gap: var(--sp-4);
 }
+/*
+ * 滚动容器里的子项一律不收缩：卡片（.card 有 overflow:hidden）、消息行、工具行、步骤行的 min-height:auto
+ * 在 overflow 非 visible 时会变成 0，内容一多就被 flex-shrink 压成一条。超出的高度交给 .chat-body 自己滚动。
+ */
+.chat-body > * {
+  flex-shrink: 0;
+}
 /* 对话：内容列居中 */
 .chat-body.thread {
   --gutter: max(var(--sp-6), calc((100% - var(--thread-w)) / 2));
@@ -345,6 +355,13 @@
   padding: 10px 16px;
   border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);
   background: var(--bubble-me);
+}
+/* 刚发出、服务端还没确认的话：略淡，时间处写“发送中…” */
+.msg-row.me.pending .bubble {
+  opacity: 0.6;
+}
+.msg-row.me.pending .msg-time {
+  opacity: 1;
 }
 .msg-who {
   margin-bottom: 2px;

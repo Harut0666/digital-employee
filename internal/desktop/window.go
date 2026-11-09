@@ -60,6 +60,7 @@ func Run(opts Options) error {
 			Height:    opts.Height,
 			MinWidth:  960,
 			MinHeight: 640,
+			Page:      pageOptions(),
 		})
 		if opts.Debug {
 			win.Page().OpenDevTools()
@@ -71,6 +72,20 @@ func Run(opts Options) error {
 	}
 	log.Println("desktop: 窗口已关闭")
 	return nil
+}
+
+// pageOptions 页面选项：这是桌面工作台，不是网页，页面不能被缩放。
+//
+// MyGo v0.7.4 只给了触控屏捏合缩放（PinchZoom）的开关，这里显式关掉，并把页面缩放固定为 100%、关掉滑动前进后退。
+// WebView2 的 IsZoomControlEnabled（Ctrl+滚轮）被 MyGo 固定为开、没有选项也拿不到 ICoreWebView2Settings，
+// 浏览器快捷键（Ctrl+加减号）只随开发者工具一起开关（关掉就没有 F12），所以这两条由前端兜底：
+// packages/web/src/view/zoom-guard.ts 拦 wheel、keydown 和手势事件。
+func pageOptions() mygo.PageOptions {
+	return mygo.PageOptions{
+		ZoomFactor:      1,
+		PinchZoom:       false,
+		SwipeNavigation: false,
+	}
 }
 
 // appVersion 由构建期 -ldflags 注入；默认开发版本。
