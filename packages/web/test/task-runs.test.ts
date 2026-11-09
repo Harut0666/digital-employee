@@ -109,7 +109,7 @@ describe("交付后准备下一次运行", () => {
   const form = (id: string, offsetSec: number, submitted: boolean) =>
     msg({ kind: "card", card: { type: "form", employee: "weekly-report", submitted, taskId: submitted ? "t1" : undefined } }, id, offsetSec);
 
-  test("任务交付后，开工之后发的最新一张表单卡可以编辑；开工之前的草稿卡仍然失效", () => {
+  test("任务交付后，旧会话里已发的草稿表单卡都只读（T49 起开工入口是员工表单卡）", () => {
     const items = deriveChat(
       session([form("old-draft", 1, false), form("started", 10, true), msg({ kind: "notice", text: "任务已交付。" }, "done", 13), form("next-draft", 70, false)], {
         status: "closed",
@@ -122,7 +122,7 @@ describe("交付后准备下一次运行", () => {
     expect(modes).toEqual([
       ["old-draft", "superseded"],
       ["started", "submitted"],
-      ["next-draft", "editable"],
+      ["next-draft", "superseded"],
     ]);
   });
 

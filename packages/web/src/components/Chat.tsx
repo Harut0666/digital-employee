@@ -42,7 +42,6 @@ export function StateTag({ state }: { state: TaskState }) {
   );
 }
 
-const SESSION_TAG: Record<string, string> = { reception: "接待中", drafting: "填写表单" };
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -371,7 +370,6 @@ export function SessionChat({
   modelCalls,
   attachments,
   artifacts,
-  checklist,
   headerExtra,
   folderFiles,
   modelOptions,
@@ -403,8 +401,6 @@ export function SessionChat({
   /** 轨迹详情里的任务附件和产物 */
   attachments: string[];
   artifacts: TraceFile[];
-  /** 开工清单（T30）：放在状态机下方 */
-  checklist?: React.ReactNode;
   /** 标题栏右侧的附加入口，比如窄窗口下打开右栏抽屉 */
   headerExtra?: React.ReactNode;
   onSend: (text: string) => Promise<boolean>;
@@ -434,8 +430,8 @@ export function SessionChat({
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
   }, [lastKey, items.length]);
-  const tag = detail.taskState ? <StateTag state={detail.taskState} /> : SESSION_TAG[detail.status] && <Tag style={{ margin: 0 }}>{SESSION_TAG[detail.status]}</Tag>;
-  const showStages = Boolean(detail.taskId) || detail.status === "drafting";
+  const tag = detail.taskState ? <StateTag state={detail.taskState} /> : undefined;
+  const showStages = Boolean(detail.taskId);
   return (
     <>
       <div className="chat-head">
@@ -462,7 +458,6 @@ export function SessionChat({
         />
       )}
       {detail.taskId && started && <StepList rows={stepRows} onOpen={openStep} />}
-      {checklist}
       {detail.taskId && traceOpen && (
         <TrajectoryDetails
           view={trajectory}
@@ -487,7 +482,7 @@ export function SessionChat({
       )}
       </div>
       <ChatInput
-        placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "补充要求，或问问员工…"}
+        placeholder={detail.readOnly ? "这是旧任务的只读记录，要继续工作请开新对话" : detail.taskId ? "问问这个任务…" : "说说要做什么，或问问员工…"}
         disabled={detail.readOnly}
         folderFiles={detail.status === "task" ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}

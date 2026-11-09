@@ -117,7 +117,7 @@ type Message struct {
 func (m Message) visible() bool {
 	switch m.Kind {
 	case kindCreated, kindModelSelected, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped,
-		kindRename, kindArchive, kindRead, KindTurnText:
+		kindRename, kindArchive, kindRead, KindTurnText, kindEmployeeFormDecided:
 		return false
 	}
 	return true

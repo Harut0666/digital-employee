@@ -16,7 +16,7 @@ export function FrontdeskTab({ config, drafts, setData }: TabProps) {
       <Alert
         type="info"
         showIcon
-        message="前台 Agent 只能在对话里填表单草稿、提议流程卡片、用只读工具回答问题；任何状态推进都必须由对应角色点击卡片按钮。"
+        message="前台 Agent 只能在对话里读写工作区文件、通过 run_employee 把工作交给员工（由发起人在员工表单卡上确认）、用只读工具回答问题；任何状态推进都必须由对应角色点击卡片按钮。这里的人设是写给前台 Agent 的、关于这个员工的说明。"
       />
       <Card size="small" title="人设" extra={<Typography.Text type="secondary">frontdesk.md 正文</Typography.Text>}>
         <Input.TextArea rows={18} value={doc.body} onChange={(event) => update({ body: event.target.value })} placeholder="前台 Agent 的人设、能做什么、不能做什么" />
@@ -40,7 +40,7 @@ export function FrontdeskTab({ config, drafts, setData }: TabProps) {
           onChange={(values) => update({ tools: values as string[] })}
         />
         <div style={{ marginTop: 8 }}>
-          <Typography.Text type="secondary">只读工具只能查询，不能修改任务状态；填表单草稿与提议卡片是固定能力，不能关闭。</Typography.Text>
+          <Typography.Text type="secondary">只读工具只能查询，不能修改任务状态；运行员工（run_employee）是固定能力，不能关闭。</Typography.Text>
         </div>
       </Card>
     </Space>

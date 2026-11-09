@@ -77,43 +77,91 @@ describe("模拟数据模式的会话", () => {
     return events;
   }
 
-  test("说一句话 → 确认员工 → 表单草稿 → 上传 → 提交，会话绑定任务", async () => {
+  /** 等到会话里出现还在等人的员工表单卡 */
+  async function waitForForm(api: Pick<WebApi, "getSession">, id: string) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const card = (await api.getSession(id)).messages.find((m) => m.card?.type === "employee_form" && m.card.pending)?.card;
+      if (card) return card;
+      if (Date.now() > deadline) throw new Error("等不到员工表单卡");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  async function waitFor(api: Pick<WebApi, "getSession">, id: string, found: (messages: Awaited<ReturnType<WebApi["getSession"]>>["messages"]) => boolean) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const detail = await api.getSession(id);
+      if (found(detail.messages)) return detail;
+      if (Date.now() > deadline) throw new Error(`等不到：${JSON.stringify(detail.messages)}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  test("说一句话 → 弹员工表单（预填、材料来源）→ 补传 → 确认开工，会话绑定任务", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
     expect(created.status).toBe("reception");
 
-    // 接口立即受理；说的话在事件流里逐字出现，说完才写进消息
+    // 接口立即受理；Agent 调 run_employee，表单卡等人确认
     const said = await api.sendMessage(created.id, "帮我出第 44 周的周报");
     expect(said).toEqual({ ok: true, turn: 1 });
-    const events = await turnOf(api, created.id, 1);
-    expect(events.map((e) => e.type)).toContain("text_delta");
-    expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "completed" });
-    // 先订阅、后发消息：最早的字可能已经先到，这里只核对收得全的部分\n    const streamed = events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");\n    expect("这项工作适合由经营周报员工接手，请确认。".endsWith(streamed)).toBe(true);\n    expect(streamed.length).toBeGreaterThan(0);
-    expect(events.filter((e) => e.type === "tool_start").map((e) => e.tool)).toEqual(["propose_employee"]);
+    const form = await waitForForm(api, created.id);
+    expect(form.pending).toBe(true);
+    expect(form).toMatchObject({ employee: "weekly-report", prefilled: ["period"], draft: { period: { year: 2026, week: 44 } } });
+    expect(form.materials?.map((m) => [m.name, m.source, m.path])).toEqual([
+      ["销售明细.xlsx", "folder", "销售明细.xlsx"],
+      ["周会纪要_2026W44.docx", "folder", "周会纪要_2026W44.docx"],
+    ]);
 
-    const first = await api.getSession(created.id);
-    expect(cards(first.messages)).toEqual(["employee_confirm"]);
-    const proposal = first.messages.find((m) => m.card)?.card;
-    expect(proposal?.proposed).toBe("weekly-report");
-
-    const confirmed = await api.confirmEmployee(created.id, "weekly-report");
-    expect(confirmed.ok && [confirmed.session.status, cards(confirmed.messages)]).toEqual(["drafting", ["form"]]);
-    // 草稿取自人说过的周次
-    expect(confirmed.ok && confirmed.session.draft).toEqual({ period: { year: 2026, week: 44 } });
-
-    const uploaded = await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx"), new File(["y"], "周会纪要_2026W44.docx")]);
-    expect(uploaded.ok && uploaded.session.attachments.map((a) => a.name)).toEqual(["销售明细.xlsx", "周会纪要_2026W44.docx"]);
-
-    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 }, remark: "" });
-    expect(submitted.ok && submitted.session.status).toBe("task");
-    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    const confirmed = await api.answerEmployeeForm(created.id, form.requestId!, { decision: "confirm", form: { period: { year: 2026, week: 44 }, remark: "" }, attachments: [], skipped: [] });
+    expect(confirmed.ok && confirmed.session.status).toBe("task");
+    const taskId = confirmed.ok ? confirmed.session.taskId : undefined;
     expect((await api.getTask(taskId!))?.state).toBe("admission");
 
     const detail = await api.getSession(created.id);
-    expect(cards(detail.messages)).toContain("form");
-    expect(detail.messages.at(-1)?.card).toMatchObject({ type: "form", submitted: true });
+    expect(detail.messages.find((m) => m.card?.type === "employee_form")?.card).toMatchObject({ pending: false, decision: "confirmed", taskId });
+    expect(detail.messages.find((m) => m.card?.type === "form")?.card).toMatchObject({ type: "form", submitted: true });
+    // 已答复的表单不能再答复
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).toMatchObject({ ok: false, error: "form_settled" });
   });
 
+  test("员工表单：必需项不齐不能确认；不是这个员工；只有发起人能答；plan 模式拒绝", async () => {
+    const { api, setRole } = asRole("initiator");
+    const created = await api.createSession();
+    await api.sendMessage(created.id, "出周报");
+    const form = await waitForForm(api, created.id);
+    const answer = { decision: "confirm" as const, form: {}, attachments: [], skipped: [] };
+    setRole("reviewer");
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, answer)).toMatchObject({ ok: false, error: "forbidden_role" });
+    setRole("initiator");
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, { ...answer, skipped: ["sales"] })).toMatchObject({ ok: false, error: "invalid_input" });
+    const refused = await api.answerEmployeeForm(created.id, form.requestId!, answer);
+    expect(refused).toMatchObject({ ok: false, error: "checklist_incomplete" });
+    expect((await api.getSession(created.id)).messages.find((m) => m.card?.type === "employee_form")?.card?.pending).toBe(true);
+
+    expect((await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).ok).toBe(true);
+    const detail = await api.getSession(created.id);
+    expect(detail.messages.find((m) => m.card?.type === "employee_form")?.card).toMatchObject({ pending: false, decision: "rejected" });
+    expect(detail.taskId).toBeUndefined();
+
+    const planned = await api.createSession();
+    await api.setPermissionMode(planned.id, "plan");
+    await api.sendMessage(planned.id, "出周报");
+    const denied = await waitFor(api, planned.id, (messages) => messages.some((m) => m.kind === "tool_denied"));
+    expect(denied.messages.some((m) => m.card?.type === "employee_form")).toBe(false);
+  });
+
+  test("载入公开样例：得到预填的员工表单，样例材料来自公开样例；确认即开工", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    const loaded = await api.loadSampleForm(created.id);
+    expect(loaded.ok).toBe(true);
+    const form = (await api.getSession(created.id)).messages.find((m) => m.card?.type === "employee_form")?.card;
+    expect(form).toMatchObject({ standalone: true, pending: true, employee: "weekly-report", prefilled: ["period"] });
+    expect(form?.materials?.map((m) => m.source)).toEqual(["sample", "sample"]);
+    const confirmed = await api.answerEmployeeForm(created.id, form!.requestId!, { decision: "confirm", form: form!.draft!, attachments: [], skipped: [] });
+    expect(confirmed.ok && confirmed.session.taskId).toBeTruthy();
+  });
   test("开工清单：必需项不齐不能开工，可跳过项由人确认并写进表单", async () => {
     const { api, setRole } = asRole("initiator");
     const created = await api.createSession();
@@ -171,7 +219,7 @@ describe("模拟数据模式的会话", () => {
   test("正在说的时候发的话排进这一轮；点停止，已说的部分以“已中断”保存", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
-    const first = await api.sendMessage(created.id, "出周报");
+    const first = await api.sendMessage(created.id, "随便聊聊");
     expect(first).toEqual({ ok: true, turn: 1 });
     // 还没说完就再发一句、再点停止
     const events = turnOf(api, created.id, 1);

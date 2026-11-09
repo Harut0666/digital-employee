@@ -246,5 +246,5 @@ var FormParams = map[string]string{
 	"allowPartialPeriod":  "按已有数据继续",
 }
 
-// FrontdeskFixedTools 前台 Agent 固定具备的草稿类工具。
-var FrontdeskFixedTools = []string{"fill_form_draft", "propose_card"}
+// FrontdeskFixedTools 前台 Agent 固定具备的工具：运行员工（run_employee）。
+var FrontdeskFixedTools = []string{"run_employee"}

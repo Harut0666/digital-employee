@@ -410,6 +410,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions/{id}/activity", s.sessionRoute(s.handleSessionActivity))
 	m.HandleFunc("POST /api/sessions/{id}/stop", s.sessionRoute(s.handleStopTurn))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
+	m.HandleFunc("POST /api/sessions/{id}/employee-forms/{requestId}", s.sessionRoute(s.handleAnswerEmployeeForm))
+	m.HandleFunc("POST /api/sessions/{id}/sample", s.sessionRoute(s.handleLoadSample))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
 	m.HandleFunc("GET /api/sessions/{id}/folder-files", s.sessionRoute(s.handleListFolderFiles))
 	m.HandleFunc("POST /api/sessions/{id}/folder-files", s.sessionRoute(s.handleUseFolderFiles))

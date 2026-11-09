@@ -53,8 +53,7 @@ func TestOnlyTheProgramTicksTheChecklist(t *testing.T) {
 		// Agent 想自己勾选：没有这样的工具，也不能替人上传
 		modelCalls("tick_checklist", map[string]any{"item": "sales"}),
 		modelCalls("fill_form_draft", map[string]any{"salesFile": "销售明细.xlsx"}),
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
-		modelSays("统计周期已填好，还缺销售明细。"),
+		modelSays("我勾不了清单，请你上传销售明细。"),
 	), withScriptedModel())
 	opened := draftingSession(h)
 	if got := itemStatus(t, h.readSession(opened.ID).Checklist); got != "period=missing sales=missing minutes=missing" {
@@ -64,19 +63,19 @@ func TestOnlyTheProgramTicksTheChecklist(t *testing.T) {
 	h.say(opened.ID, contract.RoleInitiator, "第 44 周，销售明细我已经传了")
 
 	got := h.readSession(opened.ID)
-	if status := itemStatus(t, got.Checklist); status != "period=done sales=missing minutes=missing" {
-		t.Fatalf("Agent 只能把周期填进草稿，不能勾选材料：%s", status)
+	if status := itemStatus(t, got.Checklist); status != "period=missing sales=missing minutes=missing" {
+		t.Fatalf("Agent 不能勾选清单，也不能替人上传：%s", status)
 	}
 	if refused := entriesOf(got.Messages, session.KindToolDenied); len(refused) != 2 {
 		t.Fatalf("越权勾选应被拒绝并留痕：%+v", refused)
 	}
-	if got.Checklist.Ready || strings.Join(got.Checklist.Missing, "、") != "销售明细" {
+	if got.Checklist.Ready || strings.Join(got.Checklist.Missing, "、") != "统计周期、销售明细" {
 		t.Fatalf("清单 = %+v", got.Checklist)
 	}
 
 	// 人上传了文件，程序才勾选
 	reply := uploadOK(h, opened.ID, sampleFile(t, "销售明细.xlsx"))
-	if status := itemStatus(t, reply.Session.Checklist); status != "period=done sales=done minutes=missing" || !reply.Session.Checklist.Ready {
+	if status := itemStatus(t, reply.Session.Checklist); status != "period=missing sales=done minutes=missing" || reply.Session.Checklist.Ready {
 		t.Fatalf("上传后的清单：%s %+v", status, reply.Session.Checklist)
 	}
 }
@@ -160,16 +159,12 @@ func TestWrongWeekMinutesStartAndAdmissionPausesForASupplement(t *testing.T) {
 func TestFrontdeskSeesTheChecklistToGuideThePerson(t *testing.T) {
 	h := newHarness(t, frontdeskScript(modelSays("还缺销售明细，请上传。")))
 	opened := draftingSession(h)
-	uploadOK(h, opened.ID, sampleFile(t, "周会纪要_2026W44.docx"))
-	if status, data := h.skipItem(opened.ID, contract.RoleInitiator, "minutes"); status != http.StatusOK {
-		t.Fatalf("跳过本周纪要：%d %s", status, data)
-	}
 
 	h.say(opened.ID, contract.RoleInitiator, "还缺什么")
 
 	requests := frontdeskRequests(h)
 	system := requests[len(requests)-1].Request.Messages[0].Content[0].Text
-	for _, want := range []string{"开工清单", "统计周期：还缺（必需）", "销售明细：还缺（必需）", "本周纪要：已备齐"} {
+	for _, want := range []string{"开工清单", "统计周期", "销售明细（必需）", "本周纪要（可跳过：无纪要继续）", "程序按表单和材料判定"} {
 		if !strings.Contains(system, want) {
 			t.Fatalf("前台 Agent 的提示词里没有 %q：\n%s", want, system)
 		}

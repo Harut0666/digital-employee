@@ -12,7 +12,6 @@ import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { flattenSessions, Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
 import { NewConversation, SessionChat } from "./components/Chat";
-import { ChecklistPanel } from "./components/Checklist";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
 import type { TraceFile } from "./components/Trajectory";
@@ -86,10 +85,10 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const sessionId = selection.kind === "session" ? selection.id : undefined;
   const session = useSession(sessionId);
   const detail = session.detail;
-  // @ 选目录文件：员工接手、还没提交时才有；每次会话读出来（材料变化时重读）刷新一次
+  // @ 选目录文件：会话可写时都有；每次会话读出来（材料变化时重读）刷新一次
   const folderFiles = useFolderFiles(
     sessionId,
-    (detail?.status === "drafting" || detail?.status === "closed") && !detail.readOnly,
+    detail !== undefined && !detail.readOnly,
     `${detail?.status}:${detail?.attachments.length}:${folderVersion}:${detail?.updatedAt}`,
   );
   // 会话先后运行过多个任务时，最新的一个是当前任务；早先的已经结束，只用来在对话里留着它们的步骤行和交付物
@@ -185,10 +184,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
 
   const sessionActions: SessionActions = {
     employees,
-    async confirmEmployee(employeeId) {
-      if (!sessionId) return;
-      const res = await settle(api.confirmEmployee(sessionId, employeeId));
-      if (!res.ok) message.error(res.message);
+    attachments: detail?.attachments ?? [],
+    // 员工表单卡上的“确认开工”“不是这个员工”：失败（清单没备齐、模型没配）交给卡片显示，不弹全局提示
+    answerForm: async (requestId, answer) => {
+      if (!sessionId) return { ok: false, error: "not_found", message: "没有选中会话" };
+      const res = await settle(api.answerEmployeeForm(sessionId, requestId, answer));
+      refreshSidebar();
+      return res;
     },
     async upload(files) {
       if (!sessionId) return;
@@ -203,7 +205,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       if (!res.ok) message.error(res.message);
       setFolderVersion((n) => n + 1);
     },
-    submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
     async draftFiling(filingTaskId) {
       if (!sessionId) return;
       const res = await settle(api.draftFiling(sessionId, filingTaskId));
@@ -222,13 +223,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       const res = await settle(api.decidePermission(sessionId, requestId, decision));
       if (!res.ok) message.error(res.message);
     },
-  };
-
-  /** 开工清单上确认跳过一项（只有发起人） */
-  const skipChecklistItem = async (item: string) => {
-    if (!sessionId) return;
-    const res = await settle(api.skipChecklistItem(sessionId, item));
-    if (!res.ok) message.error(res.message);
   };
 
   // 正在说的一轮：说的话逐字出现、工具调用逐个列出；一轮结束时重读会话（完整消息和卡片这一刻才写下来）
@@ -251,16 +245,17 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     refreshSidebar();
   };
 
-  // 欢迎页“载入公开样例”：一键建草稿任务（附件与表单来自工作区 samples，不用手选文件），
-  // 它没有会话，以旧任务的只读会话出现
+  // 欢迎页“载入公开样例”（T49）：开一个会话，把样例的输入（统计周期、样例材料）预填成一张员工表单，
+  // 人确认即开工；样例材料从应用目录取，不写进人的工作目录
   const loadSample = async () => {
     try {
-      const snap = await api.loadPublicSample();
-      // 样例任务没有会话，以旧任务的只读会话出现在侧栏里（和记录 tab 的会话对应）
+      const targetWorkspace = selection.kind === "new" ? selection.workspaceId : workspaceState.list?.workspaces[0]?.id;
+      const created = await api.createSession(targetWorkspace);
+      const res = await api.loadSampleForm(created.id);
+      setSelection({ kind: "session", id: created.id });
       refreshSidebar();
-      const bound = flattenSessions(workspaceState.list).find((s) => s.taskId === snap.id);
-      if (bound) setSelection({ kind: "session", id: bound.id });
-      message.success("已载入公开样例，提交后开始生成周报");
+      if (!res.ok) message.error(res.message);
+      else message.success("已载入公开样例，核对后点“确认开工”");
     } catch (e) {
       fail(e, "载入样例失败");
     }
@@ -355,11 +350,6 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
               {taskState === "awaiting_initiator" ? "补充材料" : taskState === "draft" ? "草稿任务" : "交付物"}
             </Button>
           ) : undefined
-        }
-        checklist={
-          detail.checklist && (
-            <ChecklistPanel checklist={detail.checklist} started={detail.status === "task"} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
-          )
         }
         modelOptions={modelOptions}
         onSelectModel={selectModel}

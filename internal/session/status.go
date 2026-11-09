@@ -130,7 +130,7 @@ type Record struct {
 }
 
 // StatusDot 状态点。role 是读列表的人当前的角色（按它算“等你处理”）：
-//  1. 等你处理：待确认员工、待填表提交、待补充、待审核或已退回，并且这个角色能处理；
+//  1. 等你处理：权限确认或员工表单在等发起人答复、待补充、待审核或已退回，并且这个角色能处理；
 //  2. 运行中：前台 Agent 正在回复，或任务处于准入校验、执行中、质检中；
 //  3. 已完成未读：任务交付或终止之后还没打开过；
 //  4. 空闲。
@@ -145,11 +145,6 @@ func (m *Manager) StatusDot(id string, view *View, role contract.Role) (string, 
 		return StatusDotRunning, false
 	}
 	switch view.Status {
-	case StatusReception, StatusDrafting:
-		// 确认员工、填表提交都只接受发起人
-		if role == contract.RoleInitiator {
-			return StatusDotWaiting, false
-		}
 	case StatusTask:
 		switch view.TaskState {
 		case contract.StateAwaitingInitiator:

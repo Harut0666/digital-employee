@@ -182,7 +182,33 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission" | "employee_form";
+
+/** 员工表单上 Agent 给的一份材料：会话里已有的、工作区目录里的文件（确认开工时复制）、公开样例文件（确认开工时复制） */
+export interface FormMaterial {
+  name: string;
+  size?: number;
+  source: "attachment" | "folder" | "sample";
+  /** source=folder：目录文件在工作区目录里的相对路径 */
+  path?: string;
+}
+
+/** 开工清单一项的定义（employees/<id>/checklist.yaml），员工表单卡据此在人改字段、补材料时实时判定 */
+export interface ChecklistDef {
+  id: string;
+  label: string;
+  required: boolean;
+  source: "material" | "upload" | "field";
+  accept?: string[];
+  field?: string;
+  skipField?: string;
+  skipLabel?: string;
+}
+
+/** 人在员工表单卡上的答复（POST /employee-forms/{requestId}） */
+export type EmployeeFormAnswer =
+  | { decision: "confirm"; form: Record<string, unknown>; attachments: string[]; skipped: string[] }
+  | { decision: "reject" };
 
 /** 权限模式（T48）：计划只读、询问（默认）、接受编辑、自动、放开 */
 export type PermissionMode = "plan" | "ask" | "accept_edits" | "auto" | "yolo";
@@ -235,6 +261,16 @@ export interface SessionCard {
   decision?: string;
   /** 等答复时的三个按钮（由后端配好）；答复、取消之后没有 */
   choices?: PermissionChoice[];
+  // employee_form（T49）：employee 是员工 id，draft 是 Agent 预填的字段，prefilled 是其中 Agent 预填的字段名，
+  // materials 是 Agent 给的材料及来源，checklist 是开工清单定义；pending 在等人，之后 decision 是 confirmed / rejected / cancelled；
+  // standalone 是载入公开样例弹出的（不是 Agent 弹的）
+  employeeName?: string;
+  prefilled?: string[];
+  materials?: FormMaterial[];
+  checklist?: ChecklistDef[];
+  /** 弹出卡片时会话里已有的材料：之后新出现的是人在卡片上补传的 */
+  baseline?: string[];
+  standalone?: boolean;
 }
 
 /** 权限确认卡上的一个答复按钮：decision 就是答复时提交的决定 */
