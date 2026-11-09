@@ -6,6 +6,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -95,6 +96,19 @@ type harnessConfig struct {
 	freshAppDir bool
 	// serial 这个测试对时序敏感（模型调用中途插话、停止等），不和别的测试并行跑
 	serial bool
+	// pickFolder 注入的“选择文件夹”对话框（假的，测试里不会真的弹窗）；writable 工作区登记可改（宿主模式）
+	pickFolder func(ctx context.Context) (string, bool, error)
+	writable   bool
+}
+
+// withPickFolder 注入假的文件夹选择器，并让工作区登记可改（和应用宿主一样，单目录模式才只读）。
+func withPickFolder(pick func(ctx context.Context) (string, bool, error)) harnessOption {
+	return func(config *harnessConfig) { config.pickFolder, config.writable = pick, true }
+}
+
+// withReadOnlyWorkspaces 注入假的文件夹选择器，但工作区登记只读（单目录模式，DE_WORKSPACE 指定）。
+func withReadOnlyWorkspaces(pick func(ctx context.Context) (string, bool, error)) harnessOption {
+	return func(config *harnessConfig) { config.pickFolder = pick }
 }
 
 // withSerial 对时序敏感的测试用：不调用 t.Parallel，留在顺序阶段跑。
@@ -214,6 +228,9 @@ type harness struct {
 	workspaces []server.Workspace
 	// app 切到应用目录模式时的工作区接线：应用目录、员工副本、两个登记的工作区
 	app *appWire
+	// pickFolder、writable 见 harnessConfig
+	pickFolder func(ctx context.Context) (string, bool, error)
+	writable   bool
 }
 
 // setFrontdeskScript 换一份前台 Agent 的剧本（路径要等工作区建好才定得下来的测试用）。
@@ -360,6 +377,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if config.connection == nil && config.system != nil {
 		h.frontdesk = frontdesk
 	}
+	h.pickFolder, h.writable = config.pickFolder, config.writable
 	h.scripted = config.connection == nil && len(config.connections) == 0
 	// 全新应用目录的装置：模型仍是剧本模型，但提交前检查按设置里的连接检查（演示模式才整个跳过）
 	h.strictPreflight = config.freshAppDir
@@ -415,14 +433,16 @@ func waitTasksSettled(t *testing.T, eng *engine.Engine) {
 func (h *harness) serve() string {
 	h.t.Helper()
 	srv := server.New(server.Options{
-		Engine:       h.engine,
-		AppDir:       h.appDirs(),
-		Workspaces:   h.workspaces,
-		WorkspaceDir: h.workspace,
-		EmployeesDir: h.employees,
-		ToolClient:   h.registry,
-		Faults:       h.faults,
-		Scripted:     h.scripted && !h.strictPreflight,
+		Engine:            h.engine,
+		AppDir:            h.appDirs(),
+		Workspaces:        h.workspaces,
+		WorkspaceDir:      h.workspace,
+		PickFolder:        h.pickFolder,
+		WorkspaceWritable: h.writable,
+		EmployeesDir:      h.employees,
+		ToolClient:        h.registry,
+		Faults:            h.faults,
+		Scripted:          h.scripted && !h.strictPreflight,
 		Model: func() agent.ModelProvider {
 			if h.frontdesk != nil {
 				return h.frontdesk

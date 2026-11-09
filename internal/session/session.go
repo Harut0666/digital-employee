@@ -116,6 +116,8 @@ type Manager struct {
 	seen      map[string]time.Time
 	// seenLegacy 打开过的旧任务会话（它们没有会话日志，没有别的记录已读的地方）
 	seenLegacy map[string]bool
+	// legacyArchived 旧任务会话的归档状态（没有会话日志，单独存在应用目录的文件里）
+	legacyArchived *legacyArchive
 	// views 会话的投影缓存：消息条数和更新时间没变就沿用（侧栏每几秒读一次全部会话）
 	views map[string]cachedView
 	// recordsCache 记录 tab 的缓存：任务列表没变时不用再读每个会话的日志
@@ -137,7 +139,7 @@ func New(deps Deps) *Manager {
 	}
 	// 第一次读会话目录之前也先看一眼：新建的会话马上就能出现在列表里，之后的扫描隔一会儿一次
 	return &Manager{
-		deps: deps, store: newStore(deps.Dir, deps.Now),
+		deps: deps, store: newStore(deps.Dir, deps.Now), legacyArchived: newLegacyArchive(deps.Dir),
 		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
 		humanLocks: map[string]*sync.Mutex{}, waits: map[string]*permissionWait{}, forms: map[string]*formWait{},
 		scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour),
@@ -575,6 +577,7 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
 		Employee: summary.Employee, TaskID: summary.ID, TaskIDs: []string{summary.ID}, Attachments: []Attachment{},
 		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk,
+		Archived: m.legacyArchived.has(legacyPrefix + summary.ID),
 	}
 	m.applySummary(view, summary)
 	if snapshot, found := m.deps.Engine.Get(summary.ID); found && snapshot.Model != nil {
@@ -632,7 +635,11 @@ func (m *Manager) List(workspaceID string, includeArchived bool) ([]*View, error
 		if workspaceID != "" && summary.WorkspaceID != workspaceID {
 			continue
 		}
-		out = append(out, m.legacyStatus(summary))
+		view := m.legacyStatus(summary)
+		if view.Archived && !includeArchived {
+			continue
+		}
+		out = append(out, view)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil

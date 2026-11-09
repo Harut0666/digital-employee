@@ -723,8 +723,35 @@ func TestEnvironmentWorkspaceIsReadOnly(t *testing.T) {
 	if status, _ := a.call(http.MethodPost, "/api/workspaces", map[string]any{"name": "华南区", "path": pinned}); status != http.StatusConflict {
 		t.Fatalf("只读时不能新建工作区：%d", status)
 	}
+	// 选择文件夹对话框（“浏览…”）同样不能用：沿用“不能添加”的错误，而且不会真的弹窗
+	status, data := a.call(http.MethodPost, "/api/workspaces/pick-folder", nil)
+	if picked := decodeAs[struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}](t, data); status != http.StatusConflict || picked.Error != "workspace_read_only" || picked.Message != list.Reason {
+		t.Fatalf("只读时不能选择文件夹：%d %s", status, data)
+	}
 	// 不传 workspaceId 时取唯一的工作区
 	if created := a.createSessionIn(""); created.WorkspaceID == "" {
 		t.Fatalf("单目录模式的会话要记下工作区：%+v", created)
+	}
+}
+
+// 宿主不拦 POST /api/workspaces/pick-folder（它不是登记的变更），交给服务端处理：
+// 没带角色头时服务端按角色规则拒绝（这个请求不会弹出任何对话框）。
+func TestPickFolderRouteReachesTheServer(t *testing.T) {
+	a := startApp(t, t.TempDir(), "")
+	request, err := http.NewRequest(http.MethodPost, a.baseURL+"/api/workspaces/pick-folder", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	data, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusForbidden || !strings.Contains(string(data), "forbidden_role") {
+		t.Fatalf("应由服务端按角色规则拒绝，而不是宿主的 404：%d %s", response.StatusCode, data)
 	}
 }
