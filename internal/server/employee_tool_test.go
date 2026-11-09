@@ -253,7 +253,7 @@ func TestFolderFilesAreCopiedAtConfirmation(t *testing.T) {
 	}
 }
 
-// 不是这个员工：把“用户拒绝，原因：选错员工”交回 Agent，不建任务。
+// 不是这个员工：把“发起人拒绝，原因：选错员工”交回 Agent，不建任务。
 func TestNotThisEmployeeHandsTheRefusalBackToTheAgent(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		runEmployeeCall(period44),
@@ -271,14 +271,14 @@ func TestNotThisEmployeeHandsTheRefusalBackToTheAgent(t *testing.T) {
 	}
 	h.waitTurn(stream, turn)
 
-	if results := toolResultTexts(h); len(results) != 1 || !strings.Contains(results[0], "用户拒绝，原因：选错员工") {
+	if results := toolResultTexts(h); len(results) != 1 || !strings.Contains(results[0], "发起人拒绝，原因：选错员工") {
 		t.Fatalf("交给模型的结果 = %v", results)
 	}
 	detail := h.readSession(created.ID)
 	if cards := formCards(detail); len(cards) != 1 || cards[0].Pending || cards[0].Decision != session.DecisionFormRejected {
 		t.Fatalf("表单卡 = %+v", cards)
 	}
-	if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != session.ToolRunEmployee || !strings.Contains(denied[0].Reason, "选错员工") {
+	if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != session.ToolRunEmployee || !strings.Contains(denied[0].Reason, "选错员工") || denied[0].Decision != session.DecisionDeny {
 		t.Fatalf("拒绝留痕 = %+v", denied)
 	}
 	if h.taskCount() != 0 {

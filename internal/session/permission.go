@@ -165,7 +165,7 @@ func permissionPrompt(mode string) string {
 		lines = append(lines, "放开模式：写、改文件不用问，目录文件自动确认；run_employee 的表单完整有效、必需的开工清单项备齐时直接开工，否则弹员工表单让发起人补。")
 	}
 	lines = append(lines,
-		"动作被拒绝（工具结果写着“用户拒绝”或“不能”）时，不要原样重试，换个办法或问发起人想怎么做。",
+		"动作被拒绝（工具结果写着“发起人拒绝”或“不能”）时，不要原样重试，换个办法或问发起人想怎么做。",
 		"不管哪个模式：写文件只限工作区目录内；不能写隐藏文件，也不能写“交付”和“材料”文件夹；单个文件最多 1 MB，只写文本。你没有审核、重试、终止任务的权力。",
 	)
 	return strings.Join(lines, "\n")
@@ -239,21 +239,33 @@ func permissionButtons() []PermissionChoice {
 
 // gate 工具执行前的同一个关口：先查始终适用的边界，再按权限模式放行、询问或拒绝。
 //
-// 返回 refusal 非空表示拒绝（原因同时是给模型的工具结果）；cancelled 表示等确认时被停止；err 是日志写不进去。
-func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item tool) (refusal string, cancelled bool, err error) {
-	if item.guard != nil {
-		if guardErr := item.guard(call.Arguments); guardErr != nil {
-			return guardErr.Error(), false, nil
-		}
-	}
+// 返回 refusal 非空表示拒绝（原因同时是给模型的工具结果；发起人自己的拒绝带 byInitiator）；cancelled 表示等确认时被停止；err 是日志写不进去。
+func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item tool) (refusal *denial, cancelled bool, err error) {
 	if item.action == "" {
-		return "", false, nil
+		// 读：没有动作类别，只有边界检查
+		if item.guard != nil {
+			if guardErr := item.guard(call.Arguments); guardErr != nil {
+				return &denial{reason: guardErr.Error()}, false, nil
+			}
+		}
+		return nil, false, nil
 	}
 	manager := loop.job.manager
 	// 每次都读最新的记录：人可能在这一轮进行中换了模式或选了“总是允许”
 	current, loadErr := manager.load(loop.job.session)
 	if loadErr != nil {
-		return "", false, loadErr
+		return nil, false, loadErr
+	}
+	// 角色权限保持原样：写文件、运行员工、用目录文件都是发起人的事。现在说话的不是发起人
+	// （审核人、操作员的话触发的这一轮）时一律拒绝，不论模式，也不弹只有发起人能答的确认
+	if speaker := speakerRole(current, loop.job.role); speaker != contract.RoleInitiator {
+		return &denial{reason: fmt.Sprintf("现在和你说话的是%s，只有发起人可以让你%s。请发起人来说，或让 TA 在对话里提出。",
+			contract.RoleLabels[speaker], ActionLabels[item.action])}, false, nil
+	}
+	if item.guard != nil {
+		if guardErr := item.guard(call.Arguments); guardErr != nil {
+			return &denial{reason: guardErr.Error()}, false, nil
+		}
 	}
 	mode := current.mode()
 	label := ActionLabels[item.action]
@@ -263,20 +275,20 @@ func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item to
 	}
 	switch Decide(mode, item.action) {
 	case VerdictDeny:
-		return fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。",
-			PermissionModeLabels[mode], label, suffixObject(object)), false, nil
+		return &denial{reason: fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。",
+			PermissionModeLabels[mode], label, suffixObject(object))}, false, nil
 	case VerdictAllow:
 		if item.selfDecide {
-			return "", false, nil
+			return nil, false, nil
 		}
-		return "", false, loop.traceAllowed(call, fmt.Sprintf("%s模式：%s不用确认", PermissionModeLabels[mode], label))
+		return nil, false, loop.traceAllowed(call, fmt.Sprintf("%s模式：%s不用确认", PermissionModeLabels[mode], label))
 	}
 	if item.selfDecide {
 		// 工具自己问：运行员工弹员工表单卡（一定要人确认，“总是允许”不适用），使用目录文件发“使用目录文件”卡
-		return "", false, nil
+		return nil, false, nil
 	}
 	if current.alwaysAllowed[item.action] {
-		return "", false, loop.traceAllowed(call, fmt.Sprintf("本会话已选择总是允许「%s」", label))
+		return nil, false, loop.traceAllowed(call, fmt.Sprintf("本会话已选择总是允许「%s」", label))
 	}
 	return loop.ask(ctx, call, item, object, detail)
 }
@@ -294,9 +306,9 @@ func (loop *turnLoop) traceAllowed(call agent.ContentBlock, reason string) error
 }
 
 // ask 弹出权限确认卡，这一轮在这里暂停，直到人答复或点停止。
-func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item tool, object, detail string) (string, bool, error) {
+func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item tool, object, detail string) (*denial, bool, error) {
 	if ctx.Err() != nil {
-		return "", true, nil
+		return nil, true, nil
 	}
 	manager := loop.job.manager
 	label := ActionLabels[item.action]
@@ -313,7 +325,7 @@ func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item too
 		card.Path = object
 	}
 	if err := loop.write(Message{Kind: KindCard, Card: &card}); err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 	written := loop.turn.out[len(loop.turn.out)-1]
 
@@ -322,11 +334,11 @@ func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item too
 	case decision = <-wait.decision:
 	case <-ctx.Done():
 		if manager.settleWait(wait) {
-			return "", true, loop.write(Message{Kind: kindPermissionDecided, RequestID: wait.id, Decision: DecisionCancelled, Action: wait.action})
+			return nil, true, loop.write(Message{Kind: kindPermissionDecided, RequestID: wait.id, Decision: DecisionCancelled, Action: wait.action})
 		}
 		// 人的答复恰好同时到了：它已经写进日志，但这一轮被停止，动作不执行
 		<-wait.decision
-		return "", true, nil
+		return nil, true, nil
 	}
 	// 答复是别的协程写进日志的：重读，这一轮后面的判定才看得到“总是允许”
 	if current, err := manager.load(loop.job.session); err == nil {
@@ -338,9 +350,9 @@ func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item too
 	answered.Card = &copied
 	loop.bus.publish(AgentEvent{Turn: loop.job.id, Type: EventMessage, Msg: &answered})
 	if decision == DecisionDeny {
-		return fmt.Sprintf("用户拒绝：发起人没有允许%s%s。请换个办法，或问问发起人想怎么做。", label, suffixObject(object)), false, nil
+		return &denial{reason: fmt.Sprintf("发起人拒绝：没有允许%s%s。请换个办法，或问问发起人想怎么做。", label, suffixObject(object)), byInitiator: true}, false, nil
 	}
-	return "", false, nil
+	return nil, false, nil
 }
 
 // DecidePermission 发起人在权限确认卡上答复。不占这一轮的写锁：这一轮正停在这张卡上等着。

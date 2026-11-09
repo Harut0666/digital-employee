@@ -180,14 +180,14 @@ export interface PermissionTrace {
 /** 受权限关口管着的工具：它们的拒绝才算权限留痕（越权调用别的工具只进日志） */
 const GATED_TOOLS = new Set<string>([...WRITE_TOOLS, "run_employee", "use_folder_file"]);
 
-/** 自动放行、被边界或模式拒绝 → 对话里的一行；用户拒绝已体现在确认卡上，不重复 */
+/** 自动放行、被边界或模式拒绝 → 对话里的一行；发起人拒绝已体现在确认卡上，不重复 */
 export function traceOf(message: SessionMessage): PermissionTrace | undefined {
   const target = (() => {
     const path = record(message.args)?.path;
     return `${message.tool ?? ""}${typeof path === "string" ? ` ${path}` : ""}`;
   })();
   if (message.kind === "permission_allowed") return { tone: "allowed", text: `已放行 ${target}：${message.reason ?? ""}` };
-  if (message.kind === "tool_denied" && GATED_TOOLS.has(message.tool ?? "") && !(message.reason ?? "").startsWith("用户拒绝")) {
+  if (message.kind === "tool_denied" && GATED_TOOLS.has(message.tool ?? "") && message.decision !== "deny") {
     return { tone: "denied", text: `已拒绝 ${target}：${message.reason ?? ""}` };
   }
   return undefined;

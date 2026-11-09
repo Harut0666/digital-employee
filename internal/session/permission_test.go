@@ -203,7 +203,7 @@ func TestGateHandlesRunEmployeeAndFolderFileInEveryMode(t *testing.T) {
 	}
 }
 
-// 问的时候拒绝：工具不执行，模型拿到“用户拒绝”。
+// 问的时候拒绝：工具不执行，模型拿到“发起人拒绝”。
 func TestGateDenialByThePersonIsReturnedToTheModel(t *testing.T) {
 	f := newGateFixture(t)
 	open := f.fake("fake_tool", ActionRunEmployee)
@@ -218,7 +218,7 @@ func TestGateDenialByThePersonIsReturnedToTheModel(t *testing.T) {
 		t.Fatal(err)
 	}
 	block := <-done
-	if !block.IsError || !strings.Contains(block.Text, "用户拒绝") || !strings.Contains(block.Text, "经营周报") || f.ran.Load() != 0 {
+	if !block.IsError || !strings.Contains(block.Text, "发起人拒绝") || !strings.Contains(block.Text, "经营周报") || f.ran.Load() != 0 {
 		t.Fatalf("拒绝的结果 = %+v，跑了 %d 次", block, f.ran.Load())
 	}
 }

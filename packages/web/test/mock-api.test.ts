@@ -357,7 +357,7 @@ describe("模拟数据模式的权限模式（T48）", () => {
     const first = (await waitFor(api, id, pending)).messages.find((m) => m.card?.type === "permission")!.card!;
     await api.decidePermission(id, first.requestId!, "deny");
     const denied = await waitFor(api, id, settled);
-    expect(denied.messages.some((m) => m.kind === "tool_denied" && m.reason?.startsWith("用户拒绝"))).toBe(true);
+    expect(denied.messages.some((m) => m.kind === "tool_denied" && m.decision === "deny" && m.reason?.startsWith("发起人拒绝"))).toBe(true);
     expect(denied.messages.some((m) => m.kind === "tool_called" && m.tool === "write_file")).toBe(false);
 
     await api.sendMessage(id, "再把要点保存成文件");

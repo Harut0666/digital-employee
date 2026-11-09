@@ -43,12 +43,22 @@ func toolFailure(code, format string, args ...any) error {
 }
 
 // denial 越权调用：拒绝，并写入会话日志。
-type denial struct{ reason string }
+// byInitiator 为 true 表示这是发起人自己的拒绝（权限确认卡上点“拒绝”、员工表单上点“不是这个员工”），
+// 会话日志里记 decision=deny，界面据此区分“人拒绝了”和“程序按边界、模式拒绝了”，不靠文案前缀。
+type denial struct {
+	reason      string
+	byInitiator bool
+}
 
 func (d *denial) Error() string { return d.reason }
 
 func denied(format string, args ...any) error {
 	return &denial{reason: fmt.Sprintf(format, args...)}
+}
+
+// deniedByInitiator 发起人自己的拒绝。
+func deniedByInitiator(format string, args ...any) error {
+	return &denial{reason: fmt.Sprintf(format, args...), byInitiator: true}
 }
 
 // tool 这一轮开放给模型的一个工具。
@@ -446,7 +456,7 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 		sort.Strings(names)
 		reason := fmt.Sprintf("工具 %s 现在没有开放给前台 Agent。现在可用的工具：%s。", call.Name, strings.Join(names, "、"))
 		end(nil, reason, true)
-		return loop.deny(call, reason)
+		return loop.deny(call, &denial{reason: reason})
 	}
 	// 工具在写锁里执行、并当场写留痕：它可能改会话状态（草稿、待发的卡片），执行和留痕要看到同一份现状，
 	// 也不能和人的提交、确认交错。
@@ -466,8 +476,8 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 		// 等权限确认时被停止：动作没有执行；留痕“已取消”由调用方统一补写
 		end(nil, cancelledResult, true)
 		return agent.ToolResultBlock(call.ID, cancelledResult, true), nil
-	case refusal != "":
-		runErr = &denial{reason: refusal}
+	case refusal != nil:
+		runErr = refusal
 	default:
 		if item.runCtx != nil {
 			result, runErr = item.runCtx(ctx, call.Arguments)
@@ -484,7 +494,7 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
 	switch {
 	case errors.As(runErr, &refused):
-		_, writeErr = loop.deny(call, refused.reason)
+		_, writeErr = loop.deny(call, refused)
 	case runErr != nil:
 		failed := Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: runErr.Error()}
 		var coded *toolError
@@ -519,14 +529,13 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 	return agent.ToolResultBlock(call.ID, string(raw), false), nil
 }
 
-func (loop *turnLoop) deny(call agent.ContentBlock, reason string) (agent.ContentBlock, error) {
-	if err := loop.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason}); err != nil {
+func (loop *turnLoop) deny(call agent.ContentBlock, refused *denial) (agent.ContentBlock, error) {
+	message := Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: refused.reason}
+	if refused.byInitiator {
+		message.Decision = DecisionDeny
+	}
+	if err := loop.write(message); err != nil {
 		return agent.ContentBlock{}, err
 	}
-	return agent.ToolResultBlock(call.ID, reason, true), nil
-}
-
-// denyLocked 在写锁里写越权留痕。
-func (loop *turnLoop) denyLocked(call agent.ContentBlock, reason string) error {
-	return loop.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason})
+	return agent.ToolResultBlock(call.ID, refused.reason, true), nil
 }
