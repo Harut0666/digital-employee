@@ -334,7 +334,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       <SessionChat
         detail={detail}
         items={items}
-        subtitle={employee ? `由${employee.name}处理` : "前台接待"}
+        subtitle={employee ? `由${employee.name}处理` : "前台 Agent"}
         actions={actions}
         session={sessionActions}
         events={task.events}
@@ -347,7 +347,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         headerExtra={
           drawerMode && taskId ? (
             <Button className="drawer-toggle" icon={<LeftOutlined />} onClick={() => setDrawerOpen(true)}>
-              {taskState === "awaiting_initiator" ? "补充材料" : taskState === "draft" ? "草稿任务" : "交付物"}
+              {taskState === "awaiting_initiator" ? "补充材料" : taskState === "draft" ? "待开工" : "交付物"}
             </Button>
           ) : undefined
         }
@@ -385,7 +385,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     ) : taskState === "draft" ? (
       <div className="panel-card">
         <p className="chat-sub" style={{ marginBottom: 12 }}>
-          已载入公开样例的销售明细与周会纪要（第 44 周）。提交后员工开始执行。
+          已备好公开样例的销售明细与周会纪要（第 44 周）。确认开工后员工开始执行。
         </p>
         <TaskActionBar actions={actions} />
       </div>
@@ -403,7 +403,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const titled = taskState === "draft" || supplementing;
   const panelBody = (
     <>
-      {titled && <h3 className="panel-title">{taskState === "draft" ? "草稿任务" : "补充材料"}</h3>}
+      {titled && <h3 className="panel-title">{taskState === "draft" ? "待开工" : "补充材料"}</h3>}
       {panel}
     </>
   );

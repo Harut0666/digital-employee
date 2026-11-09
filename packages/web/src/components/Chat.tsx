@@ -607,12 +607,12 @@ export function NewConversation({
                 key: "sample",
                 icon: <FolderOpenOutlined style={{ color: "#2f6fed" }} />,
                 label: "载入公开样例",
-                description: "用第 44 周的样例数据建一份草稿任务，提交即可看到完整流程",
+                description: "把第 44 周的样例数据预填成一张员工表单，确认开工即可看到完整流程",
               },
             ]}
             onItemClick={() => onSample()}
           />
-          {role !== "initiator" && <p className="chat-sub" style={{ marginTop: 16 }}>当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工和提交任务。</p>}
+          {role !== "initiator" && <p className="chat-sub" style={{ marginTop: 16 }}>当前角色是{ROLE_LABELS[role]}；只有发起人能确认员工表单、让员工开工。</p>}
         </div>
       </div>
       <ChatInput
