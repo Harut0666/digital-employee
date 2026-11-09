@@ -55,7 +55,7 @@ func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T
 		t.Fatalf("回答 = %q", got)
 	}
 	handover := frontdeskRequests(h)[2].Request
-	if names := fmt.Sprint(toolNames(handover.Tools)); names != "[fill_form_draft propose_card list_files read_file use_folder_file kb_search kb_read]" {
+	if names := fmt.Sprint(toolNames(handover.Tools)); names != "[fill_form_draft propose_card list_files read_file use_folder_file write_file edit_file kb_search kb_read]" {
 		t.Fatalf("问答员工的前台 Agent 开放的工具：%s", names)
 	}
 	system := handover.Messages[0].Content[0].Text

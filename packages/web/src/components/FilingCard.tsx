@@ -22,7 +22,7 @@ export function FilingCard({ item, actions, session }: { item: FilingItem; actio
   const draft = async () => {
     setDrafting(true);
     try {
-      await session.draftFiling();
+      await session.draftFiling(item.taskId);
     } finally {
       setDrafting(false);
     }

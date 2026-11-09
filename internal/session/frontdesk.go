@@ -33,6 +33,15 @@ type taskReader interface {
 // errModelUnavailable 模型调用失败，说明已写入会话日志。
 var errModelUnavailable = errors.New("模型不可用")
 
+// toolError 带错误码的工具失败：会话日志里 result 记 {error, message}，模型收到的是 message。
+type toolError struct{ code, message string }
+
+func (e *toolError) Error() string { return e.message }
+
+func toolFailure(code, format string, args ...any) error {
+	return &toolError{code: code, message: fmt.Sprintf(format, args...)}
+}
+
 // denial 越权调用：拒绝，并写入会话日志。
 type denial struct{ reason string }
 
@@ -46,6 +55,12 @@ func denied(format string, args ...any) error {
 type tool struct {
 	spec agent.ToolSpec
 	run  func(arguments map[string]any) (any, error)
+	// action 动作类别（ActionWriteFile 等）：非空的工具执行前要过权限关口（turnLoop.gate）；空表示读，始终允许
+	action string
+	// guard 始终适用的边界检查（路径越界、隐藏文件、大小……），不受权限模式影响；返回的错误就是拒绝原因
+	guard func(arguments map[string]any) error
+	// describe 动作的对象（文件路径）和一句话说明，写在权限确认卡上
+	describe func(arguments map[string]any) (object, detail string)
 }
 
 // turn 一条回复的处理过程。
@@ -367,7 +382,7 @@ func (loop *turnLoop) converse(ctx context.Context, system string, conversation 
 		messages = append(messages, agent.Message{Role: "assistant", Content: produced.Content})
 
 		for index, call := range calls {
-			result, err := loop.call(open, call)
+			result, err := loop.call(ctx, open, call)
 			if err != nil {
 				return "", TurnError, err
 			}
@@ -410,7 +425,7 @@ func (loop *turnLoop) cancelCalls(calls []agent.ContentBlock) {
 const cancelledResult = "已取消：这一轮被停止，工具没有执行。"
 
 // call 执行一次工具调用，写入留痕，返回交给模型的结果。
-func (loop *turnLoop) call(open map[string]tool, call agent.ContentBlock) (agent.ContentBlock, error) {
+func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent.ContentBlock) (agent.ContentBlock, error) {
 	publish := func(event AgentEvent) {
 		event.Turn = loop.job.id
 		event.ID, event.Tool, event.Args = call.ID, call.Name, call.Arguments
@@ -444,14 +459,32 @@ func (loop *turnLoop) call(open map[string]tool, call agent.ContentBlock) (agent
 		writeErr error
 	)
 
-	result, runErr = item.run(call.Arguments)
+	// 工具执行前的同一个关口：始终适用的边界 → 权限模式（放行、询问、拒绝）
+	refusal, cancelled, gateErr := loop.gate(ctx, call, item)
+	switch {
+	case gateErr != nil:
+		return agent.ContentBlock{}, gateErr
+	case cancelled:
+		// 等权限确认时被停止：动作没有执行；留痕“已取消”由调用方统一补写
+		end(nil, cancelledResult, true)
+		return agent.ToolResultBlock(call.ID, cancelledResult, true), nil
+	case refusal != "":
+		runErr = &denial{reason: refusal}
+	default:
+		result, runErr = item.run(call.Arguments)
+	}
 
 	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
 	switch {
 	case errors.As(runErr, &refused):
 		_, writeErr = loop.deny(call, refused.reason)
 	case runErr != nil:
-		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: runErr.Error()})
+		failed := Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: runErr.Error()}
+		var coded *toolError
+		if errors.As(runErr, &coded) {
+			failed.Result = map[string]any{"error": coded.code, "message": coded.message}
+		}
+		writeErr = loop.write(failed)
 	default:
 		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Result: result})
 	}
@@ -615,9 +648,20 @@ func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
 		"- 正在和你说话的人：" + contract.RoleLabels[t.role],
 	}
 	if t.current.taskID != "" {
+		// 会话里可能先后运行过多个任务：以最新的一个为当前任务回答问题
 		lines = append(lines, "- 任务："+t.current.taskID)
-	} else {
-		lines = append(lines, "- 任务：还没有提交")
+		if len(t.current.taskIDs) > 1 {
+			lines = append(lines, fmt.Sprintf("- 这个会话已运行 %d 个任务，上面是最新的一个；更早的任务：%s",
+				len(t.current.taskIDs), strings.Join(t.current.taskIDs[:len(t.current.taskIDs)-1], "、")))
+		}
+	}
+	if t.manager.openTask(t.current) == nil {
+		// 没有未结束的任务：可以准备（下一次）运行；最新的任务已交付或终止时，表单草稿沿用上一次的
+		if t.current.taskID == "" {
+			lines = append(lines, "- 任务：还没有提交")
+		} else {
+			lines = append(lines, "- 最新的任务已经结束，要再来一版可以填表单草稿并发表单卡片，由人确认后提交")
+		}
 		lines = append(lines, "- 表单草稿："+compactJSON(t.current.draft))
 		names := []string{}
 		for _, attachment := range t.current.attachments {
@@ -626,6 +670,7 @@ func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
 		lines = append(lines, "- 已提供的材料："+strings.Join(names, "、"))
 		lines = append(lines, checklistLines(config, t.current)...)
 	}
+	lines = append(lines, "", permissionPrompt(t.current.mode()))
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -645,20 +690,21 @@ func (loop *turnLoop) assistantTools(config *contract.EmployeeConfig) ([]tool, e
 		ticked[name] = true
 	}
 	tools := []tool{}
-	if t.current.taskID != "" {
-		if ticked[contract.ToolQueryTask] {
-			tools = append(tools, t.queryTaskTool())
-		}
-		tools = append(tools, t.proposeCardTool())
-	} else {
-		tools = append(tools, t.fillFormDraftTool(config), t.proposeCardTool())
+	if t.current.taskID != "" && ticked[contract.ToolQueryTask] {
+		tools = append(tools, t.queryTaskTool())
 	}
+	// 没有未结束的任务时可以准备（下一次）运行：填表单草稿、发表单卡片；有未结束的任务时只能发任务卡片
+	if t.manager.openTask(t.current) == nil {
+		tools = append(tools, t.fillFormDraftTool(config))
+	}
+	tools = append(tools, t.proposeCardTool())
 	knowledge, err := t.knowledgeTools(ticked)
 	if err != nil {
 		return nil, err
 	}
 	// 目录读取工具对所有员工都开放：工作区就是目录，Agent 要能看见里面有什么
-	return append(append(tools, t.folderTools()...), knowledge...), nil
+	tools = append(tools, t.folderTools()...)
+	return append(append(tools, t.fileWriteTools()...), knowledge...), nil
 }
 
 // unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。

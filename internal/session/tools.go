@@ -4,6 +4,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"digital-employee/internal/agent"
@@ -83,12 +84,19 @@ func (t *turn) queryTaskTool() tool {
 			Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		run: func(arguments map[string]any) (any, error) {
-			if asked, present := arguments["taskId"]; present && asked != t.current.taskID {
-				return nil, denied("只能查询本会话的任务。")
+			// 不指定时查会话的当前任务（最新的一个）；也可以查本会话里更早的任务
+			taskID := t.current.taskID
+			if asked, present := arguments["taskId"]; present {
+				if id, _ := asked.(string); id != taskID {
+					if !slices.Contains(t.current.taskIDs, id) {
+						return nil, denied("只能查询本会话的任务。")
+					}
+					taskID = id
+				}
 			}
-			snapshot, found := t.tasks.Get(t.current.taskID)
+			snapshot, found := t.tasks.Get(taskID)
 			if !found {
-				return nil, fmt.Errorf("任务不存在：%s", t.current.taskID)
+				return nil, fmt.Errorf("任务不存在：%s", taskID)
 			}
 			return taskFacts(snapshot), nil
 		},
@@ -114,8 +122,8 @@ func (t *turn) proposeCardTool() tool {
 		run: func(arguments map[string]any) (any, error) {
 			kind, _ := arguments["type"].(string)
 			if kind == CardForm {
-				if t.current.taskID != "" {
-					return nil, fmt.Errorf("任务已经提交，不能再发表单卡片")
+				if t.manager.openTask(t.current) != nil {
+					return nil, fmt.Errorf("会话里还有未结束的任务，不能再发表单卡片")
 				}
 				t.drafted = true
 

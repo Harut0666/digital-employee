@@ -2,7 +2,7 @@
 // 路由不调模型：按员工名称和描述里的字粗略匹配，匹配不到就列出员工手选。
 // 任务卡片和 Go 一样读取时从任务事件投影，按钮取自快照。状态点照 internal/session/status.go 的规则后算。
 
-import type { TaskEvent } from "@de/core/contract";
+import { STATE_LABELS, type TaskEvent } from "@de/core/contract";
 import { CHECKLISTS } from "./mock-data";
 import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
@@ -11,6 +11,9 @@ import type {
   SessionAgentEvent,
   ModelConnectionOption,
   ModelRef,
+  PermissionChoice,
+  PermissionDecision,
+  PermissionMode,
   RecordGroup,
   RecordItem,
   SessionAttachment,
@@ -60,7 +63,9 @@ interface MockSession {
   /** 会话属于哪个工作区（Spec 0006） */
   workspaceId: string;
   employee?: string;
+  /** 当前任务：会话里最新的一个；taskIds 是按开工顺序的全部任务 */
   taskId?: string;
+  taskIds: string[];
   draft?: Record<string, unknown>;
   /** 入库卡片上起草的描述（模拟模式不调模型，按任务标题拼一句） */
   filingDraft?: string;
@@ -73,6 +78,14 @@ interface MockSession {
   skipped: Set<string>;
   /** 会话里选择的模型（Spec 0006）；没选过时沿用设置的 lastModel */
   selected?: ModelRef;
+  /** 权限模式（T48）；新会话总是询问 */
+  permissionMode: PermissionMode;
+  /** 本会话总是允许的动作类别；换模式时清空 */
+  always: Set<string>;
+  /** 权限确认的答复（requestId → allow_once / always_allow / deny / cancelled） */
+  decisions: Map<string, string>;
+  /** 正在等人答复的权限确认 */
+  pending?: { requestId: string; resolve: (decision: string) => void };
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -127,6 +140,16 @@ const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "DeepSeek", models:
 /** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
 const MOCK_DEFAULT_MODEL: ModelRef = { connection: "DeepSeek", model: "deepseek-chat" };
 
+const PERMISSION_MODE_VALUES: readonly string[] = ["plan", "ask", "accept_edits", "auto", "yolo"];
+const PERMISSION_BUTTONS: PermissionChoice[] = [
+  { decision: "allow_once", label: "允许一次", style: "primary" },
+  { decision: "always_allow", label: "本会话总是允许这一类", style: "default" },
+  { decision: "deny", label: "拒绝", style: "danger" },
+];
+/** 模拟模式不接模型：人说“把……写成文件”之类的话，就演示一次 write_file 经过权限关口 */
+const WRITE_REQUEST = /(写|存|保存|整理).{0,12}(文件|md|文档)/;
+const WRITE_ARGS = { path: "notes/周会要点.md", content: "# 周会要点\n- 华南环比下降\n- 华东持平\n" };
+
 export function createMockSessions(
   employees: EmployeeInfo[],
   getRole: () => UiRole,
@@ -172,6 +195,12 @@ export function createMockSessions(
     return (await tasks.listTasks()).find((t) => t.id === taskId);
   }
 
+  /** 会话里还没结束的任务（只可能是最新的那个）；和 internal/session/tasks.go 的 openTask 一致 */
+  async function openTask(s: MockSession): Promise<TaskSummary | undefined> {
+    const summary = await summaryOf(s.taskId);
+    return summary && !FINISHED.has(summary.state) ? summary : undefined;
+  }
+
   async function view(s: MockSession): Promise<SessionSummary> {
     const title = titleOf(s);
     const summary = await summaryOf(s.taskId);
@@ -181,6 +210,7 @@ export function createMockSessions(
     return {
       // 绑定未结束的任务时是任务的当前模型；任务已结束（T45）或还没任务时是选过的模型，没选过沿用 lastModel
       ...(s.taskId && !closed ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
+      permissionMode: s.permissionMode,
       id: s.id,
       workspaceId: s.workspaceId,
       status,
@@ -188,6 +218,7 @@ export function createMockSessions(
       title,
       employee: s.employee,
       taskId: s.taskId,
+      taskIds: [...s.taskIds],
       draft: s.draft,
       attachments: attachments(s),
       createdAt: s.createdAt,
@@ -223,6 +254,17 @@ export function createMockSessions(
       default:
         return undefined;
     }
+  }
+
+  /** 每个任务分别投影；第二次运行起的消息 ID 加上运行次数前缀（每个任务的事件序号都从 1 开始） */
+  async function withTasks(messages: SessionMessage[], taskIds: string[], s?: MockSession): Promise<SessionMessage[]> {
+    let merged = messages.map((m) => ({ ...m }));
+    for (const [run, taskId] of taskIds.entries()) {
+      const part = await withTask([], taskId, s);
+      merged = merged.concat(run === 0 ? part : part.map((m) => ({ ...m, id: `r${run + 1}-${m.id}` })));
+    }
+    merged.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    return merged;
   }
 
   async function withTask(messages: SessionMessage[], taskId: string, s?: MockSession): Promise<SessionMessage[]> {
@@ -262,6 +304,22 @@ export function createMockSessions(
         m.card = { ...c, actions: snapshot.actions, pause: snapshot.pause };
       }
     }
+  }
+
+  const modeName = (mode: string) => ({ plan: "计划", ask: "询问", accept_edits: "接受编辑", auto: "自动", yolo: "放开" })[mode] ?? mode;
+
+  /** 权限确认卡读取时配上状态：有没有答复、是不是还在等、能点的按钮（对应 Go 的 projectPermissions） */
+  function projectPermissions(s: MockSession, messages: SessionMessage[]): SessionMessage[] {
+    return messages.map((m) => {
+      const card = m.card;
+      if (!card || card.type !== "permission" || !card.requestId) return m;
+      const waiting = s.pending?.requestId === card.requestId;
+      const decision = s.decisions.get(card.requestId);
+      return {
+        ...m,
+        card: waiting ? { ...card, pending: true, decision: undefined, choices: PERMISSION_BUTTONS } : { ...card, pending: false, decision: decision ?? "cancelled", choices: undefined },
+      };
+    });
   }
 
   const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: out, session: await view(s) });
@@ -325,6 +383,75 @@ export function createMockSessions(
     return turn;
   }
 
+  /** 一次 write_file 经过权限关口（对应 Go 的 turnLoop.gate）：计划拒绝、询问弹确认卡、其余放行，每一步都留痕 */
+  function startWriteTurn(s: MockSession): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    const args = { ...WRITE_ARGS };
+    const finish = (text: string, reason: "completed" | "stopped" = "completed") => {
+      if (text) write(s, { kind: "assistant", text }, []);
+      s.running = undefined;
+      emit(s, turn, { type: "turn_end", reason });
+    };
+    void (async () => {
+      emit(s, turn, { type: "tool_start", id: `mock_call_${turn}_write`, tool: "write_file", args });
+      await later(pace(30));
+      const end = (extra: Partial<SessionAgentEvent>) => emit(s, turn, { type: "tool_end", id: `mock_call_${turn}_write`, tool: "write_file", args, ...extra });
+      const deny = (reason: string) => {
+        write(s, { kind: "tool_denied", tool: "write_file", args, reason }, []);
+        emit(s, turn, { type: "message" });
+        end({ reason, isErr: true });
+      };
+      const run = () => {
+        write(s, { kind: "tool_called", tool: "write_file", args, result: { path: args.path, action: "created", bytes: new TextEncoder().encode(args.content).length } }, []);
+        emit(s, turn, { type: "message" });
+        end({ result: { path: args.path, action: "created" } });
+        finish(`已把要点写进 ${args.path}。`);
+      };
+      if (s.permissionMode === "plan") {
+        deny(`计划模式下只能读，不能写入文件：${args.path}。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`);
+        return finish("计划模式下我只能看不能动。打算把要点整理成 notes/周会要点.md，请切换模式后再让我写。");
+      }
+      if (s.permissionMode === "ask" && !s.always.has("write_file")) {
+        const requestId = Math.random().toString(16).slice(2, 10).padEnd(8, "0") + Date.now().toString(16).slice(-8).padStart(8, "0");
+        const cardOut: SessionMessage[] = [];
+        write(
+          s,
+          { kind: "card", card: { type: "permission", requestId, action: "write_file", actionLabel: "写入文件", tool: "write_file", object: args.path, path: args.path, detail: `新建文件，写入 ${args.content.length} 个字`, pending: true, choices: PERMISSION_BUTTONS } },
+          cardOut,
+        );
+        emit(s, turn, { type: "message", message: cardOut[0] });
+        const decision = await new Promise<string>((resolve) => {
+          s.pending = { requestId, resolve };
+        });
+        s.pending = undefined;
+        s.decisions.set(requestId, decision);
+        if (decision === "cancelled" || s.cancelled) {
+          s.decisions.set(requestId, "cancelled");
+          write(s, { kind: "tool_called", tool: "write_file", args, result: "已取消：这一轮被停止，工具没有执行。" }, []);
+          end({ reason: "已取消", isErr: true });
+          return finish("", "stopped");
+        }
+        if (decision === "deny") {
+          deny(`用户拒绝：发起人没有允许写入文件：${args.path}。请换个办法，或问问发起人想怎么做。`);
+          return finish("好的，那我不写了。");
+        }
+        if (decision === "always_allow") s.always.add("write_file");
+        return run();
+      }
+      write(
+        s,
+        { kind: "permission_allowed", tool: "write_file", args, reason: s.permissionMode === "ask" ? "本会话已选择总是允许「写入文件」" : `${modeName(s.permissionMode)}模式：写入文件不用确认` },
+        [],
+      );
+      emit(s, turn, { type: "message" });
+      run();
+    })();
+    return turn;
+  }
+
   function route(s: MockSession, text: string, out: SessionMessage[]) {
     const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
     if (guess) {
@@ -362,6 +489,7 @@ export function createMockSessions(
       title: task.title,
       employee: task.employee,
       taskId: task.id,
+      taskIds: [task.id],
       attachments: [],
       createdAt: task.updatedAt,
       updatedAt: task.updatedAt,
@@ -371,6 +499,7 @@ export function createMockSessions(
       statusDot: dotOf(getRole(), status, task.state, unread),
       unread,
       archived: false,
+      permissionMode: "ask",
       workspaceName: WORKSPACE_NAMES[workspaceId] ?? "",
       messages: [],
     };
@@ -404,11 +533,38 @@ export function createMockSessions(
       return reply(s, out);
     },
 
+    /** 选权限模式：规则照搬 Go 的 SetPermissionMode（只有发起人；换模式清空“本会话总是允许”） */
+    async setPermissionMode(id, mode) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以选权限模式");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (!PERMISSION_MODE_VALUES.includes(mode)) return fail("invalid_input", `没有这个权限模式：${mode}`);
+      s.permissionMode = mode;
+      s.always.clear();
+      const out: SessionMessage[] = [];
+      write(s, { kind: "permission_mode_set", mode }, out);
+      return reply(s, out);
+    },
+
+    /** 答复权限确认：只有发起人；只能答一次，已答复或已取消的确认不能再答 */
+    async decidePermission(id, requestId, decision: PermissionDecision) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以答复权限确认");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      if (!["allow_once", "always_allow", "deny"].includes(decision)) return fail("invalid_input", `答复必须是 allow_once、always_allow 或 deny，收到 ${decision}`);
+      if (!s.messages.some((m) => m.card?.type === "permission" && m.card.requestId === requestId)) return fail("not_found", `没有这张权限确认：${requestId}`);
+      const waiting = s.pending;
+      if (!waiting || waiting.requestId !== requestId) return fail("permission_settled", "这张权限确认已经答复或取消了");
+      s.pending = undefined;
+      waiting.resolve(decision);
+      return reply(s, []);
+    },
+
     async listSessions(workspaceId, options) {
       const own = await Promise.all(
         [...sessions.values()].filter((s) => (!workspaceId || s.workspaceId === workspaceId) && (options?.archived || !s.archived)).map(view),
       );
-      const bound = new Set(own.map((s) => s.taskId));
+      const bound = new Set(own.flatMap((s) => s.taskIds ?? []));
       // 由旧任务推导出的只读会话：发起事件里没有工作区的旧任务带不出归属，按不属于任何工作区处理
       const legacy = workspaceId
         ? []
@@ -430,8 +586,9 @@ export function createMockSessions(
       if (!s) throw new Error(`会话不存在：${id}`);
       // 打开会话就算已读（Go 后端写在会话日志里，模拟模式记在内存里）
       s.readUpTo = lastSeq(s.taskId);
-      const messages = s.messages.filter((m) => m.kind !== "tool_called");
-      return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
+      // 写文件的工具行要给界面（Go 后端把全部工具留痕都返回，界面只取写文件的）；别的工具留痕模拟模式不给
+      const messages = projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file"));
+      return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskIds.length > 0 ? await withTasks(messages, s.taskIds, s) : messages };
     },
 
     async updateSession(id, patch) {
@@ -460,8 +617,12 @@ export function createMockSessions(
         selected: model,
         workspaceId: workspaceId ?? MOCK_WORKSPACE,
         archived: false,
+        taskIds: [],
         readUpTo: 0,
         skipped: new Set(),
+        permissionMode: "ask",
+        always: new Set(),
+        decisions: new Map(),
         files: [],
         messages: [],
         turn: 0,
@@ -494,6 +655,7 @@ export function createMockSessions(
         });
         return { ok: true, turn };
       }
+      if (WRITE_REQUEST.test(text)) return { ok: true, turn: startWriteTurn(s) };
       if (s.taskId) {
         const turn = startTurn(s, [{ text: "模拟模式不接模型。任务进展见卡片和右栏，操作请点卡片上的按钮。" }]);
         return { ok: true, turn };
@@ -512,6 +674,8 @@ export function createMockSessions(
       if (!running) return { ok: true, stopped: false };
       s.cancelled = true;
       s.running = undefined;
+      // 等权限确认时被停止：未决的确认记为已取消
+      s.pending?.resolve("cancelled");
       return { ok: true, stopped: true, turn: running.turn };
     },
 
@@ -543,7 +707,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以上传材料");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
       if (files.length === 0) return fail("invalid_input", "没有收到文件");
       s.files = [...s.files.filter((f) => !files.some((n) => n.name === f.name)), ...files];
       const out: SessionMessage[] = [];
@@ -565,7 +729,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认目录里的文件");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
       if (paths.length === 0) return fail("invalid_input", "没有选择文件");
       const files: File[] = [];
       for (const p of paths) {
@@ -582,7 +746,8 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以提交");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "这个会话已有任务，要做新任务请开新会话");
+      const open = await openTask(s);
+      if (open) return fail("session_has_task", `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`);
       if (!s.employee) return fail("employee_required", "请先确认由哪个员工接手");
       const checklist = checklistOf(s, form ?? s.draft);
       if (checklist && !checklist.ready) return fail("checklist_incomplete", `开工清单还缺：${checklist.missing.join("、")}。备齐后才能开工。`);
@@ -594,17 +759,19 @@ export function createMockSessions(
       const uploads: UploadItem[] = s.files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
       const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads, model: s.selected ?? lastModel });
       s.taskId = snapshot.id;
+      s.taskIds.push(snapshot.id);
       taskModels.set(snapshot.id, s.selected ?? lastModel);
       const res = await tasks.command(snapshot.id, { type: "submit" });
       if (!res.ok) return fail("illegal_transition", "提交被拒绝");
       return reply(s, []);
     },
 
-    async draftFiling(id) {
+    async draftFiling(id, forTask) {
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以把交付物放进知识库");
       const s = writable(id);
       if (isFailure(s)) return s;
-      const task = s.taskId ? await tasks.getTask(s.taskId) : undefined;
+      const target = forTask ?? s.taskId;
+      const task = target && s.taskIds.includes(target) ? await tasks.getTask(target) : undefined;
       if (!task || task.state !== "delivered") return fail("illegal_transition", "任务交付之后才能放进知识库");
       const title = (await summaryOf(task.id))?.title ?? task.id;
       s.filingDraft = `${title}（模拟模式按标题起草的描述，请按实际内容修改）`;
@@ -615,7 +782,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认跳过清单项");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，清单不能再改");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，清单不能再改");
       const item = (s.employee ? CHECKLISTS[s.employee] : undefined)?.find((i) => i.id === itemId);
       if (!item) return fail("invalid_input", `开工清单里没有这一项：${itemId}`);
       if (item.required) return fail("invalid_input", `“${item.label}”是必需项，不能跳过`);
@@ -633,32 +800,40 @@ export function createMockSessions(
 
     async records(role) {
       const summaries = await allSummaries();
+      const taskList = await tasks.listTasks();
       const items: RecordItem[] = [];
       for (const summary of summaries) {
-        if (!summary.taskId || !summary.taskState) continue;
-        items.push({
-          taskId: summary.taskId,
-          group: recordGroupOf(summary.taskState),
-          title: summary.title,
-          employee: summary.employee ?? "",
-          state: summary.taskState,
-          statusText: summary.statusText ?? "",
-          // 记录里的状态点按读的人的角色算，和侧栏列表走同一套规则
-          statusDot: dotOf(role, summary.status, summary.taskState, false),
-          sessionId: summary.id,
-          workspaceId: summary.workspaceId,
-          workspaceName: summary.workspaceName ?? "",
-          updatedAt: summary.updatedAt,
+        // 每个任务一行：同一个会话先后运行的任务各占一行，按各自的状态分组
+        const ids = summary.taskIds ?? (summary.taskId ? [summary.taskId] : []);
+        ids.forEach((taskId, index) => {
+          const task = taskList.find((t) => t.id === taskId);
+          if (!task) return;
+          const latest = index === ids.length - 1;
+          items.push({
+            taskId,
+            group: recordGroupOf(task.state),
+            title: summary.title,
+            employee: summary.employee ?? "",
+            state: task.state,
+            statusText: task.statusText ?? "",
+            // 记录里的状态点按读的人的角色算，和侧栏列表走同一套规则；早先的任务已经结束，不再提示
+            statusDot: latest ? dotOf(role, summary.status, task.state, false) : "idle",
+            sessionId: summary.id,
+            // 由旧任务推导出的只读会话没有“第几次运行”
+            ...(summary.readOnly ? {} : { runNumber: index + 1 }),
+            workspaceId: summary.workspaceId,
+            workspaceName: summary.workspaceName ?? "",
+            updatedAt: latest ? summary.updatedAt : task.updatedAt,
+          });
         });
       }
       return items;
     },
   };
-
   /** 全部会话（含归档的），带状态点：工作区列表和记录 tab 都从这里取 */
   async function allSummaries(): Promise<SessionSummary[]> {
     const own = await Promise.all([...sessions.values()].map(view));
-    const bound = new Set(own.map((s) => s.taskId));
+    const bound = new Set(own.flatMap((s) => s.taskIds ?? []));
     // 种子任务的旧任务会话也列出来：和 Go 一样，没绑会话的任务以只读会话出现
     const legacy = await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
     const summaries = [...own, ...legacy.map(({ messages: _m, ...rest }) => rest)];

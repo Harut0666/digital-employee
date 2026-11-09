@@ -6,6 +6,8 @@ import type {
   FolderListing,
   ModelConnectionOption,
   ModelRef,
+  PermissionDecision,
+  PermissionMode,
   PreflightResult,
   SessionAgentEvent,
   SessionDetail,
@@ -42,11 +44,15 @@ export interface SessionApi {
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */
   skipChecklistItem(id: string, item: string): Promise<SessionResult>;
-  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
-  draftFiling(id: string): Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写。taskId 是要入库的任务，不给就是最新的 */
+  draftFiling(id: string, taskId?: string): Promise<SessionResult>;
   /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
   modelOptions(): Promise<ModelConnectionOption[]>;
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
+  /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是询问 */
+  setPermissionMode(id: string, mode: PermissionMode): Promise<SessionResult>;
+  /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
+  decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
   /** 改会话的标题、归档 */
   updateSession(id: string, patch: { title?: string; archived?: boolean }): Promise<SessionSummary>;
   /** 提交前检查：默认模型连接有没有可用 Key；给了任务就用任务的会话模型 */
@@ -105,6 +111,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     },
     modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
     selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
+    setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
+    decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
       const body = await read<{ session?: SessionSummary }>(session(id), {
@@ -127,7 +135,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
-    draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
+    draftFiling: (id, taskId) => act(session(id, "/filing-draft"), JSON.stringify(taskId ? { taskId } : {})),
     preflight: (taskId) => read<PreflightResult>(url(taskId ? `preflight?taskId=${encodeURIComponent(taskId)}` : "preflight")),
     subscribeSession(id, onEvent) {
       // 服务端每件事都带 event 名；EventSource 带不了请求头，但事件流是只读的，不依赖角色
