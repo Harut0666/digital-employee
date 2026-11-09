@@ -32,7 +32,7 @@ type preflightResult struct {
 
 // effectiveModels 设置页与提交前检查看到的同一份模型设置：连接与 Key 都来自设置文件（Spec 0007）。
 func (s *Server) effectiveModels() contract.ModelSettings {
-	return settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())
+	return settings.LoadModelSettings(s.opts.AppDir)
 }
 
 // sessionModelReady 会话模型能不能用：连接在、连接有 Key、模型在连接的模型列表里（没配模型列表时只看 Key）。

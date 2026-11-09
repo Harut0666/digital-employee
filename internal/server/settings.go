@@ -66,7 +66,7 @@ func (s *Server) notifySettingsSaved() (warning string) {
 	if s.opts.OnSettingsSaved == nil {
 		return ""
 	}
-	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())); err != nil {
+	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.AppDir)); err != nil {
 		return err.Error()
 	}
 	return ""

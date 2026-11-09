@@ -465,7 +465,7 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 		}
 	}
 
-	modelSettings := settings.LoadModelSettings(appDir, settings.Env(env))
+	modelSettings := settings.LoadModelSettings(appDir)
 	var engine contract.Engine
 	if options.EngineFactory != nil {
 		created, err := options.EngineFactory(EngineDeps{

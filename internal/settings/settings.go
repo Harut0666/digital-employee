@@ -579,8 +579,8 @@ func FindConnection(connections []contract.ModelConnection, name string) (contra
 }
 
 // LoadModelSettings 读应用目录里的 settings.json。Key 只来自设置里人填写的内容（Spec 0007：
-// 不再有 DEEPSEEK_API_KEY 之类的环境变量覆盖），env 只为兼容调用方保留。
-func LoadModelSettings(dir string, env Env) contract.ModelSettings {
+// 不再有 DEEPSEEK_API_KEY 之类的环境变量覆盖）。
+func LoadModelSettings(dir string) contract.ModelSettings {
 	return ModelSettingsOf(Read(dir))
 }
 

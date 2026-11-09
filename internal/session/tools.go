@@ -1,4 +1,5 @@
-// 开放给前台 Agent 的只读工具和字段辅助。这里的工具不碰任务状态。
+// 开放给前台 Agent 的只读查询工具（query_task、知识库）和表单字段辅助。这里的工具不碰任务状态；
+// 开工只有 run_employee 一条路（employee_form.go），它经过权限关口和发起人确认。
 package session
 
 import (
@@ -79,8 +80,10 @@ func (t *turn) queryTaskTool() tool {
 	return tool{
 		spec: agent.ToolSpec{
 			Name:        contract.ToolQueryTask,
-			Description: "只读查询本会话的任务：状态、暂停原因、步骤、检验记录、交付物，以及谁能点哪些按钮。回答任务问题前先调用它。",
-			Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+			Description: "只读查询本会话的任务：状态、暂停原因、步骤、检验记录、交付物，以及谁能点哪些按钮。回答任务问题前先调用它；默认查最新的任务，也可以用 taskId 查本会话里更早的任务。",
+			Parameters: map[string]any{"type": "object", "properties": map[string]any{
+				"taskId": map[string]any{"type": "string", "description": "任务 ID；不填就查会话里最新的任务。会话先后运行过多个任务时，用它查更早的那个"},
+			}},
 		},
 		run: func(arguments map[string]any) (any, error) {
 			// 不指定时查会话的当前任务（最新的一个）；也可以查本会话里更早的任务
