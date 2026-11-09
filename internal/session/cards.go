@@ -129,26 +129,37 @@ func projectEvent(event contract.TaskEvent) (Message, bool) {
 	return Message{}, false
 }
 
-// withTask 把任务的卡片并进会话消息，按时间排好，并给还有效的卡片配上现在能点的按钮。
+// withTasks 把会话里每个任务的卡片并进会话消息，按时间排好，并给还有效的卡片配上现在能点的按钮。
+// 每个任务分别投影：先开的任务的开工位置、步骤相关的卡片和说明留在它们发生的时间点，不因后来有新任务而消失。
 // current 是会话回放后的状态，带着入库描述的草稿；由旧任务推导出的只读会话没有，传 nil。
-func (m *Manager) withTask(messages []Message, taskID string, current *record) ([]Message, error) {
-	events, err := m.deps.Engine.Events(taskID, 0)
-	if err != nil {
-		return nil, err
-	}
+func (m *Manager) withTasks(messages []Message, taskIDs []string, current *record) ([]Message, error) {
 	merged := append([]Message{}, messages...)
-	for _, event := range events {
-		if message, ok := projectEvent(event); ok {
-			merged = append(merged, message)
+	for run, taskID := range taskIDs {
+		events, err := m.deps.Engine.Events(taskID, 0)
+		if err != nil {
+			return nil, err
 		}
-		if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
-			if message, ok := m.filingMessage(event, current); ok {
-				merged = append(merged, message)
+		projected := []Message{}
+		for _, event := range events {
+			if message, ok := projectEvent(event); ok {
+				projected = append(projected, message)
+			}
+			if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
+				if message, ok := m.filingMessage(event, current); ok {
+					projected = append(projected, message)
+				}
 			}
 		}
-	}
-	if err := m.attachActions(merged, taskID, events); err != nil {
-		return nil, err
+		// 每个任务的事件序号都从 1 开始：第二次运行起的消息 ID 加上运行次数，对话里的 ID 才不重复
+		if run > 0 {
+			for index := range projected {
+				projected[index].ID = fmt.Sprintf("r%d-%s", run+1, projected[index].ID)
+			}
+		}
+		merged = append(merged, projected...)
+		if err := m.attachActions(merged, taskID, events); err != nil {
+			return nil, err
+		}
 	}
 	root := ""
 	if current != nil {
@@ -278,8 +289,9 @@ func (m *Manager) filingMessage(delivered contract.TaskEvent, current *record) (
 	}
 	card := Card{Type: CardFiling, TaskID: delivered.TaskID, AtSeq: delivered.Seq, Title: offer.Title, Filed: offer.Filed}
 	if current != nil {
-		card.Description = current.filingDraft
-		card.DraftFailed = current.filingFailed
+		draft := current.filingDrafts[delivered.TaskID]
+		card.Description = draft.text
+		card.DraftFailed = draft.failed
 	}
 	return Message{
 		ID: fmt.Sprintf("t%d-filing", delivered.Seq), Seq: delivered.Seq, TS: delivered.TS, Kind: KindCard, Card: &card,

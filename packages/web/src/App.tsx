@@ -7,7 +7,7 @@ import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contra
 import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createWorkspaces } from "./api";
-import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask } from "./hooks/data";
+import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask, usePastRuns } from "./hooks/data";
 import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { flattenSessions, Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
@@ -23,6 +23,7 @@ import { SettingsPage } from "./pages/Settings";
 import { KnowledgePage } from "./pages/Knowledge";
 import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
+import { latestTaskId, pastTaskIds } from "./view/task-runs";
 import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
 
 const DEFAULT_SECTIONS = [
@@ -88,11 +89,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   // @ 选目录文件：员工接手、还没提交时才有；每次会话读出来（材料变化时重读）刷新一次
   const folderFiles = useFolderFiles(
     sessionId,
-    detail?.status === "drafting" && !detail.readOnly,
+    (detail?.status === "drafting" || detail?.status === "closed") && !detail.readOnly,
     `${detail?.status}:${detail?.attachments.length}:${folderVersion}:${detail?.updatedAt}`,
   );
-  const taskId = detail?.taskId;
+  // 会话先后运行过多个任务时，最新的一个是当前任务；早先的已经结束，只用来在对话里留着它们的步骤行和交付物
+  const taskId = detail ? latestTaskId(detail) : undefined;
   const task = useTask(taskId);
+  const pastRuns = usePastRuns(detail ? pastTaskIds(detail) : []);
   // 服务端快照里的 state 最权威（草稿任务没有 state_changed 事件，视图里可能还是空）
   const taskState = task.view.state ?? task.snapshot?.state;
   const employee = employees.find((e) => e.id === (detail?.employee ?? task.snapshot?.employee));
@@ -192,9 +195,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       setFolderVersion((n) => n + 1);
     },
     submit: async (form) => (sessionId ? settle(api.submitSession(sessionId, form)) : { ok: false, error: "not_found", message: "没有选中会话" }),
-    async draftFiling() {
+    async draftFiling(filingTaskId) {
       if (!sessionId) return;
-      const res = await settle(api.draftFiling(sessionId));
+      const res = await settle(api.draftFiling(sessionId, filingTaskId));
       if (!res.ok) message.error(res.message);
     },
     async fileKnowledge(filing) {
@@ -264,15 +267,18 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     },
     openPanel: () => setDrawerOpen(true),
     sections: employee?.reviewSections ?? DEFAULT_SECTIONS,
-    downloadUrl: (kind, version) => (taskId ? api.deliverableUrl(taskId, kind, version) : undefined),
+    downloadUrl: (kind, version, forTask) => {
+      const target = forTask ?? taskId;
+      return target ? api.deliverableUrl(target, kind, version) : undefined;
+    },
   };
 
   const items = useMemo(
     () =>
       detail
-        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live)
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live, pastRuns)
         : [],
-    [detail, task.snapshot, stream.live, task.events],
+    [detail, task.snapshot, stream.live, task.events, pastRuns],
   );
   /** 新会话沿用的模型：设置的 lastModel（T39） */
   const [lastModel, setLastModel] = useState<ModelRef | undefined>();
@@ -337,7 +343,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         }
         checklist={
           detail.checklist && (
-            <ChecklistPanel checklist={detail.checklist} started={Boolean(detail.taskId)} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
+            <ChecklistPanel checklist={detail.checklist} started={detail.status === "task"} canSkip={role === "initiator"} onSkip={skipChecklistItem} />
           )
         }
         modelOptions={modelOptions}

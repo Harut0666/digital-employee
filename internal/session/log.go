@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -116,15 +117,18 @@ type record struct {
 	// workspaceID 会话属于哪个工作区
 	workspaceID string
 	employee    string
+	// taskIDs 会话里按开工顺序运行过的任务（Spec 0007“会话与任务一对多”）；
+	// taskID 是其中最新的一个，即会话的“当前任务”。旧日志里每个 task_bound 只有一个 taskId，
+	// 回放时逐条加进列表，所以旧会话读作只有一个任务；新写入的格式不变，旧版本读取方只会看到最新的任务。
+	taskIDs     []string
 	taskID      string
 	draft       map[string]any
 	attachments []Attachment
 	messages    []Message
 	createdAt   string
 	updatedAt   string
-	// filingDraft 入库卡片上模型起草的描述；filingFailed 起草失败，由人手写
-	filingDraft  string
-	filingFailed bool
+	// filingDrafts 入库卡片上模型起草的描述，按任务记（每个交付的任务各有一张入库卡片）
+	filingDrafts map[string]filingDraft
 	// skipped 发起人确认跳过的清单项
 	skipped map[string]bool
 	// model 会话里最后一次选的模型；nil 表示没选过，沿用设置的 lastModel
@@ -153,15 +157,28 @@ func (r *record) apply(message Message) {
 	case kindDraftSet:
 		r.draft = message.Draft
 	case kindTaskBound:
+		if message.TaskID == "" {
+			return
+		}
 		r.taskID = message.TaskID
+		if !slices.Contains(r.taskIDs, message.TaskID) {
+			r.taskIDs = append(r.taskIDs, message.TaskID)
+		}
 	case kindChecklistSkipped:
 		if r.skipped == nil {
 			r.skipped = map[string]bool{}
 		}
 		r.skipped[message.Item] = true
 	case kindFilingDrafted:
-		r.filingDraft = message.Text
-		r.filingFailed = message.Text == ""
+		// 旧日志里起草失败的那一行没有 taskId，算在写它时的最新任务上
+		forTask := message.TaskID
+		if forTask == "" {
+			forTask = r.taskID
+		}
+		if r.filingDrafts == nil {
+			r.filingDrafts = map[string]filingDraft{}
+		}
+		r.filingDrafts[forTask] = filingDraft{text: message.Text, failed: message.Text == ""}
 	case kindRename:
 		r.title = message.Title
 	case kindArchive:
@@ -185,6 +202,12 @@ func (r *record) apply(message Message) {
 		}
 		r.attachments = append(r.attachments, *message.Attachment)
 	}
+}
+
+// filingDraft 一个任务的入库描述草稿；failed 表示起草失败，由人手写。
+type filingDraft struct {
+	text   string
+	failed bool
 }
 
 // recentUpdatedAt 不算已读的那条，最近一次有内容的更新时间。

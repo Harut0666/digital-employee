@@ -191,7 +191,7 @@ func (s *Server) handleRecords(w http.ResponseWriter, r *http.Request) {
 	records := s.sessions.Records()
 	for index := range records {
 		if records[index].SessionID != "" {
-			records[index].StatusDot = s.sessions.DotFor(records[index].SessionID, role)
+			records[index].StatusDot = s.sessions.DotForTask(records[index].SessionID, records[index].TaskID, role)
 		}
 	}
 	writeJSON(w, http.StatusOK, s.recordsView(records))
@@ -630,7 +630,14 @@ func (s *Server) handleDraftFiling(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, roleRequired)
 		return
 	}
-	reply, err := s.sessions.DraftFiling(r.Context(), r.PathValue("id"), role)
+	// 可选的 taskId：会话里有多个任务时，为哪一个任务的入库卡片起草；不给就是最新的任务
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	taskID, _ := body["taskId"].(string)
+	reply, err := s.sessions.DraftFiling(r.Context(), r.PathValue("id"), role, taskID)
 	if err != nil {
 		writeSessionError(w, err)
 		return

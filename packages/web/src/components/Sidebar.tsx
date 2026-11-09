@@ -11,7 +11,7 @@ import {
 } from "@ant-design/icons";
 import type { RecordItem, SessionSummary, UiRole } from "../api";
 import type { WorkspaceApi, WorkspaceList } from "../api/workspaces";
-import { groupRecords, groupSessionsByWorkspace, recordSubtitle, unreadOf, type WorkspaceGroup } from "../view/sidebar-tree";
+import { groupRecords, groupSessionsByWorkspace, recordSubtitle, runLabel, unreadOf, type WorkspaceGroup } from "../view/sidebar-tree";
 import { ROLE_LABELS } from "../view/permissions";
 
 /** 工作区列表，以及会话的重命名和归档 */
@@ -116,7 +116,8 @@ export function Sidebar({
     () => groupSessionsByWorkspace(list?.workspaces ?? [], sessions, collapsed, { includeArchived, currentId: selection.kind === "session" ? selection.id : undefined }),
     [list, sessions, collapsed, includeArchived, selection],
   );
-  const recordGroups = useMemo(() => groupRecords(groups.flatMap((g) => g.items)), [groups]);
+  const allRecords = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  const recordGroups = useMemo(() => groupRecords(allRecords), [allRecords]);
 
   const fail = (e: unknown, fallback: string) => message.error(e instanceof Error ? e.message : fallback);
 
@@ -282,7 +283,7 @@ export function Sidebar({
                   {group.label}（{group.items.length}）
                 </div>
                 {group.items.map((item) => (
-                  <RecordRow key={item.taskId} item={item} onOpen={item.sessionId ? () => onSelect({ kind: "session", id: item.sessionId! }) : undefined} />
+                  <RecordRow key={item.taskId} item={item} run={runLabel(item, allRecords)} onOpen={item.sessionId ? () => onSelect({ kind: "session", id: item.sessionId! }) : undefined} />
                 ))}
               </div>
             ))}
@@ -392,13 +393,13 @@ function SessionRow({
   );
 }
 
-function RecordRow({ item, onOpen }: { item: RecordItem; onOpen?: () => void }) {
+function RecordRow({ item, run, onOpen }: { item: RecordItem; run?: string; onOpen?: () => void }) {
   return (
     <div className={`session-item record-item ${onOpen ? "" : "readonly"}`} onClick={onOpen} title={item.statusText}>
       <Dot dot={item.statusDot} />
       <span className="main">
         <span className="title">{item.title}</span>
-        <span className="sub">{recordSubtitle(item)}</span>
+        <span className="sub">{[run, recordSubtitle(item)].filter((part) => part).join(" · ")}</span>
       </span>
       <span className="time">{clock(item.updatedAt)}</span>
     </div>

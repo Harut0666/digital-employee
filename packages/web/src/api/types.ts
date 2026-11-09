@@ -158,6 +158,8 @@ export interface RecordItem {
   statusDot: StatusDot;
   /** 任务所在的会话；直接从任务接口建的任务没有 */
   sessionId?: string;
+  /** 这是会话里的第几次运行（从 1 开始）；同一个会话先后运行的任务各占一行。没有会话的任务没有 */
+  runNumber?: number;
   workspaceId: string;
   workspaceName: string;
   updatedAt: string;
@@ -288,7 +290,10 @@ export interface SessionSummary {
   readOnly: boolean;
   title: string;
   employee?: string;
+  /** 当前任务：会话里最新的一个（状态、状态点都按它算） */
   taskId?: string;
+  /** 会话里按开工顺序运行过的全部任务；旧后端不给时只有 taskId 这一个 */
+  taskIds?: string[];
   draft?: Record<string, unknown>;
   attachments: SessionAttachment[];
   createdAt: string;
