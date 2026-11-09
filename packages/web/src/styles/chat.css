@@ -356,6 +356,13 @@
   border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);
   background: var(--bubble-me);
 }
+/* 刚发出、服务端还没确认的话：略淡，时间处写“发送中…” */
+.msg-row.me.pending .bubble {
+  opacity: 0.6;
+}
+.msg-row.me.pending .msg-time {
+  opacity: 1;
+}
 .msg-who {
   margin-bottom: 2px;
   color: var(--muted);

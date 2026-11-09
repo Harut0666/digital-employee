@@ -73,7 +73,7 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" }> }) {
   // 不是发起人说的话，标出是谁说的（审核人、操作员也会在对话里说话）
   const other = item.role && item.role !== "initiator" ? item.role : undefined;
   return (
-    <div className="msg-row me">
+    <div className={`msg-row me ${item.pending ? "pending" : ""}`}>
       <div className="msg-col">
         {other && (
           <div className="msg-who">
@@ -81,7 +81,7 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" }> }) {
           </div>
         )}
         <div className="bubble">{item.text}</div>
-        <div className="msg-time">{clock(item.ts)}</div>
+        <div className="msg-time">{item.pending ? "发送中…" : clock(item.ts)}</div>
       </div>
     </div>
   );
@@ -241,8 +241,10 @@ function ChatInput({
     // 通知轨迹：用户开始下一次输入（「下次输入时折叠」用它收起上一轮）
     notifyUserInput();
     setSending(true);
+    // 话已经显示在对话里（待确认），输入框立刻清空；没发成功再还回来（输入框里已有新写的字就接在它前面）
+    setValue("");
     try {
-      if (await onSend(trimmed)) setValue("");
+      if (!(await onSend(trimmed))) setValue((now) => (now.trim() === "" ? trimmed : `${trimmed}\n${now}`));
     } finally {
       setSending(false);
     }
@@ -369,6 +371,7 @@ export function SessionChat({
   onSelectMode,
   openSettings,
   onSend,
+  draft,
   live,
   onStop,
 }: {
@@ -396,6 +399,8 @@ export function SessionChat({
   /** 标题栏右侧的附加入口，比如窄窗口下打开右栏抽屉 */
   headerExtra?: React.ReactNode;
   onSend: (text: string) => Promise<boolean>;
+  /** 新对话第一句没发出去：话还给输入框（nonce 变了就替换一次） */
+  draft?: { text: string; nonce: number };
   /** 正在说的一轮（排在最后一条消息之后） */
   live?: LiveTurn;
   onStop?: () => Promise<void> | void;
@@ -515,6 +520,7 @@ export function SessionChat({
         folderFiles={detail.status === "task" ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
         onSend={onSend}
+        draft={draft}
         modePicker={<PermissionModePicker current={detail.permissionMode} disabled={detail.readOnly} onPick={onSelectMode} />}
         modelPicker={
           <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />

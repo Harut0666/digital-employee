@@ -4,7 +4,7 @@ import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
 import { ExclamationCircleOutlined, LeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
-import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type PermissionMode, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
+import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type PermissionMode, type SessionDetail, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
 import { createWorkspaces } from "./api";
 import { ApiContext, useApi, useEmployees, useFolderFiles, usePreflight, useSession, useSessionStream, useTask, usePastRuns } from "./hooks/data";
@@ -28,6 +28,7 @@ import { latestTaskId, pastTaskIds } from "./view/task-runs";
 import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
 import { antdTheme } from "./view/theme";
 import { newChatTarget, startWorkspaceId } from "./view/new-chat";
+import { addPending, createPending, pendingOf, removePending, seedDetail, settlePending, type PendingMessage } from "./view/pending-message";
 
 const DEFAULT_SECTIONS = [
   { id: "summary", heading: "摘要" },
@@ -89,7 +90,33 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
 
   const sessionId = selection.kind === "session" ? selection.id : undefined;
   const session = useSession(sessionId);
-  const detail = session.detail;
+  // 刚建好的会话：第一次读取回来之前先用建会话的结果画对话页，第一句话才能立刻显示
+  const [seed, setSeed] = useState<SessionDetail>();
+  useEffect(() => {
+    if (seed && seed.id !== sessionId) setSeed(undefined);
+  }, [seed, sessionId]);
+  const detail = session.detail ?? (seed && seed.id === sessionId ? seed : undefined);
+  // 刚发出、还没在会话日志里看到的话（乐观显示）；读到会话后，正式消息进了日志的就让位
+  const [pending, setPending] = useState<PendingMessage[]>([]);
+  const pendingSeq = useRef(0);
+  const track = useCallback((id: string, targetSession: string, text: string, current: SessionDetail | undefined, from: UiRole) => {
+    const nowMs = Date.now();
+    setPending((prev) => addPending(prev, createPending({ id, sessionId: targetSession, text, role: from, nowMs, detail: current, existing: prev })));
+  }, []);
+  const untrack = useCallback((id: string) => setPending((prev) => removePending(prev, id)), []);
+  useEffect(() => {
+    if (!session.detail) return;
+    const loaded = session.detail;
+    setPending((prev) => {
+      const next = settlePending(prev, loaded, Date.now());
+      return next.length === prev.length ? prev : next;
+    });
+  }, [session.detail]);
+  /** 新对话第一句发送失败：话还给会话页的输入框 */
+  const [restored, setRestored] = useState<{ sessionId: string; text: string; nonce: number }>();
+  useEffect(() => {
+    if (restored && restored.sessionId !== sessionId) setRestored(undefined);
+  }, [restored, sessionId]);
   // @ 选目录文件：会话可写时都有；每次会话读出来（材料变化时重读）刷新一次
   const folderFiles = useFolderFiles(
     sessionId,
@@ -169,20 +196,34 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   };
 
   const startConversation = async (text: string, model?: ModelRef): Promise<boolean> => {
+    let tracked: string | undefined;
+    let switched: string | undefined;
     try {
       // 新对话开在哪个工作区：选中的“新对话”带着的，没有就取默认（只有一个可用工作区时就是它）；
       // 还没读到登记时交服务端取唯一的工作区（单目录模式）
       const targetWorkspace = startWorkspaceId(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined);
       // 新对话页选的模型随建会话发出（T45）：这个会话从第一句话起就用它
       const created = await api.createSession(targetWorkspace, model);
-      // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现
+      // 先切过去再看受理结果：回复在整页的会话事件流里逐字出现。
+      // 这句话先作为待确认的话显示出来（会话还没读到时用建会话的结果画对话页），不等第一次读取
+      tracked = `pending-${++pendingSeq.current}`;
+      switched = created.id;
+      setSeed(seedDetail(created));
+      track(tracked, created.id, text, undefined, role);
       setSelection({ kind: "session", id: created.id });
       const res = await api.sendMessage(created.id, text);
-      if (!res.ok) message.error(res.message);
+      if (!res.ok) {
+        message.error(res.message);
+        untrack(tracked);
+        setRestored({ sessionId: created.id, text, nonce: Date.now() });
+      }
+      session.reload();
       refreshSidebar();
       return res.ok;
     } catch (e) {
       fail(e, "开始对话失败");
+      if (tracked) untrack(tracked);
+      if (switched) setRestored({ sessionId: switched, text, nonce: Date.now() });
       return false;
     }
   };
@@ -235,14 +276,21 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     },
   };
 
-  // 正在说的一轮：说的话逐字出现、工具调用逐个列出；一轮结束时重读会话（完整消息和卡片这一刻才写下来）
+  // 正在说的一轮：说的话逐字出现、工具调用逐个列出；一轮开始（用户的话已写进日志）、结束（完整消息和卡片这一刻才写下来）时重读会话
   const stream = useSessionStream(sessionId, session.reload);
 
   /** 发一句话：接口立即受理，回复在会话事件流里出现。正在说的时候再发，排进这一轮 */
   const send = async (text: string): Promise<boolean> => {
     if (!sessionId) return false;
+    // 先把这句话显示在对话末尾（待确认），受理成功后重读会话，正式消息进来时它让位；失败就撤掉，话还给输入框
+    const pendingId = `pending-${++pendingSeq.current}`;
+    track(pendingId, sessionId, text, detail, role);
     const res = await api.sendMessage(sessionId, text).catch((e: unknown) => ({ ok: false as const, error: "internal", message: e instanceof Error ? e.message : "发送失败" }));
-    if (!res.ok) message.error(res.message);
+    if (!res.ok) {
+      message.error(res.message);
+      untrack(pendingId);
+    }
+    session.reload();
     refreshSidebar();
     return res.ok;
   };
@@ -296,9 +344,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const items = useMemo(
     () =>
       detail
-        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live, pastRuns, role)
+        ? deriveChat(detail, task.snapshot ? { state: task.snapshot.state, deliverables: task.snapshot.deliverables } : undefined, task.events, stream.live, pastRuns, role, pendingOf(pending, sessionId))
         : [],
-    [detail, task.snapshot, stream.live, task.events, pastRuns, role],
+    [detail, task.snapshot, stream.live, task.events, pastRuns, role, pending, sessionId],
   );
   /** 新会话沿用的模型：设置的 lastModel（T39） */
   const [lastModel, setLastModel] = useState<ModelRef | undefined>();
@@ -386,6 +434,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         onSelectMode={selectMode}
         openSettings={actions.openSettings}
         onSend={send}
+        draft={restored && restored.sessionId === sessionId ? restored : undefined}
         live={stream.live}
         onStop={stopTurn}
       />

@@ -9,6 +9,7 @@ import { derivePermissionCard, fileChangeOf, traceOf, type FileChangeView, type 
 import { latestTaskId } from "./task-runs";
 import { deriveTodoCard, latestTodoId, type TodoCardView } from "./todo";
 import { deriveQuestionCard, type QuestionCardView } from "./question";
+import type { PendingMessage } from "./pending-message";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -17,7 +18,7 @@ interface ItemBase {
 }
 
 export type ChatItem =
-  | (ItemBase & { kind: "user"; text: string; role?: UiRole })
+  | (ItemBase & { kind: "user"; text: string; role?: UiRole; pending?: boolean })
   | (ItemBase & { kind: "agent"; text: string; turn?: number })
   | (ItemBase & { kind: "notice"; text: string })
   /** 旧会话里已发出的“确认员工”卡（T49 之前）：只读显示，不再有按钮 */
@@ -144,8 +145,11 @@ export function deriveChat(
   live?: LiveTurn,
   past: readonly PastRun[] = [],
   role: UiRole = "initiator",
+  /** 刚发出、还没在会话日志里看到的人的话（乐观显示）：排在已有消息之后、这一轮的过程行和流式文字之前 */
+  pending: readonly PendingMessage[] = [],
 ): ChatItem[] {
   const items = deriveMessages(session, task, events, past, role);
+  for (const p of pending) items.push({ key: `pending-${p.id}`, ts: p.ts, kind: "user", text: p.text, role: p.role, pending: true });
   // 同一轮的正式回复和流式内容共用一个 key（同一个节点），文字增长不换 key
   const turnKey = (turn: number) => `turn-${turn}`;
   const claimed = new Set<number>();
