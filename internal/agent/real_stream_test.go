@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
@@ -71,6 +72,7 @@ func toolSpecs() []agent.ToolSpec {
 }
 
 func TestRealStreamConcatenatesTextDeltas(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		writeFrames(w,
 			`{"choices":[{"delta":{"role":"assistant","content":""}}]}`,
@@ -107,6 +109,7 @@ func TestRealStreamConcatenatesTextDeltas(t *testing.T) {
 }
 
 func TestRealStreamJoinsFragmentedToolArguments(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		writeFrames(w,
 			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"query_task","arguments":""}}]}}]}`,
@@ -135,6 +138,7 @@ func TestRealStreamJoinsFragmentedToolArguments(t *testing.T) {
 }
 
 func TestRealStreamKeepsEveryParallelToolCall(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		writeFrames(w,
 			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"query_task","arguments":"{}"}},{"index":1,"id":"c2","type":"function","function":{"name":"propose_card","arguments":""}}]}}]}`,
@@ -160,6 +164,7 @@ func TestRealStreamKeepsEveryParallelToolCall(t *testing.T) {
 
 // 中途断流：已经输出的部分保留，跳过的帧不影响它，消息以 error 结束，hint 说明断在哪里。
 func TestRealStreamBrokenMidwayKeepsPartialText(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		writeFrames(w,
 			`{"choices":[{"delta":{"content":"前一半"}}]}`,
@@ -196,6 +201,8 @@ func TestRealStreamBrokenMidwayKeepsPartialText(t *testing.T) {
 
 // 客户端停止：上下文取消同样保留已输出的部分，hint 为空（不是出错）。
 func TestRealStreamCancelKeepsPartialText(t *testing.T) {
+	t.Parallel()
+	started := time.Now()
 	ctx, cancel := context.WithCancel(context.Background())
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		writeFrames(w, `{"choices":[{"delta":{"content":"说到一半"}}]}`)
@@ -224,9 +231,14 @@ func TestRealStreamCancelKeepsPartialText(t *testing.T) {
 	if agent.StreamErrorHint(message) != "" {
 		t.Fatalf("取消不是出错，不该有断流说明：%q", agent.StreamErrorHint(message))
 	}
+	// 首帧只有几十个字节、连接还没关：不能等满固定长度才往下读，否则取消要卡到调用超时
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("取消后过了 %s 才返回（应在收到首帧后立即返回）", elapsed)
+	}
 }
 
 func TestRealStreamRejectsErrorStatusBeforeStreaming(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		http.Error(w, "invalid key test-key", http.StatusUnauthorized)
 	})
@@ -240,6 +252,7 @@ func TestRealStreamRejectsErrorStatusBeforeStreaming(t *testing.T) {
 
 // 判断步骤的底层一次性调用仍是 stream:false；要看增量时执行器改走流式（见 TestRunnerEmitsModelDeltas）。
 func TestProviderStreamStaysNonStreaming(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":"ok"}}]}`)
 	})
@@ -256,6 +269,7 @@ func TestProviderStreamStaysNonStreaming(t *testing.T) {
 
 // 服务忽略 stream、直接回整段 JSON（不支持流式）：按一条完整的消息交回，文字仍逐段回调。
 func TestRealStreamFallsBackToWholeJSON(t *testing.T) {
+	t.Parallel()
 	service := newSSEService(t, func(w http.ResponseWriter, _ string) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"content":"先看原因",`+
@@ -283,6 +297,7 @@ func TestRealStreamFallsBackToWholeJSON(t *testing.T) {
 
 // 剧本模型按分片输出：逐字推送，工具调用和报错轮次不推文字。
 func TestScriptedEventStreamEmitsPieces(t *testing.T) {
+	t.Parallel()
 	delay := 0
 	turns := []agent.ScriptedTurn{
 		{Text: textPointer("你好世界"), ChunkSize: 2},
@@ -322,6 +337,7 @@ func TestScriptedEventStreamEmitsPieces(t *testing.T) {
 
 // 分片时被取消：消息以 aborted 结束，带上已经输出的部分。
 func TestScriptedEventStreamAbortKeepsPieces(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	provider := agent.NewScriptedModelProvider(agent.ModelScript{"step": []agent.ScriptedTurn{
 		{Text: textPointer("逐字输出"), ChunkSize: 1},

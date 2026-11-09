@@ -11,6 +11,7 @@ import (
 )
 
 func TestFetchModelsDefaults(t *testing.T) {
+	t.Parallel()
 	if ModelListTimeout != 15*time.Second {
 		t.Fatalf("拉取超时应为 15 秒：%v", ModelListTimeout)
 	}
@@ -20,6 +21,7 @@ func TestFetchModelsDefaults(t *testing.T) {
 }
 
 func TestFetchModelsRequestShape(t *testing.T) {
+	t.Parallel()
 	var gotPath, gotAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
@@ -40,6 +42,7 @@ func TestFetchModelsRequestShape(t *testing.T) {
 }
 
 func TestFetchModelsExactLimitIsAccepted(t *testing.T) {
+	t.Parallel()
 	// 恰好 4 MB 的合法响应不报错：在 JSON 后面补空格到上限
 	base := `{"models":["m"]}`
 	body := base + strings.Repeat(" ", ModelListMaxBytes-len(base))
@@ -68,6 +71,7 @@ func TestFetchModelsExactLimitIsAccepted(t *testing.T) {
 }
 
 func TestFetchModelsErrorsAreRedactedAndSingleLine(t *testing.T) {
+	t.Parallel()
 	// 上游 500 里回显 Key，且带换行：错误信息要脱敏、压成一行
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -87,6 +91,7 @@ func TestFetchModelsErrorsAreRedactedAndSingleLine(t *testing.T) {
 }
 
 func TestFetchModelsTimeoutAndContextCancel(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -121,6 +126,7 @@ func TestFetchModelsTimeoutAndContextCancel(t *testing.T) {
 }
 
 func TestFetchModelsWithoutKeyDoesNotCallServer(t *testing.T) {
+	t.Parallel()
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
 	defer server.Close()

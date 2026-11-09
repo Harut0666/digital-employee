@@ -442,6 +442,7 @@ type bufferedBody struct {
 }
 
 func (b *bufferedBody) Close() error { return b.closer.Close() }
+
 // SSE 分片里出现的字段（只取用得到的部分）。
 type openAIStreamChunk struct {
 	Choices []struct {
@@ -631,33 +632,36 @@ func postChatCompletionStream(ctx context.Context, model Model, body []byte, opt
 	}()
 
 	reader := bufio.NewReaderSize(response.Body, 64<<10)
-	head := strings.TrimLeft(string(mustPeek(reader, 512)), " \r\n\t")
-	// 正文开头不是 data: 行也不是 JSON：有的服务回的是 200 里的错误体
-	if !strings.HasPrefix(head, "data:") && !strings.HasPrefix(head, "{") {
-		raw, readErr := io.ReadAll(io.LimitReader(reader, 8<<20))
-		if readErr != nil {
-			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readErr)
-		}
-		return nil, newModelCallError(contract.ModelErrorServer, options.APIKey, "模型接口没有返回事件流：%s", truncate(string(raw), 500))
-	}
+	// 先读一行为准判断正文形态，并且从这里开始逐行喂解析器：
+	// 不能用 Peek(512) 等满固定字节——首帧往往只有几十字节、连接又不会立刻关，
+	// 那样要等到凑满 512 字节或调用超时才继续，首字和“停止”都会被卡住（T44 回归）。
+	first, readErr := readFirstContentLine(reader)
+	head := strings.TrimLeft(first, " \r\n\t")
 	// 正文是一段完整的 JSON：服务不支持流式（请求里的 stream 被忽略），或者 200 里回了错误体。
 	// 整段读完再判断，不要当成事件流逐帧喂。
 	if strings.HasPrefix(head, "{") {
-		raw, readErr := io.ReadAll(io.LimitReader(reader, 8<<20))
-		if readErr != nil {
-			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readErr)
+		raw, readAllErr := io.ReadAll(io.LimitReader(reader, 8<<20))
+		if readAllErr != nil {
+			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readAllErr)
 		}
-		return answerFromJSONBody(model, raw, options.APIKey, options.OnText)
+		return answerFromJSONBody(model, append([]byte(first), raw...), options.APIKey, options.OnText)
 	}
-	// 标准事件流：一行一个 data: 帧
-
+	// 第一行不是事件流的行（也不是空行/注释）也不是 JSON：有的服务在 200 里回了错误体
+	if head != "" && !isSSELine(head) {
+		raw, readAllErr := io.ReadAll(io.LimitReader(reader, 8<<20))
+		if readAllErr != nil {
+			return nil, newModelCallError(contract.ModelErrorNetwork, options.APIKey, "%v", readAllErr)
+		}
+		return nil, newModelCallError(contract.ModelErrorServer, options.APIKey,
+			"模型接口没有返回事件流：%s", truncate(first+string(raw), 500))
+	}
+	// 标准事件流：一行一个 data: 帧（空行是帧间的分隔，注释行忽略）
 	parser := newSSEParser(model, options.OnText)
+	line := first
 	for {
-		line, readErr := reader.ReadString('\n')
-		line = strings.TrimRight(line, "\r\n")
-		// 标准的事件流每帧一行 data:；有的服务直接给 JSON 行，也认
-		frame := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "data:"))
-		if (strings.HasPrefix(strings.TrimSpace(line), "data:") || strings.HasPrefix(frame, "{")) && parser.feed(frame) {
+		trimmedLine := strings.TrimSpace(line)
+		frame := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "data:"))
+		if (strings.HasPrefix(trimmedLine, "data:") || strings.HasPrefix(frame, "{")) && parser.feed(frame) {
 			return parser.done(model), nil
 		}
 		if readErr != nil {
@@ -673,12 +677,33 @@ func postChatCompletionStream(ctx context.Context, model Model, body []byte, opt
 			}
 			return message, nil
 		}
+		line, readErr = reader.ReadString('\n')
 	}
 }
-// mustPeek 看一眼正文开头（有多少算多少，不看满也不当错误）：正文太短、读不到都照常往下读。
-func mustPeek(reader *bufio.Reader, size int) []byte {
-	peeked, _ := reader.Peek(size)
-	return peeked
+
+// readFirstContentLine 读到第一行有内容的行（跳过开头的空行），返回这一行和之后的读取错误。
+// 读不到内容（连接直接断了）时返回空串。
+func readFirstContentLine(reader *bufio.Reader) (string, error) {
+	for {
+		line, err := reader.ReadString('\n')
+		if strings.TrimSpace(line) == "" {
+			if err != nil {
+				return "", err
+			}
+			continue
+		}
+		return line, err
+	}
+}
+
+// isSSELine 这一行是不是事件流的一行：data / event / id / retry 字段或注释。
+func isSSELine(line string) bool {
+	for _, prefix := range []string{"data:", "event:", "id:", "retry:", ":"} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // interruptedMessage 取消或断流时返回：已输出的部分原样保留，以 aborted 结束。
