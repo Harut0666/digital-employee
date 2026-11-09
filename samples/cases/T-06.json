@@ -1,0 +1,50 @@
+{
+  "id": "T-06",
+  "title": "终止（待审核）：审核人决定终止不该继续的任务 → 已终止",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "../scenario-a/周会纪要_2026W44.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_review",
+        "pauseCode": "awaiting_review"
+      }
+    },
+    {
+      "actor": "reviewer",
+      "command": {
+        "type": "terminate"
+      },
+      "expect": {
+        "state": "terminated"
+      }
+    }
+  ],
+  "expect": {
+    "state": "terminated",
+    "checks": {
+      "pause": {
+        "code": "awaiting_review"
+      }
+    }
+  }
+}
