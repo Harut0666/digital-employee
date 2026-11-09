@@ -10,11 +10,13 @@ import type { AgentToolView } from "../api/types";
 import { modelLabel, modelMenuItems, parseModelValue } from "../view/session-model";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
+import { deriveStepRows } from "../view/step-rows";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
 import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
 import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
+import { StepList } from "./StepList";
 import { StageBar } from "./StageBar";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
 import { enterAction } from "../pages/settings/preferences";
@@ -360,10 +362,22 @@ export function SessionChat({
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const trajectory = useMemo(() => deriveTrajectory(events, steps), [events, steps]);
+  // 对话里的步骤行（T43）：每个步骤一行，业务说法、状态、耗时、所用模型；点开定位到轨迹详情
+  const stepRows = useMemo(
+    () => deriveStepRows(events, steps, { nowMs: Date.now(), fallbackModel: detail.model ? modelLabel(detail.model) : undefined }),
+    [events, steps, detail.model],
+  );
+  const started = stepRows.some((row) => row.status !== "pending");
   // 事件比会话摘要新：有状态变化事件时以它为准（草稿任务没有这种事件）
   const state = trajectory.state ?? detail.taskState;
   const stages = useMemo(() => deriveStages(events, steps, state, actions.pause?.title), [events, steps, state, actions.pause?.title]);
   const [traceOpen, setTraceOpen] = useTrajectoryOpen(trajectory.active);
+  const [focusedStep, setFocusedStep] = useState<string>();
+  // 点开步骤行：打开轨迹详情并定位到这一步
+  const openStep = (stepId: string) => {
+    setFocusedStep(stepId);
+    setTraceOpen(true);
+  };
   const lastKey = items.at(-1)?.key;
   useEffect(() => {
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
@@ -395,9 +409,17 @@ export function SessionChat({
           model={detail.taskId && detail.model ? modelLabel(detail.model) : undefined}
         />
       )}
+      {detail.taskId && started && <StepList rows={stepRows} onOpen={openStep} />}
       {checklist}
       {detail.taskId && traceOpen && (
-        <TrajectoryDetails view={trajectory} elapsedMs={elapsedMs} modelCalls={modelCalls} attachments={attachments} artifacts={artifacts} />
+        <TrajectoryDetails
+          view={trajectory}
+          elapsedMs={elapsedMs}
+          modelCalls={modelCalls}
+          attachments={attachments}
+          artifacts={artifacts}
+          focusStepId={focusedStep}
+        />
       )}
       <div className="chat-body" ref={bodyRef}>
         {items.map((item) =>
