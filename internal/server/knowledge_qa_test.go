@@ -33,7 +33,7 @@ func TestAgentAnswersFromTheKnowledgeBaseWhenAQAEmployeeTicksIt(t *testing.T) {
 	}
 	request := frontdeskRequests(h)[0].Request
 	// 问答员工勾选的知识库工具开放给会话里的 Agent；两个员工都能被 run_employee 调用
-	if names := fmt.Sprint(toolNames(request.Tools)); names != "[run_employee list_files read_file use_folder_file write_file edit_file kb_search kb_read]" {
+	if names := fmt.Sprint(toolNames(request.Tools)); names != "[run_employee todo_write ask_user_question list_files read_file use_folder_file find_files search_content write_file edit_file shell kb_search kb_read]" {
 		t.Fatalf("开放的工具：%s", names)
 	}
 	system := request.Messages[0].Content[0].Text

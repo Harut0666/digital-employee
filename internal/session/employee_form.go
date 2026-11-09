@@ -930,7 +930,7 @@ func (m *Manager) projectEmployeeForms(messages []Message, current *record) []Me
 
 // projectCards 读取时给需要现算状态的卡片（权限确认、员工表单）配上状态。
 func (m *Manager) projectCards(messages []Message, current *record) []Message {
-	return m.projectEmployeeForms(m.projectPermissions(messages, current), current)
+	return m.projectEmployeeForms(m.projectQuestions(m.projectPermissions(messages, current), current), current)
 }
 
 func attachmentNames(attachments []Attachment) []string {

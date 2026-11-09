@@ -100,8 +100,9 @@ func (s *Server) newSessions() *session.Manager {
 		},
 		Knowledge: knowledge.WithTools(s.knowledge, nil),
 		// 前台 Agent 的 read_file 复用工具客户端的文件解析
-		Tools:  s.opts.ToolClient,
-		Filing: filingSource{server: s},
+		Tools:      s.opts.ToolClient,
+		Filing:     filingSource{server: s},
+		LocalAddrs: s.localAddrs,
 		// 欢迎页“载入公开样例”（T49）：样例从应用目录取
 		Sample: s.sessionSample,
 		Now:    s.opts.Now,
@@ -315,6 +316,10 @@ func (s *Server) handleSelectSessionModel(w http.ResponseWriter, r *http.Request
 
 // handleSetPermissionMode PUT /api/sessions/{id}/permission-mode：发起人在输入框左下角选权限模式。
 func (s *Server) handleSetPermissionMode(w http.ResponseWriter, r *http.Request) {
+	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
+	if !requireBrowserPage(w, r) {
+		return
+	}
 	role, ok := roleOf(r)
 	if !ok {
 		writeAPIError(w, http.StatusForbidden, roleRequired)
@@ -336,6 +341,10 @@ func (s *Server) handleSetPermissionMode(w http.ResponseWriter, r *http.Request)
 
 // handleDecidePermission POST /api/sessions/{id}/permissions/{requestId}：发起人答复一张权限确认。
 func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) {
+	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
+	if !requireBrowserPage(w, r) {
+		return
+	}
 	role, ok := roleOf(r)
 	if !ok {
 		writeAPIError(w, http.StatusForbidden, roleRequired)
@@ -355,10 +364,41 @@ func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, reply)
 }
 
+// handleAnswerQuestion POST /api/sessions/{id}/questions/{requestId}：发起人在提问卡上提交答案
+// {answers:[{id, selected:[], custom?}]}。非发起人 403。
+func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
+	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
+	if !requireBrowserPage(w, r) {
+		return
+	}
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	var body struct {
+		Answers []session.QuestionAnswer `json:"answers"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "请求体必须是 {answers:[...]}："+err.Error()))
+		return
+	}
+	reply, err := s.sessions.AnswerQuestion(r.PathValue("id"), role, r.PathValue("requestId"), body.Answers)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
 // handleAnswerEmployeeForm POST /api/sessions/{id}/employee-forms/{requestId}：发起人在员工表单卡上答复。
 // decision=confirm 是“确认开工”（form 是人改过的表单字段，attachments 是要带进任务的会话材料，
 // skipped 是人确认跳过的可跳过清单项）；decision=reject 是“不是这个员工”。
 func (s *Server) handleAnswerEmployeeForm(w http.ResponseWriter, r *http.Request) {
+	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
+	if !requireBrowserPage(w, r) {
+		return
+	}
 	role, ok := roleOf(r)
 	if !ok {
 		writeAPIError(w, http.StatusForbidden, roleRequired)

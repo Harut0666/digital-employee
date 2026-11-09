@@ -28,6 +28,16 @@ const (
 	ToolWriteFile = "write_file"
 	// ToolEditFile 把文件里恰好出现一次的一段原文换成新文本
 	ToolEditFile = "edit_file"
+	// ToolFindFiles 按文件名找工作区目录里的文件（glob）
+	ToolFindFiles = "find_files"
+	// ToolSearchContent 按内容搜工作区目录里的文本文件（正则）
+	ToolSearchContent = "search_content"
+	// ToolTodoWrite 整表替换的待办清单：Agent 自己的计划状态
+	ToolTodoWrite = "todo_write"
+	// ToolAskUserQuestion 向发起人提结构化问题，等人选完再继续
+	ToolAskUserQuestion = "ask_user_question"
+	// ToolShell 命令行工具（Windows 上是 pwsh）：没有沙箱，见 ADR-0007 增补
+	ToolShell = "shell"
 )
 
 // ToolNames 全部工具名。

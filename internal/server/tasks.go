@@ -148,6 +148,10 @@ func (s *Server) withDownloadNames(snapshot *contract.TaskSnapshot) *contract.Ta
 }
 
 func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
+	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
+	if !requireBrowserPage(w, r) {
+		return
+	}
 	if s.engine() == nil {
 		writeJSON(w, http.StatusInternalServerError, internalError("任务引擎未就绪"))
 		return

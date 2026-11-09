@@ -522,6 +522,9 @@ func (h *harness) send(method, path string, role contract.Role, contentType stri
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}
+	// 和浏览器页面一样带同源标记（改变审核、退回、终止状态的接口要求它，见 origin.go）；
+	// 要模拟命令行 curl 的测试用 sendRaw，不带
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		h.t.Fatal(err)

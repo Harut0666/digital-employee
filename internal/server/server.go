@@ -111,6 +111,9 @@ type Server struct {
 	workspaces  workspaceRegistry
 	// pickMu 同一时刻只开一个“选择文件夹”对话框
 	pickMu sync.Mutex
+	// hosts 收到过的请求的 Host（含端口）
+	hostMu sync.Mutex
+	hosts  map[string]bool
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
@@ -138,6 +141,7 @@ func New(opts Options) *Server {
 // Handler 返回带 CORS 与 SPA fallback 的 http.Handler。
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.noteHost(r.Host)
 		setCORS(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -415,6 +419,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/sessions/{id}/model", s.sessionRoute(s.handleSelectSessionModel))
 	m.HandleFunc("PUT /api/sessions/{id}/permission-mode", s.sessionRoute(s.handleSetPermissionMode))
 	m.HandleFunc("POST /api/sessions/{id}/permissions/{requestId}", s.sessionRoute(s.handleDecidePermission))
+	m.HandleFunc("POST /api/sessions/{id}/questions/{requestId}", s.sessionRoute(s.handleAnswerQuestion))
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("GET /api/sessions/{id}/stream", s.sessionRoute(s.handleSessionStream))
 	m.HandleFunc("GET /api/sessions/{id}/activity", s.sessionRoute(s.handleSessionActivity))
@@ -510,3 +515,31 @@ func (s *Server) logf(level string, format string, args ...any) {
 }
 
 var _ = log.Println
+
+// noteHost 记下请求的 Host（含端口）：shell 命令里出现本服务地址时要加警告。
+func (s *Server) noteHost(host string) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return
+	}
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+	if s.hosts == nil {
+		s.hosts = map[string]bool{}
+	}
+	if len(s.hosts) < 32 {
+		s.hosts[host] = true
+	}
+}
+
+// localAddrs 本服务被访问过的地址（Host:Port）。
+func (s *Server) localAddrs() []string {
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+	out := make([]string, 0, len(s.hosts))
+	for host := range s.hosts {
+		out = append(out, host)
+	}
+	sort.Strings(out)
+	return out
+}

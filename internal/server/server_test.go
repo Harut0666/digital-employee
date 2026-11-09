@@ -206,6 +206,8 @@ func (s *testServer) request(t *testing.T, method, path string, body string, hea
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	// 像浏览器页面一样带同源标记（改变状态的接口要求它，见 origin.go）
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
@@ -711,6 +713,7 @@ func TestMultipartCreateAndSupplement(t *testing.T) {
 	request, _ = http.NewRequest(http.MethodPost, ts.server.URL+"/api/tasks/"+snapshot.ID+"/commands", strings.NewReader(body))
 	request.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 	request.Header.Set("x-role", "initiator")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	response, err = http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

@@ -55,7 +55,7 @@ const (
 
 // ActionLabels 动作类别的说法。
 var ActionLabels = map[string]string{
-	ActionWriteFile: "写入文件", ActionRunEmployee: "运行员工", ActionUseFolderFile: "使用目录文件",
+	ActionWriteFile: "写入文件", ActionRunEmployee: "运行员工", ActionUseFolderFile: "使用目录文件", ActionShell: "运行命令",
 }
 
 // 人对权限确认卡的答复。
@@ -106,6 +106,15 @@ func Decide(mode, action string) Verdict {
 		}
 		return VerdictAllow
 	case ActionUseFolderFile:
+		switch mode {
+		case PermissionPlan:
+			return VerdictDeny
+		case PermissionYolo:
+			return VerdictAllow
+		}
+		return VerdictAsk
+	case ActionShell:
+		// 命令行没有沙箱：只有放开模式放行，计划模式拒绝，其余每次问（见 shell.go）
 		switch mode {
 		case PermissionPlan:
 			return VerdictDeny
@@ -164,6 +173,7 @@ func permissionPrompt(mode string) string {
 	case PermissionYolo:
 		lines = append(lines, "放开模式：写、改文件不用问，目录文件自动确认；run_employee 的表单完整有效、必需的开工清单项备齐时直接开工，否则弹员工表单让发起人补。")
 	}
+	lines = append(lines, shellModeLine(mode))
 	lines = append(lines,
 		"动作被拒绝（工具结果写着“发起人拒绝”或“不能”）时，不要原样重试，换个办法或问发起人想怎么做。",
 		"不管哪个模式：写文件只限工作区目录内；不能写隐藏文件，也不能写“交付”和“材料”文件夹；单个文件最多 1 MB，只写文本。你没有审核、重试、终止任务的权力。",
@@ -178,6 +188,8 @@ type permissionWait struct {
 	id      string
 	session string
 	action  string
+	// decidedKind 答复写进会话日志时用的消息类型（权限确认、提问各一种）
+	decidedKind string
 	// decision 人的答复（容量 1：答复的一方不用等这一轮醒来）
 	decision chan string
 	// settled 已经有了结果（人答复了，或停止取消了）：只有第一个到的能写结果
@@ -237,6 +249,17 @@ func permissionButtons() []PermissionChoice {
 	}
 }
 
+// buttonsFor 这张卡上能点的按钮：shell 只有“允许一次”和“拒绝”（每条命令都可能不同，不提供“总是允许”）。
+func buttonsFor(action string) []PermissionChoice {
+	if action != ActionShell {
+		return permissionButtons()
+	}
+	return []PermissionChoice{
+		{Decision: DecisionAllowOnce, Label: "允许一次", Style: "primary"},
+		{Decision: DecisionDeny, Label: "拒绝", Style: "danger"},
+	}
+}
+
 // gate 工具执行前的同一个关口：先查始终适用的边界，再按权限模式放行、询问或拒绝。
 //
 // 返回 refusal 非空表示拒绝（原因同时是给模型的工具结果；发起人自己的拒绝带 byInitiator）；cancelled 表示等确认时被停止；err 是日志写不进去。
@@ -275,20 +298,26 @@ func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item to
 	}
 	switch Decide(mode, item.action) {
 	case VerdictDeny:
-		return &denial{reason: fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。",
+		return &denial{reason: fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。",
 			PermissionModeLabels[mode], label, suffixObject(object))}, false, nil
 	case VerdictAllow:
 		if item.selfDecide {
 			return nil, false, nil
 		}
-		return nil, false, loop.traceAllowed(call, fmt.Sprintf("%s模式：%s不用确认", PermissionModeLabels[mode], label))
+		if item.forceAsk != nil {
+			if force, _ := item.forceAsk(call.Arguments); force {
+				// 模式放行，但这次的内容太危险：改为询问
+				return loop.ask(ctx, call, item, object, detail)
+			}
+		}
+		return nil, false, loop.traceAllowed(call, item, fmt.Sprintf("%s模式：%s不用确认", PermissionModeLabels[mode], label))
 	}
 	if item.selfDecide {
 		// 工具自己问：运行员工弹员工表单卡（一定要人确认，“总是允许”不适用），使用目录文件发“使用目录文件”卡
 		return nil, false, nil
 	}
-	if current.alwaysAllowed[item.action] {
-		return nil, false, loop.traceAllowed(call, fmt.Sprintf("本会话已选择总是允许「%s」", label))
+	if current.alwaysAllowed[item.action] && !item.noAlways {
+		return nil, false, loop.traceAllowed(call, item, fmt.Sprintf("本会话已选择总是允许「%s」", label))
 	}
 	return loop.ask(ctx, call, item, object, detail)
 }
@@ -301,44 +330,61 @@ func suffixObject(object string) string {
 }
 
 // traceAllowed 免问放行也留痕：轨迹里能看到哪些动作是自动放行的。
-func (loop *turnLoop) traceAllowed(call agent.ContentBlock, reason string) error {
-	return loop.write(Message{Kind: KindPermissionAllowed, Tool: call.Name, Args: call.Arguments, Reason: reason})
+func (loop *turnLoop) traceAllowed(call agent.ContentBlock, item tool, reason string) error {
+	return loop.write(Message{Kind: KindPermissionAllowed, Tool: call.Name, Args: item.loggedArgs(call.Arguments), Reason: reason})
 }
 
 // ask 弹出权限确认卡，这一轮在这里暂停，直到人答复或点停止。
 func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item tool, object, detail string) (*denial, bool, error) {
-	if ctx.Err() != nil {
-		return nil, true, nil
-	}
-	manager := loop.job.manager
 	label := ActionLabels[item.action]
-	wait := &permissionWait{id: newRequestID(), session: loop.job.session, action: item.action, decision: make(chan string, 1)}
-	// 先登记再发卡：人看到卡片时它一定已经能答复
-	manager.registerWait(wait)
-	defer manager.dropWait(wait.id)
-
 	card := Card{
-		Type: CardPermission, RequestID: wait.id, Action: item.action, ActionLabel: label, Tool: call.Name,
-		Object: object, Detail: detail, Pending: true, Choices: permissionButtons(),
+		Type: CardPermission, Action: item.action, ActionLabel: label, Tool: call.Name,
+		Object: object, Detail: detail, Choices: buttonsFor(item.action),
 	}
 	if item.action == ActionWriteFile {
 		card.Path = object
 	}
+	if item.decorate != nil {
+		item.decorate(&card, call.Arguments)
+	}
+	decision, cancelled, err := loop.awaitHuman(ctx, kindPermissionDecided, item.action, card)
+	if err != nil || cancelled {
+		return nil, cancelled, err
+	}
+	if decision == DecisionDeny {
+		return &denial{reason: fmt.Sprintf("发起人拒绝：没有允许%s%s。请换个办法，或问问发起人想怎么做。", label, suffixObject(object)), byInitiator: true}, false, nil
+	}
+	return nil, false, nil
+}
+
+// awaitHuman 等人答复的通用一步：登记等待、发卡、暂停这一轮，直到人答复或点停止。
+// 权限确认和 ask_user_question 共用它（等待表、停止时记“已取消”、答复和停止同时到的竞争都只有这一份）。
+// 返回人的答复（提问时是答案的 JSON）；cancelled 表示被停止，动作没有执行。
+func (loop *turnLoop) awaitHuman(ctx context.Context, decidedKind, action string, card Card) (decision string, cancelled bool, err error) {
+	if ctx.Err() != nil {
+		return "", true, nil
+	}
+	manager := loop.job.manager
+	wait := &permissionWait{id: newRequestID(), session: loop.job.session, action: action, decidedKind: decidedKind, decision: make(chan string, 1)}
+	// 先登记再发卡：人看到卡片时它一定已经能答复
+	manager.registerWait(wait)
+	defer manager.dropWait(wait.id)
+
+	card.RequestID, card.Pending = wait.id, true
 	if err := loop.write(Message{Kind: KindCard, Card: &card}); err != nil {
-		return nil, false, err
+		return "", false, err
 	}
 	written := loop.turn.out[len(loop.turn.out)-1]
 
-	var decision string
 	select {
 	case decision = <-wait.decision:
 	case <-ctx.Done():
 		if manager.settleWait(wait) {
-			return nil, true, loop.write(Message{Kind: kindPermissionDecided, RequestID: wait.id, Decision: DecisionCancelled, Action: wait.action})
+			return "", true, loop.write(Message{Kind: decidedKind, RequestID: wait.id, Decision: DecisionCancelled, Action: wait.action})
 		}
 		// 人的答复恰好同时到了：它已经写进日志，但这一轮被停止，动作不执行
 		<-wait.decision
-		return nil, true, nil
+		return "", true, nil
 	}
 	// 答复是别的协程写进日志的：重读，这一轮后面的判定才看得到“总是允许”
 	if current, err := manager.load(loop.job.session); err == nil {
@@ -346,13 +392,50 @@ func (loop *turnLoop) ask(ctx context.Context, call agent.ContentBlock, item too
 	}
 	answered := written
 	copied := *written.Card
-	copied.Pending, copied.Decision, copied.Choices = false, decision, nil
+	copied.Pending, copied.Choices = false, nil
+	if decidedKind == kindPermissionDecided {
+		copied.Decision = decision
+	} else {
+		copied.Decision = DecisionAnswered
+		copied.Answers = answersRecorded(loop.turn.current, wait.id)
+	}
 	answered.Card = &copied
 	loop.bus.publish(AgentEvent{Turn: loop.job.id, Type: EventMessage, Msg: &answered})
-	if decision == DecisionDeny {
-		return &denial{reason: fmt.Sprintf("发起人拒绝：没有允许%s%s。请换个办法，或问问发起人想怎么做。", label, suffixObject(object)), byInitiator: true}, false, nil
+	return decision, false, nil
+}
+
+// answerWait 人答复一张在等的确认（权限确认、提问共用）：先抢到“结果的权利”，再写日志，最后放行那一轮。
+// message 是写进会话日志的答复，deliver 是交给等待方的内容。
+func (m *Manager) answerWait(id string, role contract.Role, requestID string, hasCard func(*record) bool, message func(*permissionWait) Message, deliver string) (*Reply, error) {
+	current, err := m.load(id)
+	if err != nil {
+		return nil, err
 	}
-	return nil, false, nil
+	if !hasCard(current) {
+		return nil, failure(contract.ErrNotFound, "没有这张确认：%s", requestID)
+	}
+	m.permMu.Lock()
+	wait := m.waits[requestID]
+	if wait == nil || wait.session != id || wait.settled {
+		m.permMu.Unlock()
+		return nil, failure(ErrPermissionSettled, "这张确认已经答复或取消了")
+	}
+	wait.settled = true
+	m.permMu.Unlock()
+
+	t, done, err := m.beginUnlocked(id, role)
+	if err != nil {
+		wait.decision <- DecisionDeny
+		return nil, err
+	}
+	defer done()
+	// 先写日志再放行：人读到的答复和这一轮接下来做的事一致
+	writeErr := t.write(message(wait))
+	wait.decision <- deliver
+	if writeErr != nil {
+		return nil, writeErr
+	}
+	return m.reply(t)
 }
 
 // DecidePermission 发起人在权限确认卡上答复。不占这一轮的写锁：这一轮正停在这张卡上等着。
@@ -365,37 +448,21 @@ func (m *Manager) DecidePermission(id string, role contract.Role, requestID, dec
 	default:
 		return nil, failure(contract.ErrInvalidInput, "答复必须是 allow_once、always_allow 或 deny，收到 %q", decision)
 	}
-	current, err := m.load(id)
-	if err != nil {
-		return nil, err
+	if decision == DecisionAlwaysAllow {
+		if current, err := m.load(id); err == nil {
+			for _, message := range current.messages {
+				if message.Card != nil && message.Card.Type == CardPermission && message.Card.RequestID == requestID && message.Card.Action == ActionShell {
+					return nil, failure(contract.ErrInvalidInput, "运行命令不提供“总是允许”：每条命令都可能不同，只能允许一次或拒绝")
+				}
+			}
+		}
 	}
-	if !hasPermissionCard(current, requestID) {
-		return nil, failure(contract.ErrNotFound, "没有这张权限确认：%s", requestID)
-	}
-	m.permMu.Lock()
-	wait := m.waits[requestID]
-	if wait == nil || wait.session != id || wait.settled {
-		m.permMu.Unlock()
-		return nil, failure(ErrPermissionSettled, "这张权限确认已经答复或取消了")
-	}
-	wait.settled = true
-	m.permMu.Unlock()
-
-	t, done, err := m.beginUnlocked(id, role)
-	if err != nil {
-		wait.decision <- DecisionDeny
-		return nil, err
-	}
-	defer done()
-	// 先写日志再放行：人读到的答复和这一轮接下来做的事一致
-	writeErr := t.write(Message{Kind: kindPermissionDecided, RequestID: requestID, Decision: decision, Action: wait.action})
-	wait.decision <- decision
-	if writeErr != nil {
-		return nil, writeErr
-	}
-	return m.reply(t)
+	return m.answerWait(id, role, requestID,
+		func(current *record) bool { return hasPermissionCard(current, requestID) },
+		func(wait *permissionWait) Message {
+			return Message{Kind: kindPermissionDecided, RequestID: requestID, Decision: decision, Action: wait.action}
+		}, decision)
 }
-
 func hasPermissionCard(current *record, requestID string) bool {
 	for _, message := range current.messages {
 		if message.Card != nil && message.Card.Type == CardPermission && message.Card.RequestID == requestID {
@@ -427,7 +494,7 @@ func (m *Manager) projectPermissions(messages []Message, current *record) []Mess
 		if decision, found := decided[copied.RequestID]; found {
 			copied.Decision = decision
 		} else if m.waiting(copied.RequestID, current.id) {
-			copied.Pending, copied.Decision, copied.Choices = true, "", permissionButtons()
+			copied.Pending, copied.Decision, copied.Choices = true, "", buttonsFor(copied.Action)
 		} else {
 			copied.Decision = DecisionCancelled
 		}

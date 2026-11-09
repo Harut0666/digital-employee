@@ -29,6 +29,8 @@ const (
 	CardPermission = "permission"
 	// CardEmployeeForm 员工表单（T49）：run_employee 弹出的结构化表单，取代“确认员工”卡、开工清单卡和提交按钮
 	CardEmployeeForm = "employee_form"
+	// CardQuestion 提问：ask_user_question 向发起人提的结构化问题，人选完提交后答案交还给 Agent
+	CardQuestion = "question"
 )
 
 // 员工确认卡片的来源。
@@ -112,6 +114,17 @@ type Card struct {
 	Baseline []string `json:"baseline,omitempty"`
 	// Checklist 这个员工的开工清单定义：卡片上随人改字段、补材料实时判定哪些已备齐、能不能确认（最终以后端为准）
 	Checklist []contract.ChecklistItem `json:"checklist,omitempty"`
+
+	// question：Questions 是提的问题；答复之后 Decision 是 answered 且 Answers 是答案，停止时 Decision 是 cancelled。
+	// RequestID、Pending 同上
+	// shell 确认卡（permission 卡的变体）：Command 是将要运行的命令（原样），Workdir 是工作目录（真实路径），
+	// Warnings 是醒目的风险提示（尽力而为，不是安全边界）；Detail 是 Agent 写的 description
+	Command  string   `json:"command,omitempty"`
+	Workdir  string   `json:"workdir,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+
+	Questions []Question       `json:"questions,omitempty"`
+	Answers   []QuestionAnswer `json:"answers,omitempty"`
 }
 
 // 员工表单上一份材料的来源。
