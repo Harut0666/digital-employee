@@ -24,26 +24,25 @@ export function AddWorkspaceModal({
   const [form, setForm] = useState<WorkspaceForm>({ name: "", path: "" });
   const [picking, setPicking] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [pickError, setPickError] = useState<string>();
 
   useEffect(() => {
     if (open) {
       setForm({ name: "", path: "" });
-      setPickError(undefined);
     }
   }, [open]);
 
   const submission = workspaceSubmission(form);
 
   const browse = async () => {
+    if (picking) return;
     setPicking(true);
-    setPickError(undefined);
     try {
       const outcome = pickFolderOutcome(await api.pickFolder());
+      // 取消时不改输入框；失败提示原因，手填路径仍可用
       if (outcome.kind === "picked") setForm((current) => applyPickedFolder(current, outcome.path));
-      else if (outcome.kind === "error") setPickError(outcome.message);
+      else if (outcome.kind === "error") message.error(outcome.message);
     } catch (e) {
-      setPickError(e instanceof Error ? e.message : "选择目录失败，请直接输入目录");
+      message.error(e instanceof Error ? e.message : "选择目录失败，请直接输入目录");
     } finally {
       setPicking(false);
     }
@@ -93,11 +92,10 @@ export function AddWorkspaceModal({
               placeholder="如 D:\项目\华东区（留空则在应用目录下新建）"
               aria-label="工作区目录"
             />
-            <Button icon={<FolderOpenOutlined />} loading={picking} onClick={() => void browse()}>
-              浏览…
+            <Button icon={<FolderOpenOutlined />} disabled={picking} onClick={() => void browse()}>
+              {picking ? "选择中…" : "浏览…"}
             </Button>
           </div>
-          {pickError && <span className="ws-field-error">{pickError}</span>}
         </div>
         <div className="ws-field">
           <span>名称</span>

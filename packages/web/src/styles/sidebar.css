@@ -459,7 +459,3 @@
   display: flex;
   gap: var(--sp-2);
 }
-.ws-field-error {
-  color: var(--tone-error);
-  font-size: var(--fs-sm);
-}

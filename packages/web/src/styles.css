@@ -1,10 +1,17 @@
 /*
  * 样式入口，按层次引入：
  *   tokens   设计 token（颜色、字号、间距、圆角、阴影、状态色，浅色 / 深色）
- *   base     重置、外框版式、焦点环、通用小件
- *   legacy   还没按新版式重排的旧规则（随重排逐步迁出）
+ *   base     重置、外框版式、焦点环、状态点 / 胶囊 / 空状态等通用小件
+ *   sidebar  左栏
+ *   chat     中栏：对话顶部、进度、步骤、消息流、输入区、欢迎页
+ *   cards    对话里的流程卡片、开工清单、工具调用
+ *   trace    轨迹详情
+ *   panel    右栏：交付物预览与审核
  */
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/sidebar.css";
-@import "./styles/legacy.css";
+@import "./styles/chat.css";
+@import "./styles/cards.css";
+@import "./styles/trace.css";
+@import "./styles/panel.css";

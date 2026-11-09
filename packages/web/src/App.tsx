@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App as AntApp, Button, ConfigProvider, Drawer, theme } from "antd";
 import { XProvider } from "@ant-design/x";
 import zhCN from "antd/locale/zh_CN";
-import { LeftOutlined } from "@ant-design/icons";
+import { ExclamationCircleOutlined, LeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import type { ApprovalPolicy, TaskCommand, TaskEventType } from "@de/core/contract";
 import { createApi, IS_MOCK, type ModelConnectionOption, type ModelRef, type PermissionMode, type SessionResult, type StepStatusView, type TaskSnapshot, type UiRole, type UploadItem } from "./api";
 import { createSettingsApi, type SettingsApi } from "./api/settings";
@@ -12,6 +12,7 @@ import { useRecords, useWorkspaceList } from "./hooks/sidebar";
 import { ApprovalPolicyProvider } from "./components/ApprovalPolicy";
 import { Sidebar, type Selection, type SidebarTab, type SidebarWorkspace } from "./components/Sidebar";
 import { AddWorkspaceModal } from "./components/AddWorkspaceModal";
+import { LoadingBlock, StateBlock } from "./components/StateBlock";
 import { NewConversation, SessionChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
@@ -336,7 +337,24 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       />
     );
   } else if (!detail) {
-    center = <div className="welcome" style={{ paddingTop: 48, color: "var(--muted)" }}>{session.error ?? "正在读取会话…"}</div>;
+    center = session.error ? (
+      <StateBlock
+        tone="error"
+        icon={<ExclamationCircleOutlined />}
+        title="读不出这个会话"
+        description={session.error}
+        actions={
+          <>
+            <Button type="primary" icon={<ReloadOutlined />} onClick={() => session.reload()}>
+              重试
+            </Button>
+            <Button onClick={() => setSelection({ kind: "new" })}>回到新对话</Button>
+          </>
+        }
+      />
+    ) : (
+      <LoadingBlock label="正在读取会话" />
+    );
   } else {
     center = (
       <SessionChat
@@ -561,7 +579,7 @@ export function App() {
   }, [queryRole, settingsApi]);
 
   if (!roleReady) {
-    return <div style={{ padding: 24, color: "#888" }}>正在读取默认角色与审批策略…</div>;
+    return <div className="boot-note" role="status">正在读取默认角色与审批策略…</div>;
   }
 
   return (

@@ -68,10 +68,10 @@ export function createWorkspaceApi(origin: string = window.location.origin, fetc
     return body as T;
   }
 
-  async function act<T>(method: "POST" | "PATCH" | "DELETE", target: string, body: Json = {}): Promise<T | WorkspaceRefusal> {
+  async function act<T>(method: "POST" | "PATCH" | "DELETE", target: string, body: Json = {}, headers: Record<string, string> = {}): Promise<T | WorkspaceRefusal> {
     const init: RequestInit = { method };
     if (method !== "DELETE") {
-      init.headers = { "content-type": "application/json" };
+      init.headers = { "content-type": "application/json", ...headers };
       init.body = JSON.stringify(body);
     }
     const res = await fetchImpl(target, init);
@@ -87,7 +87,8 @@ export function createWorkspaceApi(origin: string = window.location.origin, fetc
     rename: (id, name) => act<UpdateWorkspaceResult>("PATCH", url(`/${encodeURIComponent(id)}`), { name }),
     unregister: (id) => act<DeleteWorkspaceResult>("DELETE", url(`/${encodeURIComponent(id)}`)),
     open: (id) => act<OpenWorkspaceResult>("POST", url(`/${encodeURIComponent(id)}/open`)),
-    pickFolder: () => act<PickFolderResult>("POST", url("/pick-folder")),
+    // 选目录只有发起人能做（非发起人 403），请求头带身份；第一次弹出约要 1 秒
+    pickFolder: () => act<PickFolderResult>("POST", url("/pick-folder"), {}, { "x-role": "initiator" }),
   };
 }
 
