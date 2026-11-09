@@ -8,7 +8,6 @@
 .card {
   --accent: var(--primary);
   position: relative;
-  margin-left: 40px;
   padding: var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 2px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);

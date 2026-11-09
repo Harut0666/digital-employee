@@ -243,8 +243,7 @@ describe("deriveChat 里的权限内容", () => {
     expect(readOnly?.kind === "permission" && readOnly.canAnswer).toBe(false);
   });
 
-  test("选择权限模式：留一行说明", () => {
-    const items = deriveChat(session([msg({ kind: "permission_mode_set", mode: "accept_edits" })]));
-    expect(items.map((i) => [i.kind, "text" in i ? i.text : ""])).toEqual([["notice", "权限模式切换为「接受编辑」"]]);
+  test("选择权限模式：对话里不留说明（下拉已显示当前模式）", () => {
+    expect(deriveChat(session([msg({ kind: "permission_mode_set", mode: "accept_edits" })]))).toEqual([]);
   });
 });

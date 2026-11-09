@@ -109,9 +109,6 @@ function brief(value: unknown): string {
 function StreamingMessage({ text, running }: { text: string; running: boolean }) {
   return (
     <div className="msg-row">
-      <div className="msg-avatar" aria-hidden>
-        <RobotOutlined />
-      </div>
       <div className="msg-col">
         <div className="bubble streaming">
           {text}
@@ -128,12 +125,7 @@ function Message({ item }: { item: Extract<ChatItem, { kind: "user" | "agent" }>
   const other = me && item.role && item.role !== "initiator" ? item.role : undefined;
   return (
     <div className={`msg-row ${me ? "me" : ""}`}>
-      {/* 发起人自己的话靠右、不带头像；员工的话带头像，不套气泡框 */}
-      {!me && (
-        <div className="msg-avatar" aria-hidden>
-          <RobotOutlined />
-        </div>
-      )}
+      {/* 发起人自己的话靠右、套浅色气泡；员工的话没有头像和气泡，文字铺满内容列 */}
       <div className="msg-col">
         {other && (
           <div className="msg-who">
