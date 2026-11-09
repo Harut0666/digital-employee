@@ -84,7 +84,7 @@ type routingModelService struct {
 	held     chan struct{}
 	released chan struct{}
 	server   *httptest.Server
-	hook   func()
+	hook     func()
 }
 
 func newRoutingModelService(t *testing.T) *routingModelService {
@@ -694,4 +694,3 @@ func TestLegacyDefaultModelBecomesTheTaskModel(t *testing.T) {
 		}
 	}
 }
-

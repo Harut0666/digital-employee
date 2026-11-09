@@ -278,8 +278,8 @@ func (e *Engine) workspaceDir(workspaceID string) (string, bool) {
 // ---------------------------------------------------------------- 运行时
 
 type taskRuntime struct {
-	id   string
-	dir  string
+	id  string
+	dir string
 	// workspaceID 任务所属的工作区：建任务时写进发起事件，之后每条事件都带上
 	workspaceID string
 	config      *contract.EmployeeConfig

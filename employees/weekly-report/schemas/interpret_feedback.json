@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "退回意见解读结果",
-  "description": "把审核人的退回意见拆成逐条意见，指明每条要改的章节。没有退回意见（首次执行）时提交空清单。是否需要进入待人工处理在顶层判断。",
+  "description": "把审核人的退回意见拆成逐条意见，指明每条要改的章节。没有退回意见（首次执行）时提交空清单。是否需要回到待审核在顶层判断。",
   "type": "object",
   "additionalProperties": false,
   "required": ["items", "needsHuman"],
@@ -32,12 +32,12 @@
     },
     "needsHuman": {
       "type": "boolean",
-      "description": "任何一条意见要求更换计算口径，或与《周报格式要求》冲突、无法照办时为 true，任务进入待人工处理；否则为 false。"
+      "description": "任何一条意见要求更换计算口径，或与《周报格式要求》冲突、无法照办时为 true：超范围意见回到待审核，原交付物和版本保持不变；否则为 false。"
     },
     "needsHumanReason": {
       "type": "string",
       "minLength": 1,
-      "description": "needsHuman 为 true 时必填：哪条意见、为什么无法自动处理，写给操作员看。"
+      "description": "needsHuman 为 true 时必填：哪条意见、为什么不能自动处理，给审核人看。"
     }
   }
 }

@@ -95,10 +95,10 @@ type EventUsage struct {
 
 // 事件类型常量（前端 EVENT_TYPE_SET 里逐条订阅，名字必须一致）。
 const (
-	EventTaskCreated        = "task_created"
+	EventTaskCreated = "task_created"
 	// EventModelSwitched 运行中换了模型：从下一个判断步骤开始生效（Spec 0006“会话模型”）
-	EventModelSwitched = "model_switched"
-	EventFormUpdated   = "form_updated"
+	EventModelSwitched      = "model_switched"
+	EventFormUpdated        = "form_updated"
 	EventStateChanged       = "state_changed"
 	EventTransitionRejected = "transition_rejected"
 	EventStepStarted        = "step_started"

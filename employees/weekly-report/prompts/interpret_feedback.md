@@ -27,15 +27,15 @@
      - `calculation_basis`：要求更换计算口径，如“毛利按含税算”“实收不扣折扣”“把停业日算进去”；
      - `unclear`：无法判断想要什么；
    - `action`：打算怎么改，一句话，不写数字。
-3. **是否进入待人工处理**写在顶层，不写在条目里：
-   - `needsHuman`：只要有一条是 `calculation_basis`，或有一条与《周报格式要求》冲突（如要求写同比、客单价，或要求超出 3 页）而无法照办，就为 `true`；否则为 `false`；
-   - `needsHumanReason`：`needsHuman` 为 `true` 时必填，一句话说明是哪条意见、为什么无法自动处理，给操作员看；`needsHuman` 为 `false` 时省略。
+3. **超范围意见回到待审核**写在顶层，不写在条目里：
+   - `needsHuman`：只要有一条是 `calculation_basis`，或有一条与《周报格式要求》冲突（如要求写同比、客单价，或要求超出 3 页）而无法照办，就为 `true`：这条意见超出自动处理范围，任务回到待审核，原交付物和版本保持不变；否则为 `false`；
+   - `needsHumanReason`：`needsHuman` 为 `true` 时必填，一句话说明是哪条意见、为什么不能自动处理，给审核人看；`needsHuman` 为 `false` 时省略。
 
 ## 注意
 
-- 事实和计算口径由程序决定，意见要求换口径的，不要设法用叙述绕过，如实标 `calculation_basis`，并把顶层 `needsHuman` 置为 `true`。
+- 事实和计算口径由程序决定，意见要求换口径的，不要设法用叙述绕过，如实标 `calculation_basis`，并把顶层 `needsHuman` 置为 `true`，让任务回到待审核。
 - 不要判断意见是否合理，也不要替审核人补充意见。
 
 ## 输出
 
-调用 `submit_result` 提交一个 JSON 对象，含 `items`、`needsHuman`，需要进入待人工处理时再加 `needsHumanReason`，结构符合本步骤的输出 Schema。
+调用 `submit_result` 提交一个 JSON 对象，含 `items`、`needsHuman`，需要让任务回到待审核时再加 `needsHumanReason`，结构符合本步骤的输出 Schema。

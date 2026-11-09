@@ -119,12 +119,11 @@ func newTurnLoop(job *turnJob) *turnLoop {
 // run 跑这一轮，直到说完、停止或出错。
 func (loop *turnLoop) run(ctx context.Context) (turnOutcome, error) {
 	deps := loop.job.manager
-	// 整轮占住写锁：期间人的操作被拒绝（见 begin），这一轮自己写日志是重入，不受影响
+	// 整轮占住写锁（包括中间的模型调用）：期间人的操作被拒绝（见 begin，返回 session_busy），
+	// 发消息不受影响（走 beginUnlocked 排成插话）；这一轮自己写日志是重入，不受影响。
 	lock := deps.lockOf(loop.job.session)
 	lock.Lock(background)
 	defer lock.Unlock(background)
-	// 写锁与模型调用不重叠：调模型之前放掉，工具执行前后各占一次（见 lockForWrite），
-	// 人的操作（确认员工、提交）就不会被排在模型后面白等。
 	current, err := deps.load(loop.job.session)
 	if err != nil {
 		return turnOutcome{mode: turnErrored, reason: TurnError}, err
@@ -161,7 +160,7 @@ func (loop *turnLoop) interjections() []agent.Message {
 		if message.Kind == KindUser && !job.delivered[message.Seq] {
 			job.delivered[message.Seq] = true
 			messages = append(messages, textMessage("user", message.Text))
-		
+
 		}
 	}
 
@@ -172,6 +171,7 @@ func (loop *turnLoop) interjections() []agent.Message {
 	job.included = job.steer
 	return messages
 }
+
 // write 写进会话日志并推送；一轮里的消息都带着轮次编号。
 func (loop *turnLoop) write(message Message) error {
 	// 不属于某一轮的一次性调用（比如起草入库描述）只落日志：没有轮次、没有订阅者，也就没有额外的话要说
@@ -197,6 +197,7 @@ func (loop *turnLoop) write(message Message) error {
 	}
 	return nil
 }
+
 // appendDelta 在写锁里把一段文字增量并进这一轮的那一条（单独更新一行，不经过 write）。
 func (loop *turnLoop) appendDelta(text string) error {
 	t := loop.turn
@@ -310,7 +311,7 @@ func (loop *turnLoop) converse(ctx context.Context, system string, conversation 
 	// 这一轮开始时排着的插话（比如接手后的“据此填表”）在第一步之前送达。
 	// 不属于某一轮的一次性调用（比如起草入库描述）没有插话。
 	if loop.job != nil {
-	
+
 		current, loadErr := loop.job.manager.load(loop.job.session)
 		if loadErr != nil {
 			return "", TurnError, loadErr
@@ -354,7 +355,6 @@ func (loop *turnLoop) converse(ctx context.Context, system string, conversation 
 				calls = append(calls, block)
 			}
 		}
-
 
 		if len(calls) == 0 {
 			return strings.TrimSpace(text.String()), TurnCompleted, nil
@@ -416,14 +416,12 @@ func (loop *turnLoop) call(open map[string]tool, call agent.ContentBlock) (agent
 		loop.bus.publish(event)
 	}
 
-
 	publish(AgentEvent{Type: EventToolStart})
 	loop.bus.toolStarted(AgentTool{ID: call.ID, Tool: call.Name, Args: call.Arguments})
 	end := func(result any, reason string, isErr bool) {
 		loop.bus.toolEnded(call.ID, result, reason, isErr)
 		publish(AgentEvent{Type: EventToolEnd, Result: result, Reason: reason, IsErr: isErr})
 	}
-
 
 	item, ok := open[call.Name]
 	if !ok {
@@ -445,9 +443,7 @@ func (loop *turnLoop) call(open map[string]tool, call agent.ContentBlock) (agent
 		writeErr error
 	)
 
-
 	result, runErr = item.run(call.Arguments)
-
 
 	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
 	switch {
@@ -719,10 +715,7 @@ func (loop *turnLoop) assist(ctx context.Context) turnOutcome {
 		}
 	}
 
-
 	// 填过表单草稿：再给出表单卡片，人接着在卡片上操作。字段照着最新状态取（草稿要看得见）
-
-
 
 	if t.drafted {
 		if current, loadErr := loop.job.manager.load(loop.job.session); loadErr == nil {
@@ -744,4 +737,3 @@ func (t *turn) formCard() Card {
 		Attachments: append([]Attachment{}, t.current.attachments...),
 	}
 }
-

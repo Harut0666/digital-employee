@@ -83,12 +83,12 @@ type bus struct {
 	// current 正在跑的那一轮的编号（0 表示没有）
 	current int64
 	// ended 最近结束的轮次和原因，job 用完就清掉
-	ended  map[int64]string
+	ended map[int64]string
 	// textTurn 正在累积文字增量的轮次；text 这一轮已经说出的部分
 	textTurn int64
 	text     strings.Builder
-	tools  []*AgentTool
-	cards  []Message
+	tools    []*AgentTool
+	cards    []Message
 }
 
 func newBus() *bus {
@@ -121,9 +121,12 @@ func (b *bus) subscribe() (*listener, func()) {
 }
 
 // drain 取走排队的事件，并告诉订阅者队列空了。
-func (sub *listener) drain() []AgentEvent {
-	sub.queue = append([]AgentEvent{}, sub.queue...)
-	out := sub.queue
+//
+// 必须由 bus 持锁：推送方在 b.mu 里往队列里放事件，否则读写队列会撞车。
+func (b *bus) drain(sub *listener) []AgentEvent {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := append([]AgentEvent{}, sub.queue...)
 	sub.queue = nil
 	select {
 	case <-sub.notify:

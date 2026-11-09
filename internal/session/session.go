@@ -102,6 +102,9 @@ type Manager struct {
 	// jobs 每个会话正在跑的那一轮；buses 每个会话的事件订阅
 	jobs  map[string]*turnJob
 	buses map[string]*bus
+	// humanLocks 每个会话的人的操作锁：同一会话上两个人同时点确认、提交时按顺序处理。
+	// 前台 Agent 的一轮用另一把写锁（sessionLock），人的操作与它互斥；这把锁只挡人跟人。
+	humanLocks map[string]*sync.Mutex
 	// turnSeq 每个会话已经开到第几轮
 	turnSeq map[string]int64
 	// sessions 中间隔多久看一次新会话日志目录
@@ -128,7 +131,8 @@ func New(deps Deps) *Manager {
 	return &Manager{
 		deps: deps, store: newStore(deps.Dir, deps.Now),
 		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
-		scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour),
+		humanLocks: map[string]*sync.Mutex{},
+		scanEvery:  time.Second, scannedAt: deps.Now().Add(-time.Hour),
 	}
 }
 
@@ -258,9 +262,10 @@ type Reply struct {
 }
 
 // begin 占住会话的写锁：Agent 正在回复时人的操作会被拒绝，避免两边同时改草稿。
-// 确认员工、提交、上传材料和给清单项打勾都是人的操作，模型调用不占这把锁。
+// 确认员工、提交、上传材料和给清单项打勾都是人的操作；发消息例外（它走 beginUnlocked，
+// 把话排成插话送进正在跑的那一轮）。
 //
-// 写锁不可重入：这一轮的循环（turnLoop）自己已经拿着它，写日志时用无锁的 beginUnlocked。
+// 写锁可重入（见 sessionLock）：这一轮的循环（turnLoop）自己已经拿着它，写日志时再进来一层。
 func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
 	return m.beginLocked(id, role, false)
 }
@@ -282,8 +287,16 @@ func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*tu
 		}
 		return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, func() {}, nil
 	}
-	// 写锁被别人拿着：前台 Agent 正在这一轮里干活，人的操作（确认员工、提交、给清单项打勾）要等它说完
+	// 同一会话上两个人同时操作时只有第一个人进去，第二个人立刻收到 session_busy：
+	// 两个人同时点确认、提交会读到同一份旧状态、各写一遍
+	human := m.humanLock(id)
+	if !human.TryLock() {
+		_ = m.store.note(id, busyText)
+		return nil, nil, failure(ErrSessionBusy, "上一条消息还在处理，请稍候")
+	}
+	// 写锁被前台 Agent 拿着：它正在这一轮里干活，人的操作（确认员工、提交、给清单项打勾）要等它说完
 	if !lock.TryLock(0) {
+		human.Unlock()
 		// 回一条说明留痕，打开会话时能看到；不改变状态，也不用模型
 		_ = m.store.note(id, busyText)
 		return nil, nil, failure(ErrSessionBusy, "上一条消息还在处理，请稍候")
@@ -292,9 +305,13 @@ func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*tu
 	current, err := m.load(id)
 	if err != nil {
 		lock.Unlock(0)
+		human.Unlock()
 		return nil, nil, err
 	}
-	return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, func() { lock.Unlock(0) }, nil
+	return &turn{manager: m, current: current, role: role, tasks: m.deps.Engine}, func() {
+		lock.Unlock(0)
+		human.Unlock()
+	}, nil
 }
 func (m *Manager) reply(t *turn) (*Reply, error) {
 	messages := visibleMessages(t.out)
@@ -343,14 +360,14 @@ func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Repl
 	}
 	t, done, err := m.begin(id, role)
 	if err != nil {
-	
 		return nil, err
 	}
+	// 只放一次锁：确认员工可能写两张消息、再登记下一轮，各分支都走 defer 释放（T44 修双释放）
+	defer done()
 	err = m.confirmLocked(t, employee)
 
 	if err != nil {
 		if _, ok := err.(*handoverPending); !ok {
-			done()
 			return nil, err
 		}
 		// 写锁还拿着就把填表那轮登记上：从这一刻起它就算在跑，紧接着发来的消息按插话送进这一轮。
@@ -360,12 +377,10 @@ func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Repl
 		if err == nil {
 			noteSteer(job)
 		}
-		done()
 		if err != nil {
 			return nil, err
 		}
 	}
-	done()
 	return m.reply(t)
 }
 

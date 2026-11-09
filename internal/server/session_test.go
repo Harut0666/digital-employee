@@ -112,15 +112,10 @@ func (h *harness) confirmed(sessionID string, employee string) said {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-
 	detail := h.readSession(sessionID)
 
 	return said{Messages: detail.Messages, Session: detail.View}
 }
-
-
-
-
 
 // frontdeskScript 前台 Agent 的剧本。
 func frontdeskScript(turns ...agent.ScriptedTurn) agent.ModelScript {
@@ -312,7 +307,6 @@ func TestModelUnavailableStillLetsThePersonPickAnEmployee(t *testing.T) {
 			}
 
 			h.confirmed(created.ID, card.Candidates[0].ID)
-
 
 			// 人还没说话时没有填表那一轮：空白表单由界面照着会话现状给出，不另写一条
 			got := h.readSession(created.ID)
@@ -1098,7 +1092,7 @@ func TestTornLastLogLineIsDropped(t *testing.T) {
 func TestMessageWhileReplyingIsDeliveredBeforeTheNextStep(t *testing.T) {
 	delay := 300
 	answer := modelSays("好的。")
-	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: &delay, Then: &answer}), withScriptedModel())
+	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: &delay, Then: &answer}), withScriptedModel(), withSerial())
 	created := h.createSession()
 	h.confirmed(created.ID, harnessEmployee)
 
@@ -1224,12 +1218,8 @@ func TestRealConnectionGetsSystemPromptAndOneToolMessagePerCall(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel(), withRealFrontdeskRoute(fake.URL, "local-test-key"))
 	opened, _ := pausedSession(h)
 
-
 	h.sayTurn(opened.ID, contract.RoleInitiator, "到哪步了")
 	reply := h.saidAfter(opened.ID)
-
-
-
 
 	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "还在等材料。" {
 		t.Fatalf("回复 = %q", got)

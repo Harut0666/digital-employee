@@ -89,19 +89,20 @@ func (m *Manager) Send(id string, role contract.Role, text string) (*Accepted, e
 	return &Accepted{OK: true, Turn: job.id}, nil
 }
 
-
 // noteSteer 记下一条插话。循环结束时还没送进模型的插话（停止之后）会紧接着开一轮。
 func noteSteer(job *turnJob) {
 	job.mu.Lock()
 	job.steer++
 	job.mu.Unlock()
 }
+
 // turnOf 会话当前这一轮；没有就开新一轮。
 func (m *Manager) turnOf(id string) (*turnJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.startTurnLocked(id)
 }
+
 // Stop 中断这一轮。没有在回复时什么也不做，返回 stopped=false。
 func (m *Manager) Stop(id string) (*StopResult, error) {
 	if _, err := m.load(id); err != nil {
@@ -150,10 +151,11 @@ func (m *Manager) Subscribe(id string, notify func([]AgentEvent)) (func(), error
 	sub, cancel := m.bus(id).subscribe()
 	stop := make(chan struct{})
 	go func() {
+		b := m.bus(id)
 		for {
 			select {
 			case <-sub.notify:
-				if events := sub.drain(); len(events) > 0 {
+				if events := b.drain(sub); len(events) > 0 {
 					notify(events)
 				}
 			case <-stop:
@@ -205,8 +207,6 @@ func (m *Manager) startTurnLocked(id string) (*turnJob, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &turnJob{manager: m, session: id, id: m.turnSeq[id], cancel: cancel, floor: last, delivered: map[int64]bool{}}
 
-
-
 	m.jobs[id] = job
 	b := m.busLocked(id)
 	b.started(job.id)
@@ -226,7 +226,6 @@ func (m *Manager) runTurn(ctx context.Context, job *turnJob, b *bus) {
 	pending := job.steer > job.included
 	job.mu.Unlock()
 
-
 	reason := outcome.reason
 	if ctx.Err() != nil {
 		reason = TurnStopped
@@ -245,6 +244,7 @@ func (m *Manager) runTurn(ctx context.Context, job *turnJob, b *bus) {
 	}
 	b.finished(job.id, reason)
 }
+
 // turnOutcome 一轮的结局。
 type turnOutcome struct {
 	mode   int
@@ -286,6 +286,18 @@ func (m *Manager) writeUser(id string, role contract.Role, text string) (Message
 // lockOf 一个会话的写锁。
 func (m *Manager) lockOf(id string) *sessionLock {
 	return m.store.lockOf(id)
+}
+
+// humanLock 一个会话上人的操作的互斥锁：两个人同时点确认、提交时只有一个人进去。
+func (m *Manager) humanLock(id string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lock := m.humanLocks[id]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.humanLocks[id] = lock
+	}
+	return lock
 }
 
 // lastTurn 日志里上一轮的编号（进程重启后接着往下编）。

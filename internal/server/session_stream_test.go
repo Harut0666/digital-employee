@@ -39,10 +39,10 @@ type agentEvent struct {
 type agentStream struct {
 	t       *testing.T
 	session string
-	events chan agentEvent
-	mu     sync.Mutex
-	seen   []agentEvent
-	done   chan struct{}
+	events  chan agentEvent
+	mu      sync.Mutex
+	seen    []agentEvent
+	done    chan struct{}
 	// started 读的协程已经开始收事件
 	started chan struct{}
 	cancel  func()
@@ -78,7 +78,7 @@ func (h *harness) openStream(id string) *agentStream {
 		t: h.t, session: id, events: make(chan agentEvent, 256), done: make(chan struct{}),
 		// 订阅之后服务端才开始补发和推送：读的协程起来之前事件先攒在这里，一条都不丢
 		started: make(chan struct{}),
-		cancel: func() { cancel(); response.Body.Close() },
+		cancel:  func() { cancel(); response.Body.Close() },
 	}
 	go func() {
 		defer close(stream.done)
@@ -198,6 +198,7 @@ func (h *harness) waitTurn(stream *agentStream, turn int64) []agentEvent {
 		time.Sleep(2 * time.Millisecond)
 	}
 }
+
 // ended 编号为 turn 的这一轮是否已经有结束事件。
 func (s *agentStream) ended(turn int64) bool {
 	s.mu.Lock()
@@ -209,6 +210,7 @@ func (s *agentStream) ended(turn int64) bool {
 	}
 	return false
 }
+
 // sessionBusy 这个会话现在有没有一轮在跑。
 func (h *harness) sessionBusy(id string) bool {
 	h.t.Helper()
@@ -515,7 +517,7 @@ func TestStopRequiresARunningTurn(t *testing.T) {
 }
 
 func TestBusySessionRefusesOtherWrites(t *testing.T) {
-	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: intPtr(200), Then: &agent.ScriptedTurn{Text: stringPointer("好的。")}}))
+	h := newHarness(t, frontdeskScript(agent.ScriptedTurn{DelayMS: intPtr(200), Then: &agent.ScriptedTurn{Text: stringPointer("好的。")}}), withSerial())
 	created := h.createSession()
 	stream := h.openStream(created.ID)
 	defer stream.close()

@@ -16,7 +16,6 @@ import (
 	"digital-employee/internal/settings"
 )
 
-
 // settingsEntry 让前端带人去设置页的入口。
 type settingsEntry struct {
 	Section string `json:"section"`

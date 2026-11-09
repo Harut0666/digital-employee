@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
@@ -75,8 +76,8 @@ func a01Files(t *testing.T) []upload {
 type harnessConfig struct {
 	workflowEdits [][2]string
 	// system 默认模型连接：引擎（任务步骤、判断步骤）走它；不给就用剧本模型
-	system *contract.ModelConnection
-	connection    *contract.ModelConnection
+	system     *contract.ModelConnection
+	connection *contract.ModelConnection
 	// connections 多个连接（会话模型要在它们之间选）；与 connection 二选一
 	connections []contract.ModelConnection
 	// scriptedModel 剧本模式下也配一条能通过提交前检查的连接（只在主人设里用）
@@ -90,6 +91,16 @@ type harnessConfig struct {
 	extraEmployees []string
 	// appMode 应用目录模式：工作区是单独一个目录，应用目录在应用目录下的 app/
 	appMode bool
+	// serial 这个测试对时序敏感（模型调用中途插话、停止等），不和别的测试并行跑
+	serial bool
+}
+
+// withSerial 对时序敏感的测试用：不调用 t.Parallel，留在顺序阶段跑。
+//
+// 这些测试在几百毫秒的窗口里断言“回复还没结束”，和别的测试抢 CPU 时窗口可能已经过去，
+// 会变成偶发失败；其余主接缝测试互相独立（各自的临时工作区、临时应用目录、随机端口），可以并行。
+func withSerial() harnessOption {
+	return func(config *harnessConfig) { config.serial = true }
 }
 
 // withAppMode 应用目录模式：工作区目录只是工作区（设置、员工、会话和任务都在应用目录里），
@@ -207,7 +218,8 @@ func (h *harness) appDirs() string {
 
 // newHarness 组装真实引擎、真实工具和剧本模型，员工配置是临时工作区里的副本。
 //
-// 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。
+// 测试因此并行运行，一个测试只能调一次（t.Parallel 不能重复调用）。每个装置有自己的临时工作区、
+// 应用目录和随机端口，互不共享；时序敏感的测试用 withSerial() 留在顺序阶段。
 func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption) *harness {
 	t.Helper()
 	config := harnessConfig{
@@ -216,6 +228,9 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	}
 	for _, option := range options {
 		option(&config)
+	}
+	if !config.serial {
+		t.Parallel()
 	}
 
 	workspace := t.TempDir()
@@ -313,6 +328,10 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 	if err != nil {
 		t.Fatalf("创建引擎失败：%v", err)
 	}
+	// 收尾前等任务停稳（T44）：测试结束得太早、drive 协程还在往事件日志里写时，
+	// t.TempDir 的清理在 Windows 上会删不掉目录（“文件正被另一个进程使用”），表现为偶发失败。
+	// 清理是后进先出：这条在 t.TempDir 之后登记，所以先于临时目录清理执行。
+	t.Cleanup(func() { waitTasksSettled(t, eng) })
 	h := &harness{
 		t: t, engine: eng, provider: provider, model: model, scripted: config.connection == nil && len(config.connections) == 0, env: env,
 		registry: registry, faults: faults, workspace: workspace, employees: employees,
@@ -330,6 +349,31 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 
 // appWorkspaceID 应用目录模式里的工作区 ID。
 const appWorkspaceID = "ws-app"
+
+// waitTasksSettled 等这个装置里还在执行的任务停下来，最多等几秒。
+//
+// 正常测试结束时任务早就暂停或结束了，这里几乎不花时间；有测试故意让任务卡在模型调用里时
+// 只等一小会就放弃（不把收尾变成失败），免得把测试卡死。
+func waitTasksSettled(t *testing.T, eng *engine.Engine) {
+	t.Helper()
+	for _, summary := range eng.List() {
+		switch summary.State {
+		case contract.StateAdmission, contract.StateRunning, contract.StateQC:
+		default:
+			continue
+		}
+		settled := make(chan struct{})
+		go func(id string) {
+			_, _ = eng.WaitForSettled(id)
+			close(settled)
+		}(summary.ID)
+		select {
+		case <-settled:
+		case <-time.After(5 * time.Second):
+			t.Logf("收尾时任务 %s 仍在执行（%s），不等它停稳", summary.ID, summary.State)
+		}
+	}
+}
 
 // serve 在同一个工作区上起一个服务端，返回地址。再调一次就是“重启后”的服务端。
 func (h *harness) serve() string {

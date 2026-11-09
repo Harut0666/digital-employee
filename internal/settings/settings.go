@@ -662,20 +662,20 @@ type ConnectionView struct {
 
 // AppView GET /api/settings/app 的响应（v2 文档视图）。
 type AppView struct {
-	OK                bool                         `json:"ok"`
-	Version           int                          `json:"version"`
-	Revision          int                          `json:"revision"`
-	UI                contract.UiSettings          `json:"ui"`
-	Execution         contract.ExecutionSettings   `json:"execution"`
-	Diagnostics       contract.DiagnosticsSettings `json:"diagnostics"`
-	Permissions       contract.PermissionSettings  `json:"permissions"`
-	Connections []ConnectionView `json:"connections"`
+	OK          bool                         `json:"ok"`
+	Version     int                          `json:"version"`
+	Revision    int                          `json:"revision"`
+	UI          contract.UiSettings          `json:"ui"`
+	Execution   contract.ExecutionSettings   `json:"execution"`
+	Diagnostics contract.DiagnosticsSettings `json:"diagnostics"`
+	Permissions contract.PermissionSettings  `json:"permissions"`
+	Connections []ConnectionView             `json:"connections"`
 	// LastModel 最近一次在会话里选的模型；nil 表示还没选过
-	LastModel       *contract.ModelRef `json:"lastModel"`
-	DefaultEmployee string             `json:"defaultEmployee"`
-	Demo              contract.DemoSettings        `json:"demo"`
-	Extra             map[string]any               `json:"extra"`
-	EnvOverride       bool                         `json:"envOverride"`
+	LastModel       *contract.ModelRef    `json:"lastModel"`
+	DefaultEmployee string                `json:"defaultEmployee"`
+	Demo            contract.DemoSettings `json:"demo"`
+	Extra           map[string]any        `json:"extra"`
+	EnvOverride     bool                  `json:"envOverride"`
 }
 
 func effectiveKey(conn contract.ModelConnection, env Env) (key, source string) {

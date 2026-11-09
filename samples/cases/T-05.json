@@ -1,0 +1,61 @@
+{
+  "id": "T-05",
+  "title": "终止（等待补充材料）：材料有问题，发起人决定终止 → 已终止",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "attachments": [
+    {
+      "name": "销售明细.xlsx",
+      "path": "../scenario-a/销售明细.xlsx"
+    },
+    {
+      "name": "周会纪要_2026W44.docx",
+      "path": "assets/周会纪要-损坏.docx"
+    }
+  ],
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "submit"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "minutes_week_mismatch"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "continue_without_minutes"
+      },
+      "expect": {
+        "state": "awaiting_initiator",
+        "pauseCode": "material_issue"
+      }
+    },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "terminate"
+      },
+      "expect": {
+        "state": "terminated"
+      }
+    }
+  ],
+  "expect": {
+    "state": "terminated",
+    "checks": {
+      "pause": {
+        "code": "material_issue",
+        "messageContains": "周会纪要"
+      }
+    }
+  }
+}

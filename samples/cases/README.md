@@ -176,6 +176,22 @@
 
 三类**进程级**流程（工具故障后重试、模型调用超限、崩溃后断点恢复）无法用用例文件表达（要注入故障或重启进程），由 `packages/cli/test/e2e/weekly-report.e2e.test.ts` 覆盖；`S-22`/`S-24` 覆盖可在进程内表达的“越权拦截、非法流转、转人工、终止”。
 
+### 新增用例（`T-xx`，T35 遗留项）
+
+T35 要求 `run-cases` 也能验证 0005 新增的三类流转和三种终止，用例文件在 `T-01`～`T-06`（合计 36 条：A 系列 6 + S 系列 24 + T 系列 6）。
+
+| 用例 | 覆盖点 | 终止状态 |
+|---|---|---|
+| `T-01` | 判断步骤模型调用失败 → 工具故障暂停，**发起人重试**（审核人重试被拒）→ 从失败步骤继续 → 交付 | `delivered` |
+| `T-02` | **执行中材料问题**：损坏的纪要在解析步骤读不出来 → `material_issue` 转待发起人补充 → 补传正确纪要后继续 → 交付 | `delivered` |
+| `T-03` | **超范围意见**：退回要求换计算口径 → 模型判 `needsHuman` → 回到待审核（`rework_needs_human`，原交付物保留）→ 通过 → 交付 | `delivered` |
+| `T-04` | **终止（草稿）**：发起人放弃还没提交的草稿 | `terminated` |
+| `T-05` | **终止（等待补充材料）**：执行中发现材料问题，发起人决定终止 | `terminated` |
+| `T-06` | **终止（待审核）**：审核人终止不该继续的任务 | `terminated` |
+
+- `T-02`/`T-05` 用到的损坏纪要放在 `samples/cases/assets/周会纪要-损坏.docx`：它只是改了扩展名的文本文件，准入按文件名认成“周次不符”，选“无纪要继续”后在解析步骤才读不出来，用来触发执行中的材料问题。它不是 `samples/fixtures/` 的变异数据，不受夹具生成器管理。
+- `T-03` 的剧本里 `interpret_feedback` 提交 `needsHuman: true` + `calculation_basis`，对应超范围意见；对应的判定要点用 `checks.pause.code = rework_needs_human` 核对。
+
 ## 本目录的用例
 
 | 文件 | 类型 | 要点 | `checks` |
@@ -216,4 +232,4 @@ bun packages/cli/src/main.ts check out/A-01 samples/cases/A-01.json
 bun packages/cli/src/main.ts run-cases "samples/cases/*.json" --scripted --out out/self-test
 ```
 
-全量跑（A-0x + S-xx 共 30 条）的结果存档在 [docs/results/self-test-scripted.md](../../docs/results/self-test-scripted.md)。
+全量跑（A-0x + S-xx + T-xx 共 36 条）的结果存档在 [docs/results/self-test-scripted.md](../../docs/results/self-test-scripted.md)。

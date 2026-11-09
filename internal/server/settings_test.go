@@ -38,7 +38,7 @@ func TestProcessEnvironmentKeyIsVisibleWithoutInjectedEnv(t *testing.T) {
 		EmployeesDir: filepath.Join("..", "..", "employees"),
 		// 进程环境在启动时读一次（服务端不存 Env，按需读进程环境）：这里就是生产路径。
 		// 测试里不连真实的模型服务（沙箱可能带真实的 DEEPSEEK_API_KEY）
-		Env: map[string]string{"DE_MODEL_SERVICE_ENABLED": "0"},
+		Env:    map[string]string{"DE_MODEL_SERVICE_ENABLED": "0"},
 		Logger: NewLogger(LevelError, func(string, string) {}),
 	})
 	ts := httptest.NewServer(srv.Handler())

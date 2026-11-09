@@ -1,0 +1,25 @@
+{
+  "id": "T-04",
+  "title": "终止（草稿）：发起人放弃还没提交的草稿 → 已终止",
+  "employee": "weekly-report",
+  "form": {
+    "period": {
+      "year": 2026,
+      "week": 44
+    }
+  },
+  "steps": [
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "terminate"
+      },
+      "expect": {
+        "state": "terminated"
+      }
+    }
+  ],
+  "expect": {
+    "state": "terminated"
+  }
+}

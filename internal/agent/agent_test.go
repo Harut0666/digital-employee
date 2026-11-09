@@ -133,6 +133,7 @@ func runInput(script agent.ModelScript) agent.JudgmentInput {
 // ---------------------------------------------------------------- 剧本式模型
 
 func TestScriptedProviderConsumesTurnsInOrder(t *testing.T) {
+	t.Parallel()
 	script := agent.ModelScript{"step": {textTurn("一"), textTurn("二")}}
 	provider := agent.NewScriptedModelProvider(script, agent.ScriptedProviderOptions{})
 	resolved, err := provider.Resolve("step", &contract.ModelRef{Connection: "default", Model: "default"})
@@ -162,6 +163,7 @@ func TestScriptedProviderConsumesTurnsInOrder(t *testing.T) {
 }
 
 func TestScriptedProviderToolCalls(t *testing.T) {
+	t.Parallel()
 	script := agent.ModelScript{"step": {toolTurn(
 		agent.ScriptedToolCall{Name: agent.SubmitToolName, Arguments: map[string]any{"a": float64(1)}},
 		agent.ScriptedToolCall{Name: contract.ToolValidateSubmission, Arguments: map[string]any{}},
@@ -192,6 +194,7 @@ func TestScriptedProviderToolCalls(t *testing.T) {
 }
 
 func TestScriptedProviderDelayRespectsContext(t *testing.T) {
+	t.Parallel()
 	delay := 5000
 	then := textTurn("完成")
 	script := agent.ModelScript{"step": {agent.ScriptedTurn{DelayMS: &delay, Then: &then}}}
@@ -215,6 +218,7 @@ func TestScriptedProviderDelayRespectsContext(t *testing.T) {
 // ---------------------------------------------------------------- 执行器
 
 func TestRunnerSubmitsValidResult(t *testing.T) {
+	t.Parallel()
 	input := runInput(agent.ModelScript{"match_causes": {submitTurn(validSubmission())}})
 	var modelCalls []agent.ModelCalledEvent
 	input.OnModelCalled = func(event agent.ModelCalledEvent) error {
@@ -246,6 +250,7 @@ func TestRunnerSubmitsValidResult(t *testing.T) {
 
 // 有人看增量时判断步骤改走流式：每片文字都交出去（不落盘），落盘的仍是完整的一次调用。
 func TestRunnerEmitsModelDeltas(t *testing.T) {
+	t.Parallel()
 	text := "先匹配原因"
 	turn := agent.ScriptedTurn{
 		Text:      &text,
@@ -286,6 +291,7 @@ func TestRunnerEmitsModelDeltas(t *testing.T) {
 }
 
 func TestRunnerRejectsInvalidOutput(t *testing.T) {
+	t.Parallel()
 	input := runInput(agent.ModelScript{"match_causes": {submitTurn(map[string]any{"causes": []any{}})}})
 	result, err := newRunner().Run(input)
 	if err != nil {
@@ -300,6 +306,7 @@ func TestRunnerRejectsInvalidOutput(t *testing.T) {
 }
 
 func TestRunnerNoSubmission(t *testing.T) {
+	t.Parallel()
 	// 模型只说话不提交：轮次用尽
 	input := runInput(agent.ModelScript{"match_causes": {textTurn("我拒绝提交")}})
 	rounds := 1
@@ -324,6 +331,7 @@ func TestRunnerNoSubmission(t *testing.T) {
 }
 
 func TestRunnerModelError(t *testing.T) {
+	t.Parallel()
 	message := "连接超时"
 	input := runInput(agent.ModelScript{"match_causes": {agent.ScriptedTurn{Error: &message}}})
 	result, err := newRunner().Run(input)
@@ -336,6 +344,7 @@ func TestRunnerModelError(t *testing.T) {
 }
 
 func TestRunnerDeniesToolOutsideWhitelist(t *testing.T) {
+	t.Parallel()
 	input := runInput(agent.ModelScript{"match_causes": {
 		toolTurn(agent.ScriptedToolCall{Name: contract.ToolValidateSubmission, Arguments: map[string]any{}}),
 		submitTurn(validSubmission()),
@@ -366,6 +375,7 @@ func TestRunnerDeniesToolOutsideWhitelist(t *testing.T) {
 }
 
 func TestRunnerExecutesWhitelistedTool(t *testing.T) {
+	t.Parallel()
 	step := judgeStep()
 	step.Tools = []string{contract.ToolValidateSubmission}
 	input := runInput(agent.ModelScript{"match_causes": {
@@ -395,6 +405,7 @@ func TestRunnerExecutesWhitelistedTool(t *testing.T) {
 }
 
 func TestRunnerSendsSystemPromptFirst(t *testing.T) {
+	t.Parallel()
 	input := runInput(agent.ModelScript{"match_causes": {submitTurn(validSubmission())}})
 	if _, err := newRunner().Run(input); err != nil {
 		t.Fatal(err)
@@ -410,6 +421,7 @@ func TestRunnerSendsSystemPromptFirst(t *testing.T) {
 }
 
 func TestRunnerKeepsEveryToolResultOfATurn(t *testing.T) {
+	t.Parallel()
 	step := judgeStep()
 	step.Tools = []string{contract.ToolValidateSubmission}
 	call := agent.ScriptedToolCall{Name: contract.ToolValidateSubmission, Arguments: map[string]any{"period": map[string]any{}}}
@@ -434,6 +446,7 @@ func TestRunnerKeepsEveryToolResultOfATurn(t *testing.T) {
 }
 
 func TestRunnerReplaysRecordedResponses(t *testing.T) {
+	t.Parallel()
 	// 断点恢复：已记录的模型响应直接重放，不调用模型
 	response := map[string]any{
 		"role": "assistant",
@@ -472,6 +485,7 @@ func TestRunnerReplaysRecordedResponses(t *testing.T) {
 }
 
 func TestRunnerBudgetAndDeadline(t *testing.T) {
+	t.Parallel()
 	// 预算耗尽
 	input := runInput(agent.ModelScript{"match_causes": {submitTurn(validSubmission())}})
 	input.Budget.RemainingModelCalls = 0
@@ -498,6 +512,7 @@ func TestRunnerBudgetAndDeadline(t *testing.T) {
 // ---------------------------------------------------------------- 执行参数解析
 
 func TestExecutionResolvers(t *testing.T) {
+	t.Parallel()
 	execution := contract.DefaultExecutionSettings
 
 	stepTimeout := 30_000.0
@@ -542,6 +557,7 @@ func TestExecutionResolvers(t *testing.T) {
 }
 
 func TestNormalizeThinkingLevel(t *testing.T) {
+	t.Parallel()
 	if got := agent.NormalizeThinkingLevel(nil); got != contract.ThinkingOff {
 		t.Errorf("nil = %s", got)
 	}
@@ -558,6 +574,7 @@ func TestNormalizeThinkingLevel(t *testing.T) {
 // ---------------------------------------------------------------- 输出 Schema 校验
 
 func TestValidator(t *testing.T) {
+	t.Parallel()
 	validator := agent.NewValidator(causesSchema())
 	if errors := validator.Validate(validSubmission()); len(errors) != 0 {
 		t.Fatalf("合法输出不应报错：%v", errors)

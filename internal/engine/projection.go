@@ -37,11 +37,11 @@ var pausedStates = map[contract.TaskState]bool{
 type projection struct {
 	config *contract.EmployeeConfig
 
-	Employee    string
+	Employee string
 	// WorkspaceID 任务属于哪个工作区（取自发起事件）
 	WorkspaceID string
 	// Model 任务当前的会话模型（发起事件给出，之后由“模型已切换”更新，Spec 0006）；nil 表示没记录
-	Model *contract.ModelRef
+	Model       *contract.ModelRef
 	ConfigHash  string
 	Form        map[string]any
 	Attachments []contract.AttachmentRef

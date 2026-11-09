@@ -29,9 +29,9 @@ type listWorkspace struct {
 
 // sessionList GET /api/workspaces（T38 之后带会话摘要和未归属分组）。
 type sessionList struct {
-	ReadOnly   bool              `json:"readOnly"`
-	Reason     string            `json:"reason"`
-	Workspaces []listWorkspace   `json:"workspaces"`
+	ReadOnly   bool               `json:"readOnly"`
+	Reason     string             `json:"reason"`
+	Workspaces []listWorkspace    `json:"workspaces"`
 	Unassigned []workspaceSummary `json:"unassigned"`
 }
 
@@ -66,8 +66,6 @@ func (l sessionList) newSessions(ids ...string) []string {
 	}
 	return out
 }
-
-
 
 func (l sessionList) find(sessionID string) (workspaceSummary, string, bool) {
 	for _, workspace := range l.Workspaces {
