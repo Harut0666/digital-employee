@@ -35,17 +35,21 @@ export function stateTone(state: TaskState | undefined): Tone {
   }
 }
 
-const pad2 = (n: number) => String(n).padStart(2, "0");
-
-/** 侧栏行右侧的时间：刚刚 / 今天 HH:mm / 昨天 / 今年 M月D日 / 往年 YYYY/M/D（短，不挤标题）。 */
+/** 侧栏行右侧的相对时间：刚刚 / N 分钟 / N 小时 / 昨天 / N 天 / 今年 M月D日 / 往年 YYYY/M/D（短，不挤标题）。 */
 export function sessionTime(iso: string, now: Date = new Date()): string {
   const at = new Date(iso);
   if (!iso || Number.isNaN(at.getTime())) return "";
-  if (Math.abs(now.getTime() - at.getTime()) < 60_000) return "刚刚";
+  const elapsed = now.getTime() - at.getTime();
+  // 一分钟内（含时钟略有偏差、时间在未来的情况）
+  if (elapsed < 60_000) return "刚刚";
   const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((day(now) - day(at)) / 86_400_000);
-  if (days === 0) return `${pad2(at.getHours())}:${pad2(at.getMinutes())}`;
+  if (days === 0) {
+    const minutes = Math.floor(elapsed / 60_000);
+    return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时`;
+  }
   if (days === 1) return "昨天";
+  if (days < 7) return `${days} 天`;
   if (at.getFullYear() === now.getFullYear()) return `${at.getMonth() + 1}月${at.getDate()}日`;
   return `${at.getFullYear()}/${at.getMonth() + 1}/${at.getDate()}`;
 }
