@@ -12,13 +12,14 @@ import {
   SafetyCertificateOutlined,
   SettingOutlined,
   StopOutlined,
+  UnlockOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STATE_LABELS, type TaskEvent, type TaskState } from "@de/core/contract";
 import type { ModelConnectionOption, ModelRef, PermissionMode, PreflightResult, SessionDetail, StepStatusView, UiRole } from "../api";
 import { modelLabel, modelMenuItems, newSessionModelMenu, parseModelValue } from "../view/session-model";
-import { permissionHint, permissionMenuItems, permissionModeLabel } from "../view/permission-mode";
+import { normalizePermissionMode, permissionHint, permissionMenuItems, permissionModeLabel, permissionTone } from "../view/permission-mode";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
 import { deriveStepRows } from "../view/step-rows";
@@ -142,7 +143,13 @@ function ModelPicker({
   );
 }
 
-/** 输入框左下角的权限模式下拉（T48）：显示当前模式，点开列出五个模式和各自的一句说明。 */
+const MODE_ICONS: Record<PermissionMode, React.ReactNode> = {
+  read_only: <LockOutlined />,
+  workspace: <SafetyCertificateOutlined />,
+  full: <UnlockOutlined />,
+};
+
+/** 输入框左下角的权限模式下拉（T48，三档）：显示当前模式，点开列出三个模式和各自的一句说明；完全权限用提醒色。 */
 function PermissionModePicker({
   current,
   disabled,
@@ -153,6 +160,7 @@ function PermissionModePicker({
   onPick: (mode: PermissionMode) => Promise<boolean>;
 }) {
   const items = permissionMenuItems(current);
+  const tone = permissionTone(current);
   return (
     <Dropdown
       trigger={["click"]}
@@ -162,19 +170,20 @@ function PermissionModePicker({
         selectedKeys: items.filter((i) => i.selected).map((i) => i.value),
         items: items.map((item) => ({
           key: item.value,
+          icon: MODE_ICONS[item.value],
           label: (
-            <div className="mode-item">
-              <b>{item.label}</b>
+            <div className="mode-item" style={{ maxWidth: 340, whiteSpace: "normal" }}>
+              <b style={item.tone === "warn" ? { color: "var(--warn)" } : undefined}>{item.label}</b>
               <span className="chat-sub">{item.hint}</span>
             </div>
           ),
         })),
         onClick: ({ key }) => {
-          if (key !== (current ?? "ask")) void onPick(key as PermissionMode);
+          if (key !== normalizePermissionMode(current)) void onPick(key as PermissionMode);
         },
       }}
     >
-      <Button size="small" type="text" className="mode-picker" icon={<SafetyCertificateOutlined />} aria-label="权限模式" title={permissionHint(current)} disabled={disabled}>
+      <Button size="small" type="text" className="mode-picker" data-tone={tone} style={tone === "warn" ? { color: "var(--warn)" } : undefined} icon={MODE_ICONS[normalizePermissionMode(current)]} aria-label="权限模式" title={permissionHint(current)} disabled={disabled}>
         <span className="picker-label">{permissionModeLabel(current)}</span>
         <DownOutlined />
       </Button>

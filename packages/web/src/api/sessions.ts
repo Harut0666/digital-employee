@@ -51,7 +51,7 @@ export interface SessionApi {
   /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
   modelOptions(): Promise<ModelConnectionOption[]>;
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
-  /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是询问 */
+  /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是“仅限工作区”（workspace） */
   setPermissionMode(id: string, mode: PermissionMode): Promise<SessionResult>;
   /** 员工表单卡上的答复（T49）：确认开工（带人改过的字段、材料、确认跳过的项）或“不是这个员工”；只有发起人能答 */
   answerEmployeeForm(id: string, requestId: string, answer: EmployeeFormAnswer): Promise<SessionResult>;

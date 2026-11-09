@@ -7,6 +7,7 @@ import {
   fileChangeOf,
   permissionHint,
   permissionMenuItems,
+  normalizePermissionMode,
   permissionModeLabel,
   PERMISSION_MODES,
   traceOf,
@@ -33,7 +34,7 @@ const session = (messages: SessionMessage[], patch: Partial<SessionDetail> = {})
   statusDot: "idle",
   unread: false,
   archived: false,
-  permissionMode: "ask",
+  permissionMode: "workspace",
   messages,
   ...patch,
 });
@@ -59,38 +60,57 @@ const pendingCard = (patch: Partial<SessionCard> = {}): SessionCard => ({
 });
 
 describe("权限模式菜单", () => {
-  test("五个模式，从严到松，每个带一句简短说明", () => {
+  test("三个模式，从严到松，每个带一句简短说明", () => {
     expect(PERMISSION_MODES.map((m) => [m.value, m.label])).toEqual([
-      ["plan", "计划"],
-      ["ask", "询问"],
-      ["accept_edits", "接受编辑"],
-      ["auto", "自动"],
-      ["yolo", "放开"],
+      ["read_only", "仅可查看"],
+      ["workspace", "仅限工作区"],
+      ["full", "完全权限"],
     ]);
-    for (const mode of PERMISSION_MODES) expect(mode.hint.length).toBeGreaterThan(4);
+    for (const mode of PERMISSION_MODES) expect(mode.hint.length).toBeGreaterThan(8);
     expect(PERMISSION_MODES[0]!.hint).toContain("只读");
+    expect(PERMISSION_MODES[0]!.hint).toContain("不写文件");
+    expect(PERMISSION_MODES[1]!.hint).toContain("工作区");
+    expect(PERMISSION_MODES[1]!.hint).toContain("先问你");
+    // 完全权限的说明要提醒命令可能触达工作区之外
+    expect(PERMISSION_MODES[2]!.hint).toContain("工作区之外");
+    expect(PERMISSION_MODES[2]!.hint).toContain("谨慎");
   });
 
-  test("当前模式标出来；没有模式（旧数据）按询问算", () => {
-    expect(permissionMenuItems("accept_edits").map((i) => [i.value, i.selected])).toEqual([
-      ["plan", false],
-      ["ask", false],
-      ["accept_edits", true],
-      ["auto", false],
-      ["yolo", false],
+  test("只有完全权限用警示色", () => {
+    expect(PERMISSION_MODES.map((m) => [m.value, m.tone])).toEqual([
+      ["read_only", "safe"],
+      ["workspace", "default"],
+      ["full", "warn"],
     ]);
-    expect(permissionMenuItems(undefined).find((i) => i.selected)?.value).toBe("ask");
-    expect(permissionMenuItems("乱写的").find((i) => i.selected)?.value).toBe("ask");
+  });
+
+  test("当前模式标出来；没有模式（旧数据）按仅限工作区算", () => {
+    expect(permissionMenuItems("full").map((i) => [i.value, i.selected])).toEqual([
+      ["read_only", false],
+      ["workspace", false],
+      ["full", true],
+    ]);
+    expect(permissionMenuItems(undefined).find((i) => i.selected)?.value).toBe("workspace");
+  });
+
+  test("旧五档的值也读得懂：plan→仅可查看；ask、accept_edits、auto→仅限工作区；yolo→完全权限；不认得的按最严格", () => {
+    const picked = (mode: string) => permissionMenuItems(mode).find((i) => i.selected)?.value;
+    expect(picked("plan")).toBe("read_only");
+    for (const old of ["ask", "accept_edits", "auto"]) expect(picked(old)).toBe("workspace");
+    expect(picked("yolo")).toBe("full");
+    expect(picked("乱写的")).toBe("read_only");
+    expect(normalizePermissionMode("yolo")).toBe("full");
+    expect(normalizePermissionMode("full")).toBe("full");
+    expect(normalizePermissionMode(undefined)).toBe("workspace");
   });
 
   test("下拉上显示模式名；提示条说明当前模式", () => {
-    expect(permissionModeLabel("yolo")).toBe("放开");
-    expect(permissionModeLabel(undefined)).toBe("询问");
-    expect(permissionHint("plan")).toContain("只读");
-    expect(permissionHint("ask")).toContain("写文件");
+    expect(permissionModeLabel("full")).toBe("完全权限");
+    expect(permissionModeLabel(undefined)).toBe("仅限工作区");
+    expect(permissionHint("read_only")).toContain("只读");
+    expect(permissionHint("workspace")).toContain("先问你");
   });
 });
-
 describe("权限确认卡派生", () => {
   test("等待答复：发起人看到三个按钮，卡上写明动作和对象", () => {
     const view = derivePermissionCard(pendingCard(), { writable: true, role: "initiator" });
@@ -202,9 +222,9 @@ describe("写文件的工具行", () => {
 
 describe("权限留痕", () => {
   test("自动放行和被模式拒绝都能在对话里看到；发起人拒绝已经体现在确认卡上，不重复", () => {
-    expect(traceOf(msg({ kind: "permission_allowed", tool: "write_file", args: { path: "a.md" }, reason: "接受编辑模式：写入文件不用确认" }))).toEqual({
+    expect(traceOf(msg({ kind: "permission_allowed", tool: "write_file", args: { path: "a.md" }, reason: "仅限工作区模式：写入文件不用确认" }))).toEqual({
       tone: "allowed",
-      text: "已放行 write_file a.md：接受编辑模式：写入文件不用确认",
+      text: "已放行 write_file a.md：仅限工作区模式：写入文件不用确认",
     });
     expect(traceOf(msg({ kind: "tool_denied", tool: "write_file", args: { path: "交付/x.md" }, reason: "“交付”文件夹由程序写入交付物，Agent 不能写：交付/x.md" }))).toEqual({
       tone: "denied",
@@ -244,6 +264,6 @@ describe("deriveChat 里的权限内容", () => {
   });
 
   test("选择权限模式：对话里不留说明（下拉已显示当前模式）", () => {
-    expect(deriveChat(session([msg({ kind: "permission_mode_set", mode: "accept_edits" })]))).toEqual([]);
+    expect(deriveChat(session([msg({ kind: "permission_mode_set", mode: "workspace" })]))).toEqual([]);
   });
 });

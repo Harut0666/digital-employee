@@ -4,8 +4,8 @@
 // 输入定义直接用员工配置里的表单定义和开工清单，不另设一份：
 //   - 字段值不合法（类型、范围、不存在的字段、文件字段）：把具体问题作为工具错误交回 Agent，不开表单；
 //   - 通过权限判断后，弹出员工表单卡，由人核对、补充、确认（“确认开工”或“不是这个员工”）。
-//     ask、accept_edits 一定弹；auto、yolo 在表单完整有效、必需开工清单项备齐时免确认直接开工，否则弹。
-//     auto 下目录文件用作材料仍要人确认，所以带目录文件的表单照样弹；yolo 自动确认；
+//     workspace 一定弹；full 在表单完整有效、必需开工清单项备齐时免确认直接开工，否则弹。
+//     workspace 下目录文件用作材料要人确认；full 自动确认；
 //   - 确认开工由人触发（AnswerEmployeeForm），程序按现有路径做准入校验并创建任务；目录文件在确认时复制进会话材料，
 //     之后与上传的材料等效，改原文件不影响任务。run_employee 的结果是任务 ID 和当前状态，不等任务跑完。
 //
@@ -291,7 +291,7 @@ func attachmentNamed(current *record, name string) (Attachment, bool) {
 	return Attachment{}, false
 }
 
-// runEmployeeTool 前台 Agent 的 run_employee。动作类别是“运行员工”：计划模式拒绝；
+// runEmployeeTool 前台 Agent 的 run_employee。动作类别是“运行员工”：仅可查看模式拒绝；
 // “问”和“放行”由工具自己处理（见包说明），关口不叠权限确认卡。
 func (loop *turnLoop) runEmployeeTool(employees []Employee, configs map[string]*contract.EmployeeConfig) tool {
 	ids := make([]any, 0, len(employees))
@@ -377,8 +377,8 @@ func (loop *turnLoop) runEmployee(ctx context.Context, employees []Employee, con
 	}
 	mode := current.mode()
 	ready := readyForStart(config, fields, names)
-	// 免确认直接开工：运行员工在这个模式下免问（auto、yolo），表单完整有效且必需清单项备齐；
-	// 带目录文件时还要“使用目录文件”在这个模式下也免问（只有 yolo），否则弹表单让人确认
+	// 免确认直接开工：运行员工在这个模式下免问（full），表单完整有效且必需清单项备齐；
+	// 带目录文件时还要“使用目录文件”在这个模式下也免问（full 才免），否则弹表单让人确认
 	if ready && Decide(mode, ActionRunEmployee) == VerdictAllow && (!hasFolder || Decide(mode, ActionUseFolderFile) == VerdictAllow) {
 		return loop.startDirect(ctx, id, name, config, fields, materials, mode, arguments)
 	}
@@ -412,7 +412,7 @@ func (loop *turnLoop) startDirect(ctx context.Context, id, name string, config *
 		Reason: fmt.Sprintf("%s模式：%s的表单完整有效，必需的开工清单项已备齐，不用确认直接开工", PermissionModeLabels[mode], name)}); err != nil {
 		return nil, err
 	}
-	// 目录文件也是自动确认的（只有放开模式走到这里）：每一份都留痕，事后能核对用了哪些文件
+	// 目录文件也是自动确认的（只有完全权限模式走到这里）：每一份都留痕，事后能核对用了哪些文件
 	for _, material := range materials {
 		if material.Source != MaterialFolder {
 			continue

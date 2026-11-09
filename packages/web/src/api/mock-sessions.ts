@@ -5,6 +5,7 @@
 import { STATE_LABELS, type TaskEvent } from "@de/core/contract";
 import { CHECKLISTS } from "./mock-data";
 import { evaluateChecklist } from "./mock-rules";
+import { normalizePermissionMode, permissionModeLabel } from "../view/permission-mode";
 import type { SessionApi } from "./sessions";
 import type {
   EmployeeInfo,
@@ -82,7 +83,7 @@ interface MockSession {
   skipped: Set<string>;
   /** 会话里选择的模型（Spec 0006）；没选过时沿用设置的 lastModel */
   selected?: ModelRef;
-  /** 权限模式（T48）；新会话总是询问 */
+  /** 权限模式（ADR-0007 增补二）；新会话总是仅限工作区（workspace） */
   permissionMode: PermissionMode;
   /** 本会话总是允许的动作类别；换模式时清空 */
   always: Set<string>;
@@ -154,7 +155,8 @@ const MOCK_MODEL_OPTIONS: ModelConnectionOption[] = [{ name: "示例厂商", mod
 /** 设置的 lastModel：人上一次在会话里选的模型，新会话沿用它 */
 const MOCK_DEFAULT_MODEL: ModelRef = { connection: "示例厂商", model: "demo-chat" };
 
-const PERMISSION_MODE_VALUES: readonly string[] = ["plan", "ask", "accept_edits", "auto", "yolo"];
+/** 选权限模式时收的取值：三个新值，加旧五档的值（后端同样收，映射成新值） */
+const ACCEPTED_MODE_VALUES: readonly string[] = ["read_only", "workspace", "full", "plan", "ask", "accept_edits", "auto", "yolo"];
 const PERMISSION_BUTTONS: PermissionChoice[] = [
   { decision: "allow_once", label: "允许一次", style: "primary" },
   { decision: "always_allow", label: "本会话总是允许这一类", style: "default" },
@@ -346,7 +348,7 @@ export function createMockSessions(
     }
   }
 
-  const modeName = (mode: string) => ({ plan: "计划", ask: "询问", accept_edits: "接受编辑", auto: "自动", yolo: "放开" })[mode] ?? mode;
+  const modeName = (mode: string) => permissionModeLabel(mode);
 
   /** 权限确认卡读取时配上状态：有没有答复、是不是还在等、能点的按钮（对应 Go 的 projectPermissions） */
   function projectPermissions(s: MockSession, messages: SessionMessage[]): SessionMessage[] {
@@ -446,7 +448,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
     return turn;
   }
 
-  /** 一次 write_file 经过权限关口（对应 Go 的 turnLoop.gate）：计划拒绝、询问弹确认卡、其余放行，每一步都留痕 */
+  /** 一次 write_file 经过权限关口（对应 Go 的 turnLoop.gate）：仅可查看拒绝，仅限工作区和完全权限直接写（不再询问），每一步都留痕 */
   function startWriteTurn(s: MockSession): number {
     const turn = ++s.turn;
     s.cancelled = false;
@@ -473,42 +475,11 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
         end({ result: { path: args.path, action: "created" } });
         finish(`已把要点写进 ${args.path}。`);
       };
-      if (s.permissionMode === "plan") {
-        deny(`计划模式下只能读，不能写入文件：${args.path}。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`);
-        return finish("计划模式下我只能看不能动。打算把要点整理成 notes/周会要点.md，请切换模式后再让我写。");
+      if (s.permissionMode === "read_only") {
+        deny(`当前是仅可查看模式，不能写入文件：${args.path}。请改为给出方案告诉发起人，等 TA 切换权限模式后再动手。`);
+        return finish("仅可查看模式下我只能看不能动。打算把要点整理成 notes/周会要点.md，请切换模式后再让我写。");
       }
-      if (s.permissionMode === "ask" && !s.always.has("write_file")) {
-        const requestId = Math.random().toString(16).slice(2, 10).padEnd(8, "0") + Date.now().toString(16).slice(-8).padStart(8, "0");
-        const cardOut: SessionMessage[] = [];
-        write(
-          s,
-          { kind: "card", card: { type: "permission", requestId, action: "write_file", actionLabel: "写入文件", tool: "write_file", object: args.path, path: args.path, detail: `新建文件，写入 ${args.content.length} 个字`, pending: true, choices: PERMISSION_BUTTONS } },
-          cardOut,
-        );
-        emit(s, turn, { type: "message", message: cardOut[0] });
-        const decision = await new Promise<string>((resolve) => {
-          s.pending = { requestId, resolve };
-        });
-        s.pending = undefined;
-        s.decisions.set(requestId, decision);
-        if (decision === "cancelled" || s.cancelled) {
-          s.decisions.set(requestId, "cancelled");
-          write(s, { kind: "tool_called", tool: "write_file", args, result: "已取消：这一轮被停止，工具没有执行。" }, []);
-          end({ reason: "已取消", isErr: true });
-          return finish("", "stopped");
-        }
-        if (decision === "deny") {
-          deny(`发起人拒绝：没有允许写入文件：${args.path}。请换个办法，或问问发起人想怎么做。`, true);
-          return finish("好的，那我不写了。");
-        }
-        if (decision === "always_allow") s.always.add("write_file");
-        return run();
-      }
-      write(
-        s,
-        { kind: "permission_allowed", tool: "write_file", args, reason: s.permissionMode === "ask" ? "本会话已选择总是允许「写入文件」" : `${modeName(s.permissionMode)}模式：写入文件不用确认` },
-        [],
-      );
+      write(s, { kind: "permission_allowed", tool: "write_file", args, reason: `${modeName(s.permissionMode)}模式：写入文件不用确认` }, []);
       emit(s, turn, { type: "message" });
       run();
     })();
@@ -582,7 +553,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
     return turn;
   }
 
-  /** 演示 shell 经过权限关口：计划拒绝、放开直接放行（留痕）、其余弹带命令和警告的确认卡（没有“总是允许”） */
+  /** 演示 shell 经过权限关口：仅可查看拒绝、完全权限直接放行（留痕）、仅限工作区弹带命令和警告的确认卡（没有“总是允许”） */
   function startShellTurn(s: MockSession): number {
     const turn = ++s.turn;
     s.cancelled = false;
@@ -595,11 +566,11 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
         s.running = undefined;
         emit(s, turn, { type: "turn_end", reason });
       };
-      if (s.permissionMode === "plan") {
-        write(s, { kind: "tool_denied", tool: "shell", args, reason: "计划模式下只能读，不能运行命令。请先把打算怎么做（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。" }, []);
-        return finish(`计划模式下我不能运行命令。打算运行：${DEMO_SHELL.command}（${DEMO_SHELL.description}），请切换模式后再让我跑。`);
+      if (s.permissionMode === "read_only") {
+        write(s, { kind: "tool_denied", tool: "shell", args, reason: "当前是仅可查看模式，不能运行命令。请改为给出方案（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。" }, []);
+        return finish(`仅可查看模式下我不能运行命令。打算运行：${DEMO_SHELL.command}（${DEMO_SHELL.description}），请切换模式后再让我跑。`);
       }
-      if (s.permissionMode !== "yolo") {
+      if (s.permissionMode !== "full") {
         const requestId = newRequestId();
         const out: SessionMessage[] = [];
         const choices = PERMISSION_BUTTONS.filter((c) => c.decision !== "always_allow");
@@ -629,7 +600,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
           return finish("好的，那我不运行命令了。");
         }
       } else {
-        write(s, { kind: "permission_allowed", tool: "shell", args, reason: "放开模式：运行命令不用确认" }, []);
+        write(s, { kind: "permission_allowed", tool: "shell", args, reason: "完全权限模式：运行命令不用确认" }, []);
       }
       write(s, { kind: "tool_called", tool: "shell", args, result: { output: "Count    : 12\n", exitCode: 0 } }, []);
       finish("命令跑完了：工作区里有 12 个 Markdown 文件。");
@@ -670,7 +641,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
 
   const materialFile = (name: string) => new File([`模拟的 ${name}`], name);
 
-  /** 一次 run_employee（对应 Go 的 runEmployee）：计划拒绝；auto、yolo 表单完整有效且必需项备齐时直接开工，否则弹员工表单卡等人答复 */
+  /** 一次 run_employee（对应 Go 的 runEmployee）：仅可查看拒绝；完全权限在表单完整有效且必需项备齐时直接开工，否则（含仅限工作区）弹员工表单卡等人答复 */
   function startRunEmployeeTurn(s: MockSession, employee: EmployeeInfo, text: string): number {
     const turn = ++s.turn;
     s.cancelled = false;
@@ -702,16 +673,15 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
         end({ reason, isErr: true });
         return finish(reason);
       }
-      if (s.permissionMode === "plan") {
-        const reason = `计划模式下只能读，不能运行员工：${employee.name}（${employee.id}）。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`;
+      if (s.permissionMode === "read_only") {
+        const reason = `当前是仅可查看模式，不能运行员工：${employee.name}（${employee.id}）。请改为给出方案告诉发起人，等 TA 切换权限模式后再动手。`;
         write(s, { kind: "tool_denied", tool: "run_employee", args, reason, decision: "deny" }, []);
         emit(s, turn, { type: "message" });
         end({ reason, isErr: true });
-        return finish(`计划模式下我只能给方案：打算让${employee.name}来做，请切换模式后再让我开工。`);
+        return finish(`仅可查看模式下我只能给方案：打算让${employee.name}来做，请切换模式后再让我开工。`);
       }
-      const hasFolder = materials.some((m) => m.source === "folder");
       const ready = Boolean(week) && (checklistFor(employee.id, fields, materials.map((m) => m.name), new Set())?.ready ?? true);
-      if (ready && (s.permissionMode === "yolo" || (s.permissionMode === "auto" && !hasFolder))) {
+      if (ready && s.permissionMode === "full") {
         const started = await beginTask(s, employee.id, fields, materials.map((m) => materialFile(m.name)), new Set());
         if (!started.ok) {
           end({ reason: started.message, isErr: true });
@@ -802,7 +772,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
       statusDot: dotOf(getRole(), status, task.state, unread),
       unread,
       archived: legacyArchived.has(task.id),
-      permissionMode: "ask",
+      permissionMode: "workspace",
       workspaceName: WORKSPACE_NAMES[workspaceId] ?? "",
       messages: [],
     };
@@ -841,7 +811,10 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以选权限模式");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (!PERMISSION_MODE_VALUES.includes(mode)) return fail("invalid_input", `没有这个权限模式：${mode}`);
+      // 旧五档的值也收（映射成新值），和后端一致
+      const normalized = ACCEPTED_MODE_VALUES.includes(mode) ? normalizePermissionMode(mode) : undefined;
+      if (!normalized) return fail("invalid_input", `没有这个权限模式：${mode}。可选 read_only（仅可查看）、workspace（仅限工作区）、full（完全权限）`);
+      mode = normalized;
       s.permissionMode = mode;
       s.always.clear();
       const out: SessionMessage[] = [];
@@ -958,7 +931,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
         taskIds: [],
         readUpTo: 0,
         skipped: new Set(),
-        permissionMode: "ask",
+        permissionMode: "workspace",
         always: new Set(),
         decisions: new Map(),
         questions: new Map(),

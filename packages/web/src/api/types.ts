@@ -235,8 +235,8 @@ export type EmployeeFormAnswer =
   | { decision: "confirm"; form: Record<string, unknown>; attachments: string[]; skipped: string[] }
   | { decision: "reject" };
 
-/** 权限模式（T48）：计划只读、询问（默认）、接受编辑、自动、放开 */
-export type PermissionMode = "plan" | "ask" | "accept_edits" | "auto" | "yolo";
+/** 权限模式（ADR-0007 增补二）：仅可查看、仅限工作区（新会话默认）、完全权限。后端也认旧五档的值，但只输出这三个 */
+export type PermissionMode = "read_only" | "workspace" | "full";
 
 /** 人对权限确认卡的答复 */
 export type PermissionDecision = "allow_once" | "always_allow" | "deny";
@@ -418,7 +418,7 @@ export interface SessionSummary {
   model?: ModelRef;
   /** 会话里明确选过模型 */
   modelSelected?: boolean;
-  /** 权限模式（T48）；新会话总是 ask */
+  /** 权限模式（ADR-0007 增补二）；新会话总是 workspace */
   permissionMode?: PermissionMode;
   /** Agent 最新的待办清单（todo_write）；没写过时为空 */
   todos?: TodoItem[];

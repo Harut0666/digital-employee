@@ -69,7 +69,7 @@ type tool struct {
 	runCtx func(ctx context.Context, arguments map[string]any) (any, error)
 	// action 动作类别（ActionWriteFile 等）：非空的工具执行前要过权限关口（turnLoop.gate）；空表示读，始终允许
 	action string
-	// selfDecide 工具自己处理“放行”和“问”：关口只负责计划模式的拒绝。
+	// selfDecide 工具自己处理“放行”和“问”：关口只负责仅可查看模式的拒绝。
 	// 运行员工的“问”是员工表单卡，使用目录文件的“问”是“使用目录文件”卡，都不再叠一张权限确认卡。
 	selfDecide bool
 	// guard 始终适用的边界检查（路径越界、隐藏文件、大小……），不受权限模式影响；返回的错误就是拒绝原因

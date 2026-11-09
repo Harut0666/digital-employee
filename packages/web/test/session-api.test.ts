@@ -168,14 +168,14 @@ describe("会话接口", () => {
 describe("权限模式接口（T48）", () => {
   test("选模式：PUT permission-mode，带角色头和模式", async () => {
     const { calls, impl } = fakeFetch({
-      "PUT /api/sessions/s-1/permission-mode": [200, { ok: true, messages: [], session: { ...session, permissionMode: "accept_edits" } }],
+      "PUT /api/sessions/s-1/permission-mode": [200, { ok: true, messages: [], session: { ...session, permissionMode: "full" } }],
     });
     const api = createSessionApi("http://local", () => "initiator", impl);
-    const result = await api.setPermissionMode("s-1", "accept_edits");
-    expect(result.ok && result.session.permissionMode).toBe("accept_edits");
+    const result = await api.setPermissionMode("s-1", "full");
+    expect(result.ok && result.session.permissionMode).toBe("full");
     expect(calls[0]?.method).toBe("PUT");
     expect(calls[0]?.headers["x-role"]).toBe("initiator");
-    expect(JSON.parse(String(calls[0]?.body))).toEqual({ mode: "accept_edits" });
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({ mode: "full" });
   });
 
   test("答复权限确认：POST permissions/{requestId}，带决定；业务错误作为结果返回", async () => {

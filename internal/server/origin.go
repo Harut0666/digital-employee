@@ -5,7 +5,7 @@
 // 命令行 curl 默认两个都不带，所以要求其一，能挡住“随手一条 curl”。
 //
 // 这只是提高门槛，不是防护：Sec-Fetch-Site 和 Origin 都是请求头，命令行里想伪造就能伪造。
-// 真正的边界是 shell 的权限模式（plan 拒绝、其余每次问）和说话人角色关口。
+// 真正的边界是 shell 的权限模式（read_only 拒绝、workspace 每次问、full 放行）和说话人角色关口。
 package server
 
 import (

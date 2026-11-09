@@ -1,4 +1,4 @@
-// 权限模式（T48）的界面派生。纯函数，不依赖 React 与网络。
+// 权限模式的界面派生（T48，ADR-0007 增补二改成三档）。纯函数，不依赖 React 与网络。
 // 模式和权限确认卡的内容都来自后端的会话接口，这里只决定显示成什么；按钮取自卡片上的 actions。
 
 import type { PermissionDecision, PermissionMode, SessionCard, SessionMessage, UiRole } from "../api/types";
@@ -8,33 +8,55 @@ export interface PermissionModeInfo {
   label: string;
   /** 下拉里的一句简短说明 */
   hint: string;
+  /** 显示色调：safe 偏安全、default 常规、warn 提醒（完全权限；不是报错色，别吓人） */
+  tone: "safe" | "default" | "warn";
 }
 
-/** 五个模式，从严到松；说明和 Spec 0007 的矩阵一致 */
+/** 三个模式，从严到松（也是菜单顺序）；说明和 ADR-0007 增补二的矩阵一致 */
 export const PERMISSION_MODES: readonly PermissionModeInfo[] = [
-  { value: "plan", label: "计划", hint: "只读：Agent 只看不动（不能写、不能运行命令），给你一个方案" },
-  { value: "ask", label: "询问", hint: "写文件、运行员工、运行命令前先问你" },
-  { value: "accept_edits", label: "接受编辑", hint: "在工作区里写、改文件不用问" },
-  { value: "auto", label: "自动", hint: "员工表单完整有效时直接开工" },
-  { value: "yolo", label: "放开", hint: "连目录文件的确认和命令行也不再问（命令行没有沙箱）" },
+  { value: "read_only", label: "仅可查看", tone: "safe", hint: "只读文件、做计划、回答问题，不写文件、不运行员工和命令" },
+  { value: "workspace", label: "仅限工作区", tone: "default", hint: "可在工作区目录内读写文件，运行员工、使用目录文件、运行命令前先问你" },
+  { value: "full", label: "完全权限", tone: "warn", hint: "不再逐项询问，写文件、运行员工、用目录文件、运行命令都直接执行——命令仍可能触达工作区之外，请谨慎" },
 ];
 
-const DEFAULT_MODE: PermissionMode = "ask";
+const DEFAULT_MODE: PermissionMode = "workspace";
 
-function infoOf(mode: string | undefined): PermissionModeInfo {
-  return PERMISSION_MODES.find((m) => m.value === mode) ?? PERMISSION_MODES.find((m) => m.value === DEFAULT_MODE)!;
+/** 旧版本五档的值 → 新值（后端已经把旧数据读作新值，这里只是防备更早缓存下来的数据） */
+const LEGACY_MODES: Readonly<Record<string, PermissionMode>> = {
+  plan: "read_only",
+  ask: "workspace",
+  accept_edits: "workspace",
+  auto: "workspace",
+  yolo: "full",
+};
+
+/** 任何取值 → 三个新值之一：没有值（新会话、旧数据）按默认的仅限工作区，旧五档的值映射过来，不认得的按最严格的仅可查看 */
+export function normalizePermissionMode(mode: string | undefined): PermissionMode {
+  if (mode === undefined || mode === "") return DEFAULT_MODE;
+  if (PERMISSION_MODES.some((m) => m.value === mode)) return mode as PermissionMode;
+  return LEGACY_MODES[mode] ?? "read_only";
 }
 
-/** 下拉上显示的模式名；旧数据没有模式时按询问算 */
+function infoOf(mode: string | undefined): PermissionModeInfo {
+  const value = normalizePermissionMode(mode);
+  return PERMISSION_MODES.find((m) => m.value === value)!;
+}
+
+/** 下拉上显示的模式名；旧数据没有模式时按仅限工作区算 */
 export function permissionModeLabel(mode: string | undefined): string {
   return infoOf(mode).label;
+}
+
+/** 当前模式的色调（完全权限用提醒色） */
+export function permissionTone(mode: string | undefined): PermissionModeInfo["tone"] {
+  return infoOf(mode).tone;
 }
 
 export interface PermissionMenuItem extends PermissionModeInfo {
   selected: boolean;
 }
 
-/** 下拉里的五项，当前模式标出来 */
+/** 下拉里的三项，当前模式标出来 */
 export function permissionMenuItems(current: string | undefined): PermissionMenuItem[] {
   const picked = infoOf(current).value;
   return PERMISSION_MODES.map((m) => ({ ...m, selected: m.value === picked }));
@@ -44,7 +66,6 @@ export function permissionMenuItems(current: string | undefined): PermissionMenu
 export function permissionHint(mode: string | undefined): string {
   return infoOf(mode).hint;
 }
-
 // ---- 权限确认卡 ----
 
 export type PermissionState = "pending" | "allowed" | "always" | "denied" | "cancelled";

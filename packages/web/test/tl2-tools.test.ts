@@ -158,11 +158,11 @@ describe("shell 确认卡", () => {
     expect(derivePermissionCard({ type: "permission", action: "write_file", object: "a.md", pending: true }, { writable: true, role: "initiator" }).shell).toBeUndefined();
   });
 
-  test("yolo 自动放行留痕里有完整命令；被模式拒绝的 shell 也留痕", () => {
-    expect(traceOf(msg({ kind: "permission_allowed", tool: "shell", args: { command: "echo hi" }, reason: "放开模式：运行命令不用确认" }))?.text).toBe("已放行 shell echo hi：放开模式：运行命令不用确认");
+  test("full 自动放行留痕里有完整命令；被模式拒绝的 shell 也留痕", () => {
+    expect(traceOf(msg({ kind: "permission_allowed", tool: "shell", args: { command: "echo hi" }, reason: "完全权限模式：运行命令不用确认" }))?.text).toBe("已放行 shell echo hi：完全权限模式：运行命令不用确认");
     const long = traceOf(msg({ kind: "permission_allowed", tool: "shell", args: { command: "x".repeat(300) }, reason: "r" }));
     expect(long?.text).toContain("…");
-    expect(traceOf(msg({ kind: "tool_denied", tool: "shell", args: { command: "ls" }, reason: "计划模式下只能读" }))).toMatchObject({ tone: "denied" });
+    expect(traceOf(msg({ kind: "tool_denied", tool: "shell", args: { command: "ls" }, reason: "当前是仅可查看模式，不能运行命令" }))).toMatchObject({ tone: "denied" });
   });
 });
 
@@ -217,7 +217,7 @@ describe("模拟模式演示新工具", () => {
     expect(await api.answerQuestion(id, asked.messages.find((m) => m.card?.type === "question")!.card!.requestId!, [])).toMatchObject({ ok: false, error: "forbidden_role" });
   });
 
-  test("shell：询问模式弹带命令的确认卡，只有允许一次和拒绝", async () => {
+  test("shell：仅限工作区模式弹带命令的确认卡，只有允许一次和拒绝", async () => {
     const api = createMockApi(() => "initiator");
     const { id } = await api.createSession();
     await api.sendMessage(id, "运行命令看看有多少个文件");

@@ -157,26 +157,26 @@ const (
 	noteAfterEdit  = "# 周会要点\n- 华南环比下降\n- 华东小幅上升\n"
 )
 
-// ---------------------------------------------------------------- 新会话总是 ask，只有发起人能改
+// ---------------------------------------------------------------- 新会话总是 workspace，只有发起人能改
 
-func TestNewSessionStartsInAskMode(t *testing.T) {
+func TestNewSessionStartsInWorkspaceMode(t *testing.T) {
 	h := newHarness(t, frontdeskScript(modelSays("好的。")))
 	first := h.createSession()
-	if first.PermissionMode != session.PermissionAsk {
-		t.Fatalf("新会话的模式 = %q，want ask", first.PermissionMode)
+	if first.PermissionMode != session.PermissionWorkspace {
+		t.Fatalf("新会话的模式 = %q，want workspace", first.PermissionMode)
 	}
-	h.mustSetMode(first.ID, session.PermissionYolo)
+	h.mustSetMode(first.ID, session.PermissionFull)
 
 	second := h.createSession()
-	if second.PermissionMode != session.PermissionAsk {
-		t.Fatalf("再开一个会话的模式 = %q，want ask（不沿用上一次的选择）", second.PermissionMode)
+	if second.PermissionMode != session.PermissionWorkspace {
+		t.Fatalf("再开一个会话的模式 = %q，want workspace（不沿用上一次的选择）", second.PermissionMode)
 	}
 	// 列表里也带着模式；第一个会话记住自己的选择
 	modes := map[string]string{}
 	for _, view := range h.listSessions() {
 		modes[view.ID] = view.PermissionMode
 	}
-	if modes[first.ID] != session.PermissionYolo || modes[second.ID] != session.PermissionAsk {
+	if modes[first.ID] != session.PermissionFull || modes[second.ID] != session.PermissionWorkspace {
 		t.Fatalf("列表里的模式 = %v", modes)
 	}
 }
@@ -186,21 +186,26 @@ func TestOnlyTheInitiatorCanChooseTheMode(t *testing.T) {
 	created := h.createSession()
 
 	for _, role := range []contract.Role{contract.RoleReviewer, contract.RoleOperator, ""} {
-		if status, data := h.setMode(created.ID, role, session.PermissionPlan); status != http.StatusForbidden {
+		if status, data := h.setMode(created.ID, role, session.PermissionReadOnly); status != http.StatusForbidden {
 			t.Fatalf("角色 %q 改模式应被拒绝：%d %s", role, status, data)
 		}
 	}
-	for _, mode := range []string{"", "god", "ASK"} {
-		if status, data := h.setMode(created.ID, contract.RoleInitiator, mode); status != http.StatusBadRequest {
+	for _, mode := range []string{"", "god", "ASK", "Full", "read-only"} {
+		status, data := h.setMode(created.ID, contract.RoleInitiator, mode)
+		if status != http.StatusBadRequest {
 			t.Fatalf("模式 %q 应被拒绝：%d %s", mode, status, data)
 		}
+		// 错误文案只列三个新值
+		if !strings.Contains(string(data), "read_only") || !strings.Contains(string(data), "workspace") || !strings.Contains(string(data), "full") || strings.Contains(string(data), "yolo") {
+			t.Fatalf("错误文案要列出三个可选模式：%s", data)
+		}
 	}
-	if status, data := h.setMode("s-missing", contract.RoleInitiator, session.PermissionPlan); status != http.StatusNotFound {
+	if status, data := h.setMode("s-missing", contract.RoleInitiator, session.PermissionReadOnly); status != http.StatusNotFound {
 		t.Fatalf("不存在的会话改模式：%d %s", status, data)
 	}
-	// 一个也没改成功：会话还是 ask，日志里没有“选择权限模式”
+	// 一个也没改成功：会话还是 workspace，日志里没有“选择权限模式”
 	detail := h.readSession(created.ID)
-	if detail.PermissionMode != session.PermissionAsk {
+	if detail.PermissionMode != session.PermissionWorkspace {
 		t.Fatalf("会话模式 = %q", detail.PermissionMode)
 	}
 	if got := entriesOf(detail.Messages, session.KindPermissionModeSet); len(got) != 0 {
@@ -212,73 +217,134 @@ func TestPermissionModeChangeIsRecorded(t *testing.T) {
 	h := newHarness(t, frontdeskScript(modelSays("好的。")))
 	created := h.createSession()
 
-	reply := h.mustSetMode(created.ID, session.PermissionAuto)
-	if reply.Session == nil || reply.Session.PermissionMode != session.PermissionAuto {
+	reply := h.mustSetMode(created.ID, session.PermissionFull)
+	if reply.Session == nil || reply.Session.PermissionMode != session.PermissionFull {
 		t.Fatalf("切换模式之后的会话 = %+v", reply)
 	}
 	detail := h.readSession(created.ID)
 	recorded := entriesOf(detail.Messages, session.KindPermissionModeSet)
-	if len(recorded) != 1 || recorded[0].Mode != session.PermissionAuto {
+	if len(recorded) != 1 || recorded[0].Mode != session.PermissionFull {
 		t.Fatalf("会话日志里的“选择权限模式” = %+v", recorded)
 	}
-	if detail.PermissionMode != session.PermissionAuto {
+	if detail.PermissionMode != session.PermissionFull {
 		t.Fatalf("会话模式 = %q", detail.PermissionMode)
 	}
 }
 
-// ---------------------------------------------------------------- 五个模式和两只文件工具
+// 接口入参里的旧五档的值也收：映射成新值，会话视图和落盘的日志都只有新值。
+func TestPermissionModeEndpointAcceptsLegacyValues(t *testing.T) {
+	h := newHarness(t, frontdeskScript(modelSays("好的。")))
+	created := h.createSession()
+	cases := []struct{ old, want string }{
+		{"plan", session.PermissionReadOnly}, {"ask", session.PermissionWorkspace}, {"accept_edits", session.PermissionWorkspace},
+		{"auto", session.PermissionWorkspace}, {"yolo", session.PermissionFull},
+	}
+	for _, tc := range cases {
+		reply := h.mustSetMode(created.ID, tc.old)
+		if reply.Session == nil || reply.Session.PermissionMode != tc.want {
+			t.Fatalf("旧值 %q 之后的会话视图 = %+v，want %q", tc.old, reply.Session, tc.want)
+		}
+	}
+	detail := h.readSession(created.ID)
+	recorded := entriesOf(detail.Messages, session.KindPermissionModeSet)
+	if len(recorded) != len(cases) {
+		t.Fatalf("日志里的“选择权限模式” = %+v", recorded)
+	}
+	for index, tc := range cases {
+		if recorded[index].Mode != tc.want {
+			t.Fatalf("旧值 %q 落盘的是 %q，want %q", tc.old, recorded[index].Mode, tc.want)
+		}
+	}
+}
 
-// 新建或修改文件这一类：plan 拒绝，ask 问，其余允许；结果带路径、新建还是修改、字节数，edit_file 另给差异。
+// 旧版本写下的会话日志（permission_mode_set 里是旧值）：回放读作新值，行为按新值；不认得的值按最严格处理，不崩。
+func TestOldSessionLogsReplayLegacyModes(t *testing.T) {
+	cases := []struct {
+		stored string
+		view   string
+		shell  string // deny / ask / allow
+	}{
+		{"plan", session.PermissionReadOnly, "deny"},
+		{"ask", session.PermissionWorkspace, "ask"},
+		{"accept_edits", session.PermissionWorkspace, "ask"},
+		{"auto", session.PermissionWorkspace, "ask"},
+		{"yolo", session.PermissionFull, "allow"},
+		{"mode_from_the_future", session.PermissionReadOnly, "deny"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.stored, func(t *testing.T) {
+			h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall("echo legacy-ok")), modelSays("好。")))
+			created := h.createSession()
+			// 像旧版本那样，把旧值直接写进会话日志
+			path := filepath.Join(h.appDirs(), "sessions", created.ID, "log.jsonl")
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := strings.Count(strings.TrimRight(string(raw), "\n"), "\n") + 2
+			line := fmt.Sprintf(`{"id":"legacy-mode","seq":%d,"ts":"2026-10-01T00:00:00Z","kind":"permission_mode_set","mode":%q}`+"\n", next, tc.stored)
+			if err := os.WriteFile(path, append(raw, []byte(line)...), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.readSession(created.ID).PermissionMode; got != tc.view {
+				t.Fatalf("旧值 %q 的会话视图 = %q，want %q", tc.stored, got, tc.view)
+			}
+
+			stream := h.openStream(created.ID)
+			defer stream.close()
+			turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
+			if tc.shell == "ask" {
+				h.mustDecide(created.ID, h.waitPending(created.ID), session.DecisionAllowOnce)
+			}
+			h.waitTurn(stream, turn)
+
+			detail := h.readSession(created.ID)
+			ran := len(toolMessages(detail, contract.ToolShell)) == 1
+			switch tc.shell {
+			case "deny":
+				if ran || len(deniedTools(detail)) != 1 {
+					t.Fatalf("旧值 %q 应拒绝命令：%+v", tc.stored, detail.Messages)
+				}
+			case "ask":
+				if !ran || len(permissionCards(detail)) != 1 {
+					t.Fatalf("旧值 %q 应问一次再运行：%+v", tc.stored, detail.Messages)
+				}
+			case "allow":
+				if !ran || len(permissionCards(detail)) != 0 || len(entriesOf(detail.Messages, session.KindPermissionAllowed)) != 1 {
+					t.Fatalf("旧值 %q 应直接运行并留痕：%+v", tc.stored, detail.Messages)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------- 三档和两只文件工具
+
+// 新建或修改文件这一类：read_only 拒绝，workspace 和 full 允许（不再询问）；结果带路径、新建还是修改、字节数，edit_file 另给差异。
 func TestFileWritesFollowThePermissionMode(t *testing.T) {
 	cases := []struct {
 		mode string
-		want string // allow / ask / deny
+		want string // allow / deny
 	}{
-		{session.PermissionPlan, "deny"},
-		{session.PermissionAsk, "ask"},
-		{session.PermissionAcceptEdits, "allow"},
-		{session.PermissionAuto, "allow"},
-		{session.PermissionYolo, "allow"},
+		{session.PermissionReadOnly, "deny"},
+		{session.PermissionWorkspace, "allow"},
+		{session.PermissionFull, "allow"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {
 			h := newHarness(t, writeAndEditScript())
 			created := h.prefaceWithEmployee()
-			if tc.mode != session.PermissionAsk {
+			if tc.mode != session.PermissionWorkspace {
 				h.mustSetMode(created.ID, tc.mode)
 			}
 			stream := h.openStream(created.ID)
 			defer stream.close()
 			turn := h.sayAsync(created.ID, contract.RoleInitiator, "把周会要点整理成一个文件")
-
-			if tc.want == "ask" {
-				card := h.waitPending(created.ID)
-				if card.Action != session.ActionWriteFile || card.Tool != contract.ToolWriteFile || card.Path != "notes/周会要点.md" || card.Object != "notes/周会要点.md" {
-					t.Fatalf("第一张权限确认卡 = %+v", card)
-				}
-				if !requestIDPattern.MatchString(card.RequestID) || card.ActionLabel != "写入文件" || card.Detail == "" {
-					t.Fatalf("确认卡缺少编号、动作说法或说明：%+v", card)
-				}
-				// 三个按钮由程序配好
-				decisions := []string{}
-				for _, choice := range card.Choices {
-					decisions = append(decisions, choice.Decision)
-				}
-				if fmt.Sprint(decisions) != fmt.Sprint([]string{session.DecisionAllowOnce, session.DecisionAlwaysAllow, session.DecisionDeny}) {
-					t.Fatalf("按钮 = %v", decisions)
-				}
-				h.mustDecide(created.ID, card, session.DecisionAllowOnce)
-				card = h.waitPending(created.ID)
-				if card.Tool != contract.ToolEditFile || card.Path != "notes/周会要点.md" {
-					t.Fatalf("第二张权限确认卡 = %+v", card)
-				}
-				h.mustDecide(created.ID, card, session.DecisionAllowOnce)
-			}
-			events := h.waitTurn(stream, turn)
+			h.waitTurn(stream, turn)
 			detail := h.readSession(created.ID)
 
 			switch tc.want {
-			case "allow", "ask":
+			case "allow":
 				if got := h.workspaceText(t, "notes/周会要点.md"); got != noteAfterEdit {
 					t.Fatalf("文件内容 = %q", got)
 				}
@@ -293,16 +359,21 @@ func TestFileWritesFollowThePermissionMode(t *testing.T) {
 				if diff, _ := edited["diff"].(string); !strings.Contains(diff, "-- 华东持平") || !strings.Contains(diff, "+- 华东小幅上升") {
 					t.Fatalf("edit_file 的差异摘要 = %q", diff)
 				}
+				// 免问放行也留痕：每次写都有一条，不弹确认卡
+				allowed := entriesOf(detail.Messages, session.KindPermissionAllowed)
+				if cards := permissionCards(detail); len(cards) != 0 || len(allowed) != 2 || allowed[0].Tool != contract.ToolWriteFile || allowed[0].Reason == "" {
+					t.Fatalf("免问放行的留痕 = %+v，确认卡 = %+v", allowed, cards)
+				}
 			case "deny":
 				if h.workspaceHas("notes/周会要点.md") {
-					t.Fatal("plan 模式下不该写出文件")
+					t.Fatal("read_only 模式下不该写出文件")
 				}
 				denied := deniedTools(detail)
 				if len(denied) != 2 || denied[0].Tool != contract.ToolWriteFile || denied[1].Tool != contract.ToolEditFile {
 					t.Fatalf("拒绝留痕 = %+v", denied)
 				}
 				for _, message := range denied {
-					if !strings.Contains(message.Reason, "计划模式") {
+					if !strings.Contains(message.Reason, "仅可查看模式") || !strings.Contains(message.Reason, "不能写入文件") {
 						t.Fatalf("拒绝原因 = %q", message.Reason)
 					}
 				}
@@ -310,35 +381,7 @@ func TestFileWritesFollowThePermissionMode(t *testing.T) {
 				if got := assistantAfter(detail, denied[1].Seq); got != "要点已写进 notes/周会要点.md。" {
 					t.Fatalf("拒绝之后的回复 = %q", got)
 				}
-			}
-
-			cards := permissionCards(detail)
-			allowed := entriesOf(detail.Messages, session.KindPermissionAllowed)
-			switch tc.want {
-			case "ask":
-				// 每次答复都在会话里：两张已作答的确认卡；事件流里推送过确认卡
-				if len(cards) != 2 || cards[0].Pending || cards[1].Pending || cards[0].Decision != session.DecisionAllowOnce || len(cards[0].Choices) != 0 {
-					t.Fatalf("权限确认卡 = %+v", cards)
-				}
-				pushed := false
-				for _, event := range events {
-					if event.Type == session.EventMessage && event.Msg != nil && event.Msg.Card != nil && event.Msg.Card.Type == session.CardPermission {
-						pushed = true
-					}
-				}
-				if !pushed {
-					t.Fatalf("事件流里没有推送权限确认卡：%s", eventTypes(events))
-				}
-				if len(allowed) != 0 {
-					t.Fatalf("问过的动作不该再记自动放行：%+v", allowed)
-				}
-			case "allow":
-				// 免问放行也留痕：每次写都有一条
-				if len(cards) != 0 || len(allowed) != 2 || allowed[0].Tool != contract.ToolWriteFile || allowed[0].Reason == "" {
-					t.Fatalf("免问放行的留痕 = %+v，确认卡 = %+v", allowed, cards)
-				}
-			case "deny":
-				if len(cards) != 0 || len(allowed) != 0 {
+				if cards, allowed := permissionCards(detail), entriesOf(detail.Messages, session.KindPermissionAllowed); len(cards) != 0 || len(allowed) != 0 {
 					t.Fatalf("拒绝的动作不该有确认卡或放行留痕：%+v %+v", cards, allowed)
 				}
 			}
@@ -363,7 +406,7 @@ func loggedToolResult(t *testing.T, detail session.Detail, tool string) any {
 	return nil
 }
 
-// 读始终允许：plan 模式下也能列目录、读文件，不弹确认。
+// 读始终允许：read_only 模式下也能列目录、读文件，不弹确认。
 func TestReadingIsAlwaysAllowed(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls("list_files", map[string]any{}),
@@ -372,140 +415,142 @@ func TestReadingIsAlwaysAllowed(t *testing.T) {
 	))
 	h.writeWorkspaceFile(t, "资料/说明.txt", []byte("华南环比下降"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionPlan)
+	h.mustSetMode(created.ID, session.PermissionReadOnly)
 
 	h.say(created.ID, contract.RoleInitiator, "看看资料")
 
 	detail := h.readSession(created.ID)
 	if got := toolNamesOf(detail.Messages, session.KindToolCalled); fmt.Sprint(got) != "[list_files read_file]" {
-		t.Fatalf("plan 模式下读应被允许：%v，拒绝 %+v", got, deniedTools(detail))
+		t.Fatalf("read_only 模式下读应被允许：%v，拒绝 %+v", got, deniedTools(detail))
 	}
 	if len(permissionCards(detail)) != 0 || len(deniedTools(detail)) != 0 {
 		t.Fatalf("读不该出现权限确认或拒绝：%+v", detail.Messages)
 	}
 }
 
-// ---------------------------------------------------------------- 三种答复
+// ---------------------------------------------------------------- 权限确认的答复
+//
+// 仅限工作区下会弹权限确认卡的只剩运行命令（写文件已不再询问；运行员工、目录文件用的是各自的卡）。
+// 答复的通用机制（允许一次、拒绝、停止时取消、非发起人不能答、答复只算一次）用 shell 在主接缝上验证；
+// “本会话总是允许这一类”按动作类别记、换模式清空，在 internal/session 的单元测试里用假工具验证
+// （shell 不提供总是允许，见 tl2_shell_test.go）。
 
-func TestThreeAnswersToAPermissionRequest(t *testing.T) {
-	t.Run("拒绝：把发起人拒绝交给模型，不写文件", func(t *testing.T) {
+// shellAskScript Agent 依次调用若干条 shell 命令（每条 echo 一个标记），最后说一句话。
+func shellAskScript(markers ...string) agent.ModelScript {
+	turns := []agent.ScriptedTurn{}
+	for _, marker := range markers {
+		turns = append(turns, modelCalls(contract.ToolShell, shellCall("echo "+marker)))
+	}
+	return frontdeskScript(append(turns, modelSays("命令都处理完了。"))...)
+}
+
+func TestTwoAnswersToAPermissionRequest(t *testing.T) {
+	t.Run("拒绝：把发起人拒绝交给模型，命令不运行", func(t *testing.T) {
 		h := newHarness(t, frontdeskScript(
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-			modelSays("好的，那我不写了。"),
+			modelCalls(contract.ToolShell, shellCall("echo denied-marker")),
+			modelSays("好的，那我不跑了。"),
 		))
 		created := h.prefaceWithEmployee()
 		stream := h.openStream(created.ID)
 		defer stream.close()
-		turn := h.sayAsync(created.ID, contract.RoleInitiator, "写一个文件")
+		turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
 		card := h.waitPending(created.ID)
+		if !requestIDPattern.MatchString(card.RequestID) || card.ActionLabel != "运行命令" || card.Action != session.ActionShell || card.Detail == "" {
+			t.Fatalf("确认卡缺少编号、动作说法或说明：%+v", card)
+		}
 		h.mustDecide(created.ID, card, session.DecisionDeny)
 		h.waitTurn(stream, turn)
 
-		if h.workspaceHas("a.md") {
-			t.Fatal("拒绝之后文件不该出现")
+		detail := h.readSession(created.ID)
+		if len(toolMessages(detail, contract.ToolShell)) != 0 {
+			t.Fatal("拒绝之后命令不该运行")
 		}
-		// 模型拿到的工具结果是“发起人拒绝”，并写明被拒绝的对象
+		// 模型拿到的工具结果是“发起人拒绝”
 		results := toolResultTexts(h)
-		if len(results) != 1 || !strings.Contains(results[0], "发起人拒绝") || !strings.Contains(results[0], "a.md") {
+		if len(results) != 1 || !strings.Contains(results[0], "发起人拒绝") {
 			t.Fatalf("交给模型的拒绝 = %v", results)
 		}
-		detail := h.readSession(created.ID)
 		cards := permissionCards(detail)
 		if len(cards) != 1 || cards[0].Decision != session.DecisionDeny || cards[0].Pending {
 			t.Fatalf("确认卡 = %+v", cards)
 		}
 		// 拒绝也写进会话日志
-		if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != contract.ToolWriteFile || !strings.Contains(denied[0].Reason, "发起人拒绝") || denied[0].Decision != session.DecisionDeny {
+		if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != contract.ToolShell || !strings.Contains(denied[0].Reason, "发起人拒绝") || denied[0].Decision != session.DecisionDeny {
 			t.Fatalf("拒绝留痕 = %+v", denied)
 		}
-		if got := lastAssistant(detail.Messages); got != "好的，那我不写了。" {
+		if got := lastAssistant(detail.Messages); got != "好的，那我不跑了。" {
 			t.Fatalf("回复 = %q", got)
 		}
 	})
 
-	t.Run("允许一次：只放行这一次，下一次再问", func(t *testing.T) {
-		h := newHarness(t, frontdeskScript(
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "b.md", "content": "乙"}),
-			modelSays("都写好了。"),
-		))
+	t.Run("允许一次：只放行这一次，下一次再问；事件流里推送过确认卡", func(t *testing.T) {
+		h := newHarness(t, shellAskScript("first-marker", "second-marker"))
 		created := h.prefaceWithEmployee()
 		stream := h.openStream(created.ID)
 		defer stream.close()
-		turn := h.sayAsync(created.ID, contract.RoleInitiator, "写两个文件")
+		turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑两条命令")
 		first := h.waitPending(created.ID)
 		h.mustDecide(created.ID, first, session.DecisionAllowOnce)
 		second := h.waitPending(created.ID)
-		if second.RequestID == first.RequestID || second.Path != "b.md" {
+		if second.RequestID == first.RequestID {
 			t.Fatalf("第二次应重新问：%+v", second)
 		}
 		h.mustDecide(created.ID, second, session.DecisionAllowOnce)
-		h.waitTurn(stream, turn)
-		if h.workspaceText(t, "a.md") != "甲" || h.workspaceText(t, "b.md") != "乙" {
-			t.Fatal("两次都允许之后两个文件都该写出来")
+		events := h.waitTurn(stream, turn)
+
+		detail := h.readSession(created.ID)
+		if calls := toolMessages(detail, contract.ToolShell); len(calls) != 2 {
+			t.Fatalf("两次都允许之后两条命令都该运行：%d", len(calls))
+		}
+		cards := permissionCards(detail)
+		if len(cards) != 2 || cards[0].Pending || cards[1].Pending || cards[0].Decision != session.DecisionAllowOnce || len(cards[0].Choices) != 0 {
+			t.Fatalf("两张已作答的确认卡 = %+v", cards)
+		}
+		pushed := false
+		for _, event := range events {
+			if event.Type == session.EventMessage && event.Msg != nil && event.Msg.Card != nil && event.Msg.Card.Type == session.CardPermission {
+				pushed = true
+			}
+		}
+		if !pushed {
+			t.Fatalf("事件流里没有推送权限确认卡：%s", eventTypes(events))
+		}
+		if allowed := entriesOf(detail.Messages, session.KindPermissionAllowed); len(allowed) != 0 {
+			t.Fatalf("问过的动作不该再记自动放行：%+v", allowed)
 		}
 	})
 
-	t.Run("本会话总是允许这一类：同类不再问，写进日志；换模式清空", func(t *testing.T) {
-		h := newHarness(t, frontdeskScript(
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "b.md", "content": "乙"}),
-			modelSays("两个都写好了。"),
-			modelCalls(contract.ToolEditFile, map[string]any{"path": "a.md", "oldText": "甲", "newText": "甲甲"}),
-			modelSays("a 改好了。"),
-			// 换模式之后这一类不再被记住：又问一次，这次拒绝
-			modelCalls(contract.ToolWriteFile, map[string]any{"path": "d.md", "content": "丁"}),
-			modelSays("那 d 不写了。"),
-		))
+	t.Run("换模式：等确认时换成 full，下一条命令直接运行", func(t *testing.T) {
+		h := newHarness(t, shellAskScript("one-marker", "two-marker"))
 		created := h.prefaceWithEmployee()
 		stream := h.openStream(created.ID)
 		defer stream.close()
-		turn := h.sayAsync(created.ID, contract.RoleInitiator, "写两个文件")
+		turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑两条命令")
 		first := h.waitPending(created.ID)
-		h.mustDecide(created.ID, first, session.DecisionAlwaysAllow)
+		// 等第一张确认的时候换成 full（换模式不占这一轮的写锁），再答复它：第二条命令不再问
+		h.mustSetMode(created.ID, session.PermissionFull)
+		h.mustDecide(created.ID, first, session.DecisionAllowOnce)
 		h.waitTurn(stream, turn)
-		if h.workspaceText(t, "a.md") != "甲" || h.workspaceText(t, "b.md") != "乙" {
-			t.Fatal("总是允许之后，同类的第二个文件不再问，直接写出")
-		}
+
 		detail := h.readSession(created.ID)
-		if cards := permissionCards(detail); len(cards) != 1 || cards[0].Decision != session.DecisionAlwaysAllow {
-			t.Fatalf("只该问过一次：%+v", cards)
+		if calls := toolMessages(detail, contract.ToolShell); len(calls) != 2 {
+			t.Fatalf("两条命令都该运行：%d", len(calls))
 		}
-		if allowed := entriesOf(detail.Messages, session.KindPermissionAllowed); len(allowed) != 1 || allowed[0].Tool != contract.ToolWriteFile || !strings.Contains(allowed[0].Reason, "总是允许") {
-			t.Fatalf("总是允许放行的留痕 = %+v", allowed)
+		if cards := permissionCards(detail); len(cards) != 1 {
+			t.Fatalf("换成 full 之后不该再问：%+v", cards)
 		}
-
-		// 同一会话、同一模式：edit_file 与 write_file 同属“写入文件”这一类，也不再问
-		turn = h.sayAsync(created.ID, contract.RoleInitiator, "改一下 a")
-		h.waitTurn(stream, turn)
-		if h.workspaceText(t, "a.md") != "甲甲" {
-			t.Fatal("本会话总是允许之后，同类的修改不再问")
-		}
-
-		// 换模式（同一档也换）：清空
-		h.mustSetMode(created.ID, session.PermissionAsk)
-		turn = h.sayAsync(created.ID, contract.RoleInitiator, "再写一个")
-		card := h.waitPending(created.ID)
-		if card.Path != "d.md" {
-			t.Fatalf("换模式之后应重新问：%+v", card)
-		}
-		h.mustDecide(created.ID, card, session.DecisionDeny)
-		h.waitTurn(stream, turn)
-		if h.workspaceHas("d.md") {
-			t.Fatal("拒绝之后 d.md 不该出现")
+		if allowed := entriesOf(detail.Messages, session.KindPermissionAllowed); len(allowed) != 1 || allowed[0].Tool != contract.ToolShell {
+			t.Fatalf("full 放行的留痕 = %+v", allowed)
 		}
 	})
 }
 
 func TestPermissionAnswersAreOnlyFromTheInitiatorAndOnce(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-		modelSays("写好了。"),
-	))
+	h := newHarness(t, shellAskScript("answer-marker"))
 	created := h.prefaceWithEmployee()
 	stream := h.openStream(created.ID)
 	defer stream.close()
-	turn := h.sayAsync(created.ID, contract.RoleInitiator, "写一个文件")
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
 	card := h.waitPending(created.ID)
 
 	for _, role := range []contract.Role{contract.RoleReviewer, contract.RoleOperator, ""} {
@@ -521,8 +566,8 @@ func TestPermissionAnswersAreOnlyFromTheInitiatorAndOnce(t *testing.T) {
 	if status, data := h.decide(created.ID, "0123456789abcdef", contract.RoleInitiator, session.DecisionAllowOnce); status != http.StatusNotFound {
 		t.Fatalf("不存在的确认：%d %s", status, data)
 	}
-	// 上面的错误答复都没生效：卡还在等，文件没写
-	if still := h.waitPending(created.ID); still.RequestID != card.RequestID || h.workspaceHas("a.md") {
+	// 上面的错误答复都没生效：卡还在等，命令没运行
+	if still := h.waitPending(created.ID); still.RequestID != card.RequestID || len(toolMessages(h.readSession(created.ID), contract.ToolShell)) != 0 {
 		t.Fatalf("确认卡应仍在等待：%+v", still)
 	}
 	h.mustDecide(created.ID, card, session.DecisionAllowOnce)
@@ -530,8 +575,8 @@ func TestPermissionAnswersAreOnlyFromTheInitiatorAndOnce(t *testing.T) {
 		t.Fatalf("同一张卡答两次：%d %s", status, data)
 	}
 	h.waitTurn(stream, turn)
-	if h.workspaceText(t, "a.md") != "甲" {
-		t.Fatal("允许之后文件应写出")
+	if calls := toolMessages(h.readSession(created.ID), contract.ToolShell); len(calls) != 1 {
+		t.Fatalf("允许之后命令应运行一次：%d", len(calls))
 	}
 	// 答复的是别的会话的确认：找不到
 	other := h.createSession()
@@ -542,14 +587,11 @@ func TestPermissionAnswersAreOnlyFromTheInitiatorAndOnce(t *testing.T) {
 
 // 等确认时人还没答复，状态点显示“等你处理”。
 func TestPendingPermissionLightsTheStatusDot(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-		modelSays("写好了。"),
-	))
+	h := newHarness(t, shellAskScript("dot-marker"))
 	created := h.prefaceWithEmployee()
 	stream := h.openStream(created.ID)
 	defer stream.close()
-	turn := h.sayAsync(created.ID, contract.RoleInitiator, "写一个文件")
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
 	card := h.waitPending(created.ID)
 
 	dots := map[contract.Role]string{}
@@ -592,15 +634,24 @@ func findSessionSummaries(t *testing.T, data []byte) []session.Summary {
 
 // ---------------------------------------------------------------- 停止
 
+// ranShell 命令真的运行过（有输出）；被停止没执行的调用只留一句“已取消”。
+func ranShell(detail session.Detail) bool {
+	for _, message := range toolMessages(detail, contract.ToolShell) {
+		if result, ok := message.Result.(map[string]any); ok {
+			if _, has := result["output"]; has {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestStopWhileWaitingForPermission(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
-		modelSays("写好了。"),
-	))
+	h := newHarness(t, shellAskScript("stop-marker"))
 	created := h.prefaceWithEmployee()
 	stream := h.openStream(created.ID)
 	defer stream.close()
-	turn := h.sayAsync(created.ID, contract.RoleInitiator, "写一个文件")
+	turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个命令")
 	card := h.waitPending(created.ID)
 
 	if status, data := h.postJSON("/api/sessions/"+created.ID+"/stop", contract.RoleInitiator, map[string]any{}); status != http.StatusOK {
@@ -614,22 +665,22 @@ func TestStopWhileWaitingForPermission(t *testing.T) {
 	if len(cards) != 1 || cards[0].Pending || cards[0].Decision != session.DecisionCancelled || len(cards[0].Choices) != 0 {
 		t.Fatalf("停止之后未决的确认记为已取消：%+v", cards)
 	}
-	if h.workspaceHas("a.md") {
-		t.Fatal("停止之后文件不该出现")
+	if ranShell(detail) {
+		t.Fatal("停止之后命令不该运行")
 	}
-	if got := cancelledTools(detail.Messages); !containsString(got, contract.ToolWriteFile) {
-		t.Fatalf("没执行的写文件记“已取消”：%v", got)
+	if got := cancelledTools(detail.Messages); !containsString(got, contract.ToolShell) {
+		t.Fatalf("没执行的命令记“已取消”：%v", got)
 	}
-	// 这一轮结束了：后面的剧本（说“写好了”）没有被消费
-	if got := lastAssistant(detail.Messages); got == "写好了。" {
+	// 这一轮结束了：后面的剧本（说“处理完了”）没有被消费
+	if got := lastAssistant(detail.Messages); got == "命令都处理完了。" {
 		t.Fatalf("停止之后不该继续往下说：%q", got)
 	}
 	// 取消的卡不能再作答
 	if status, data := h.decide(created.ID, card.RequestID, contract.RoleInitiator, session.DecisionAllowOnce); status != http.StatusConflict {
 		t.Fatalf("已取消的确认再作答：%d %s", status, data)
 	}
-	if h.workspaceHas("a.md") {
-		t.Fatal("作答已取消的确认不该写出文件")
+	if ranShell(h.readSession(created.ID)) {
+		t.Fatal("作答已取消的确认不该运行命令")
 	}
 }
 
@@ -673,7 +724,7 @@ func TestWritesOutsideTheAllowedAreaAreAlwaysDenied(t *testing.T) {
 	h.setFrontdeskScript(frontdeskScript(append(calls, modelSays("这些地方我写不了。"))...))
 	created := h.prefaceWithEmployee()
 	// 最松的模式：这些仍然被拒绝，也不会弹确认
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "随便写")
 
@@ -699,11 +750,11 @@ func TestWritesOutsideTheAllowedAreaAreAlwaysDenied(t *testing.T) {
 		}
 	}
 	if len(permissionCards(detail)) != 0 {
-		t.Fatal("yolo 模式下这些也不该问，直接拒绝")
+		t.Fatal("full 模式下这些也不该问，直接拒绝")
 	}
 }
 
-// 边界先于权限模式：ask 模式下越界的写直接拒绝，不弹确认。
+// 边界先于权限模式：workspace 模式下越界的写直接拒绝，不弹确认。
 func TestBoundaryDenialComesBeforeTheQuestion(t *testing.T) {
 	h := newHarness(t, frontdeskScript(
 		modelCalls(contract.ToolWriteFile, map[string]any{"path": "交付/周报.md", "content": "冒名"}),
@@ -730,7 +781,7 @@ func TestEditFileReportsNoMatchAndMultipleMatches(t *testing.T) {
 	))
 	h.writeWorkspaceFile(t, "notes.md", []byte("第一行\n重复的一句\n重复的一句\n"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleInitiator, "改几处")
 
@@ -778,7 +829,7 @@ func TestWriteFileOverwritesAnExistingFile(t *testing.T) {
 	))
 	h.writeWorkspaceFile(t, "notes.md", []byte("旧内容"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionAcceptEdits)
+	h.mustSetMode(created.ID, session.PermissionWorkspace)
 
 	h.say(created.ID, contract.RoleInitiator, "覆盖")
 
@@ -832,7 +883,7 @@ func TestNoModeLetsTheAgentDecideTaskTransitions(t *testing.T) {
 	}
 }
 
-// 系统提示词写明当前模式：plan 下只读、被拒绝后换办法。
+// 系统提示词写明当前模式：read_only 下只读、被拒绝后换办法。
 func TestSystemPromptStatesThePermissionMode(t *testing.T) {
 	for _, mode := range session.PermissionModes {
 		t.Run(mode, func(t *testing.T) {
@@ -851,8 +902,8 @@ func TestSystemPromptStatesThePermissionMode(t *testing.T) {
 			if !strings.Contains(prompt, session.PermissionModeLabels[mode]+"（"+mode+"）") {
 				t.Fatalf("系统提示词没写明 %s 模式：%s", mode, prompt)
 			}
-			if mode == session.PermissionPlan && !strings.Contains(prompt, "只读") {
-				t.Fatalf("plan 模式要写明只读：%s", prompt)
+			if mode == session.PermissionReadOnly && !strings.Contains(prompt, "只读") {
+				t.Fatalf("read_only 模式要写明只读：%s", prompt)
 			}
 			if !strings.Contains(prompt, "换个办法") || !strings.Contains(prompt, "1 MB") {
 				t.Fatalf("系统提示词要写明被拒绝后换办法和写入边界：%s", prompt)

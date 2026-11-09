@@ -33,21 +33,19 @@ func shellResult(t *testing.T, detail session.Detail) map[string]any {
 	return resultMap(t, calls[len(calls)-1])
 }
 
-// 矩阵：plan 拒绝；ask / accept_edits / auto 每次问；yolo 允许（并留痕，含完整命令）。
+// 矩阵：read_only 拒绝；workspace 每次问；full 允许（并留痕，含完整命令）。
 func TestShellFollowsThePermissionMatrix(t *testing.T) {
 	cases := []struct{ mode, want string }{
-		{session.PermissionPlan, "deny"},
-		{session.PermissionAsk, "ask"},
-		{session.PermissionAcceptEdits, "ask"},
-		{session.PermissionAuto, "ask"},
-		{session.PermissionYolo, "allow"},
+		{session.PermissionReadOnly, "deny"},
+		{session.PermissionWorkspace, "ask"},
+		{session.PermissionFull, "allow"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {
 			command := "echo matrix-ok"
 			h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall(command)), modelSays("跑完了。")))
 			created := h.prefaceWithEmployee()
-			if tc.mode != session.PermissionAsk {
+			if tc.mode != session.PermissionWorkspace {
 				h.mustSetMode(created.ID, tc.mode)
 			}
 			stream := h.openStream(created.ID)
@@ -82,11 +80,11 @@ func TestShellFollowsThePermissionMatrix(t *testing.T) {
 			switch tc.want {
 			case "deny":
 				denied := deniedTools(detail)
-				if len(denied) != 1 || denied[0].Tool != contract.ToolShell || !strings.Contains(denied[0].Reason, "计划模式") {
-					t.Fatalf("plan 下应拒绝：%+v", denied)
+				if len(denied) != 1 || denied[0].Tool != contract.ToolShell || !strings.Contains(denied[0].Reason, "仅可查看模式") {
+					t.Fatalf("read_only 下应拒绝：%+v", denied)
 				}
 				if len(toolMessages(detail, contract.ToolShell)) != 0 {
-					t.Fatal("plan 下命令不该运行")
+					t.Fatal("read_only 下命令不该运行")
 				}
 			default:
 				out := fmt.Sprint(shellResult(t, detail)["output"])
@@ -97,7 +95,7 @@ func TestShellFollowsThePermissionMatrix(t *testing.T) {
 			allowed := entriesOf(detail.Messages, session.KindPermissionAllowed)
 			if tc.want == "allow" {
 				if len(allowed) != 1 || allowed[0].Tool != contract.ToolShell {
-					t.Fatalf("yolo 自动放行要留痕：%+v", allowed)
+					t.Fatalf("full 自动放行要留痕：%+v", allowed)
 				}
 				args, _ := allowed[0].Args.(map[string]any)
 				if args["command"] != command {
@@ -133,7 +131,7 @@ func TestShellAskedAndDeniedByInitiator(t *testing.T) {
 	}
 }
 
-// 说话人不是发起人时任何模式都拒绝（含 yolo），也不弹确认卡。
+// 说话人不是发起人时任何模式都拒绝（含 full），也不弹确认卡。
 func TestShellIsRefusedForNonInitiatorsInEveryMode(t *testing.T) {
 	for _, mode := range session.PermissionModes {
 		t.Run(mode, func(t *testing.T) {
@@ -165,7 +163,7 @@ func TestShellOutputFormat(t *testing.T) {
 		modelSays("好。"),
 	))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "跑")
 
@@ -191,7 +189,7 @@ func TestShellOutputFormat(t *testing.T) {
 func TestShellTimeoutKillsTheCommandAndSaysSo(t *testing.T) {
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall("echo before; sleep 30", map[string]any{"timeout_ms": 2500})), modelSays("超时了。")))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	started := time.Now()
 	h.say(created.ID, contract.RoleInitiator, "跑个慢的")
@@ -208,7 +206,7 @@ func TestShellTimeoutKillsTheCommandAndSaysSo(t *testing.T) {
 func TestShellStopButtonKillsTheCommand(t *testing.T) {
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall("sleep 60")), modelSays("不该说到这。")))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 	stream := h.openStream(created.ID)
 	defer stream.close()
 	turn := h.sayAsync(created.ID, contract.RoleInitiator, "跑个很慢的")
@@ -237,7 +235,7 @@ func TestShellWorkdirMustStayInsideTheWorkspace(t *testing.T) {
 	), withAppMode())
 	h.writeWorkspaceFile(t, "子目录/占位.txt", []byte("x"))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "跑")
 
@@ -264,7 +262,7 @@ func TestShellDoesNotLeakSecretsInTheEnvironment(t *testing.T) {
 	}
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall(command)), modelSays("好。")), withSerial())
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "看环境变量")
 
@@ -280,7 +278,7 @@ func TestShellKeepsOnlyTheTailOfHugeOutput(t *testing.T) {
 	}
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall(command)), modelSays("好。")))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "大量输出")
 
@@ -298,7 +296,7 @@ func TestShellLogKeepsOnlyTheFirst4KBOfTheCommand(t *testing.T) {
 	long := "echo " + strings.Repeat("a", 6000)
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall(long)), modelSays("好。")))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 
 	h.say(created.ID, contract.RoleInitiator, "长命令")
 
@@ -314,19 +312,19 @@ func TestShellLogKeepsOnlyTheFirst4KBOfTheCommand(t *testing.T) {
 
 // ---------------------------------------------------------------- 缓解措施 (a)(b)
 
-func TestShellLoopbackCommandsAskEvenInYolo(t *testing.T) {
-	// 命令里出现本机服务地址：yolo 也不放行，弹确认卡并加警告；人拒绝后命令不运行
+func TestShellLoopbackCommandsAskEvenInFull(t *testing.T) {
+	// 命令里出现本机服务地址：full 也不放行，弹确认卡并加警告；人拒绝后命令不运行
 	command := `curl -H "x-role: reviewer" -X POST http://127.0.0.1:8787/api/tasks/x/commands`
 	h := newHarness(t, frontdeskScript(modelCalls(contract.ToolShell, shellCall(command)), modelSays("好。")))
 	created := h.prefaceWithEmployee()
-	h.mustSetMode(created.ID, session.PermissionYolo)
+	h.mustSetMode(created.ID, session.PermissionFull)
 	stream := h.openStream(created.ID)
 	defer stream.close()
 	turn := h.sayAsync(created.ID, contract.RoleInitiator, "审核通过")
 
 	card := h.waitPending(created.ID)
 	if card.Command != command || len(card.Warnings) == 0 || !strings.Contains(strings.Join(card.Warnings, ""), "本机服务地址") {
-		t.Fatalf("yolo 下遇到本机服务地址应弹带警告的确认卡：%+v", card)
+		t.Fatalf("full 下遇到本机服务地址应弹带警告的确认卡：%+v", card)
 	}
 	h.mustDecide(created.ID, card, session.DecisionDeny)
 	h.waitTurn(stream, turn)
@@ -411,7 +409,7 @@ func TestStateChangingEndpointsNeedABrowserPageOrigin(t *testing.T) {
 		{http.MethodPost, "/api/sessions/" + created.ID + "/permissions/0123456789abcdef", `{"decision":"allow_once"}`},
 		{http.MethodPost, "/api/sessions/" + created.ID + "/questions/0123456789abcdef", `{"answers":[]}`},
 		{http.MethodPost, "/api/sessions/" + created.ID + "/employee-forms/0123456789abcdef", `{"decision":"reject"}`},
-		{http.MethodPut, "/api/sessions/" + created.ID + "/permission-mode", `{"mode":"yolo"}`},
+		{http.MethodPut, "/api/sessions/" + created.ID + "/permission-mode", `{"mode":"full"}`},
 	}
 	for _, endpoint := range endpoints {
 		bare := map[string]string{"x-role": "reviewer", "Content-Type": "application/json"}

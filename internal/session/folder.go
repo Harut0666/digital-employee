@@ -455,7 +455,7 @@ func (t *turn) folderTools() []tool {
 				"reason": map[string]any{"type": "string", "description": "一句话说明为什么用这个文件"},
 			}},
 		},
-		// 过权限关口（T49）：计划模式拒绝；放开模式自动确认；其余模式发“使用目录文件”卡，由人确认
+		// 过权限关口（T49）：仅可查看模式拒绝；完全权限模式自动确认；仅限工作区模式发“使用目录文件”卡，由人确认
 		action:     ActionUseFolderFile,
 		selfDecide: true,
 		describe: func(arguments map[string]any) (string, string) {
@@ -491,7 +491,7 @@ func (t *turn) folderTools() []tool {
 				if err := t.write(trace); err != nil {
 					return nil, err
 				}
-				return map[string]any{"used": copied[0], "confirmed": "放开模式自动确认，文件已复制进会话材料"}, nil
+				return map[string]any{"used": copied[0], "confirmed": "完全权限模式自动确认，文件已复制进会话材料"}, nil
 			}
 			t.cards = append(t.cards, Card{
 				Type: CardUseFile, Path: rel, Name: filepath.Base(target), Size: info.Size(), Reason: reason,
@@ -569,7 +569,7 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 }
 
 // copyFolderMaterials 把工作区目录里的文件复制进会话材料，写 attachment_added；返回规范化后的相对路径。
-// 一批里有一个路径不能用就整批拒绝，不留半份材料。人确认（UseFolderFiles、员工表单卡）和“放开”模式自动确认共用它。
+// 一批里有一个路径不能用就整批拒绝，不留半份材料。人确认（UseFolderFiles、员工表单卡）和“完全权限”模式自动确认共用它。
 func (m *Manager) copyFolderMaterials(t *turn, paths []string) ([]string, error) {
 	root := m.workspaceDir(t.current.workspaceID)
 	if root == "" {

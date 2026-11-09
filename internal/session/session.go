@@ -1,7 +1,7 @@
 // Package session 是会话模块：人和前台 Agent 的对话，独立于任务引擎。
 //
 // 会话只通过 contract.Engine 和任务打交道。发送任务命令的路径只有开工（startEmployeeTask：员工表单卡上人确认，
-// 或 run_employee 在 auto、yolo 下免确认直接开工）和旧会话兼容的 Submit，Agent 的工具拿到的任务接口是只读的（见 frontdesk.go）。
+// 或 run_employee 在 full 下免确认直接开工）和旧会话兼容的 Submit，Agent 的工具拿到的任务接口是只读的（见 frontdesk.go）。
 package session
 
 import (
@@ -197,7 +197,7 @@ type View struct {
 	Archived bool `json:"archived"`
 	// Unread 任务交付或终止之后还没打开过
 	Unread bool `json:"unread"`
-	// PermissionMode 权限模式（T48）：plan、ask、accept_edits、auto、yolo；新会话总是 ask
+	// PermissionMode 权限模式（ADR-0007 增补二）：read_only、workspace、full；新会话总是 workspace。只输出新值
 	PermissionMode string `json:"permissionMode"`
 	// Todos Agent 最新的待办清单（todo_write）；没写过时为空数组
 	Todos []TodoItem `json:"todos"`
@@ -580,7 +580,7 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
 		Employee: summary.Employee, TaskID: summary.ID, TaskIDs: []string{summary.ID}, Attachments: []Attachment{},
-		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk, Todos: []TodoItem{},
+		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: DefaultPermissionMode, Todos: []TodoItem{},
 		Archived: m.legacyArchived.has(legacyPrefix + summary.ID),
 	}
 	m.applySummary(view, summary)
