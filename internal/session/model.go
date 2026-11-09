@@ -103,6 +103,10 @@ func (m *Manager) checkSelectable(ref contract.ModelRef) error {
 // 任务还没结束时，再写一条“模型已切换”任务事件（从下一个判断步骤生效，正在进行的调用不中断）；
 // 任务已结束（或没有任务）时只改会话的选择，下一次对话和下一个任务用它。
 // 由旧任务推导出的只读会话没有会话日志，改不了。
+//
+// 前台 Agent 正在回复（包括停在权限确认、员工表单卡上）时也能选：这一轮开头就定下了用哪个模型，
+// 新选择从下一轮对话起生效，当前这一轮继续用旧模型。选模型不碰草稿、材料、任务的状态，
+// 所以不占这一轮的写锁，只和别的“人的操作”互斥。
 func (m *Manager) SelectModel(id string, role contract.Role, connection, model string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以选模型")
@@ -111,7 +115,8 @@ func (m *Manager) SelectModel(id string, role contract.Role, connection, model s
 	if ref.Connection == "" || ref.Model == "" {
 		return nil, failure(contract.ErrInvalidInput, "选模型要同时给出连接和模型")
 	}
-	t, done, err := m.begin(id, role)
+	// 不等这一轮：Agent 正在回复、停在权限确认或员工表单卡上时也能换模型
+	t, done, err := m.beginAside(id)
 	if err != nil {
 		return nil, err
 	}
