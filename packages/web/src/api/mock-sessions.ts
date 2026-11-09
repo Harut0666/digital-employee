@@ -2,7 +2,7 @@
 // 路由不调模型：按员工名称和描述里的字粗略匹配，匹配不到就列出员工手选。
 // 任务卡片和 Go 一样读取时从任务事件投影，按钮取自快照。状态点照 internal/session/status.go 的规则后算。
 
-import type { TaskEvent } from "@de/core/contract";
+import { STATE_LABELS, type TaskEvent } from "@de/core/contract";
 import { CHECKLISTS } from "./mock-data";
 import { evaluateChecklist } from "./mock-rules";
 import type { SessionApi } from "./sessions";
@@ -63,7 +63,9 @@ interface MockSession {
   /** 会话属于哪个工作区（Spec 0006） */
   workspaceId: string;
   employee?: string;
+  /** 当前任务：会话里最新的一个；taskIds 是按开工顺序的全部任务 */
   taskId?: string;
+  taskIds: string[];
   draft?: Record<string, unknown>;
   /** 入库卡片上起草的描述（模拟模式不调模型，按任务标题拼一句） */
   filingDraft?: string;
@@ -193,6 +195,12 @@ export function createMockSessions(
     return (await tasks.listTasks()).find((t) => t.id === taskId);
   }
 
+  /** 会话里还没结束的任务（只可能是最新的那个）；和 internal/session/tasks.go 的 openTask 一致 */
+  async function openTask(s: MockSession): Promise<TaskSummary | undefined> {
+    const summary = await summaryOf(s.taskId);
+    return summary && !FINISHED.has(summary.state) ? summary : undefined;
+  }
+
   async function view(s: MockSession): Promise<SessionSummary> {
     const title = titleOf(s);
     const summary = await summaryOf(s.taskId);
@@ -210,6 +218,7 @@ export function createMockSessions(
       title,
       employee: s.employee,
       taskId: s.taskId,
+      taskIds: [...s.taskIds],
       draft: s.draft,
       attachments: attachments(s),
       createdAt: s.createdAt,
@@ -245,6 +254,17 @@ export function createMockSessions(
       default:
         return undefined;
     }
+  }
+
+  /** 每个任务分别投影；第二次运行起的消息 ID 加上运行次数前缀（每个任务的事件序号都从 1 开始） */
+  async function withTasks(messages: SessionMessage[], taskIds: string[], s?: MockSession): Promise<SessionMessage[]> {
+    let merged = messages.map((m) => ({ ...m }));
+    for (const [run, taskId] of taskIds.entries()) {
+      const part = await withTask([], taskId, s);
+      merged = merged.concat(run === 0 ? part : part.map((m) => ({ ...m, id: `r${run + 1}-${m.id}` })));
+    }
+    merged.sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
+    return merged;
   }
 
   async function withTask(messages: SessionMessage[], taskId: string, s?: MockSession): Promise<SessionMessage[]> {
@@ -469,6 +489,7 @@ export function createMockSessions(
       title: task.title,
       employee: task.employee,
       taskId: task.id,
+      taskIds: [task.id],
       attachments: [],
       createdAt: task.updatedAt,
       updatedAt: task.updatedAt,
@@ -544,7 +565,7 @@ export function createMockSessions(
       const own = await Promise.all(
         [...sessions.values()].filter((s) => (!workspaceId || s.workspaceId === workspaceId) && (options?.archived || !s.archived)).map(view),
       );
-      const bound = new Set(own.map((s) => s.taskId));
+      const bound = new Set(own.flatMap((s) => s.taskIds ?? []));
       // 由旧任务推导出的只读会话：发起事件里没有工作区的旧任务带不出归属，按不属于任何工作区处理
       const legacy = workspaceId
         ? []
@@ -568,7 +589,7 @@ export function createMockSessions(
       s.readUpTo = lastSeq(s.taskId);
       // 写文件的工具行要给界面（Go 后端把全部工具留痕都返回，界面只取写文件的）；别的工具留痕模拟模式不给
       const messages = projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file"));
-      return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskId ? await withTask(messages, s.taskId, s) : messages };
+      return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskIds.length > 0 ? await withTasks(messages, s.taskIds, s) : messages };
     },
 
     async updateSession(id, patch) {
@@ -589,6 +610,7 @@ export function createMockSessions(
         id: `s-mock-${counter}`,
         workspaceId: workspaceId ?? MOCK_WORKSPACE,
         archived: false,
+        taskIds: [],
         readUpTo: 0,
         skipped: new Set(),
         permissionMode: "ask",
@@ -678,7 +700,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以上传材料");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
       if (files.length === 0) return fail("invalid_input", "没有收到文件");
       s.files = [...s.files.filter((f) => !files.some((n) => n.name === f.name)), ...files];
       const out: SessionMessage[] = [];
@@ -700,7 +722,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认目录里的文件");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，请在暂停卡片上补充材料");
       if (paths.length === 0) return fail("invalid_input", "没有选择文件");
       const files: File[] = [];
       for (const p of paths) {
@@ -717,7 +739,8 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以提交");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "这个会话已有任务，要做新任务请开新会话");
+      const open = await openTask(s);
+      if (open) return fail("session_has_task", `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`);
       if (!s.employee) return fail("employee_required", "请先确认由哪个员工接手");
       const checklist = checklistOf(s, form ?? s.draft);
       if (checklist && !checklist.ready) return fail("checklist_incomplete", `开工清单还缺：${checklist.missing.join("、")}。备齐后才能开工。`);
@@ -729,17 +752,19 @@ export function createMockSessions(
       const uploads: UploadItem[] = s.files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
       const snapshot = await tasks.createTask({ employee: s.employee, form: startForm, uploads, model: s.selected ?? lastModel });
       s.taskId = snapshot.id;
+      s.taskIds.push(snapshot.id);
       taskModels.set(snapshot.id, s.selected ?? lastModel);
       const res = await tasks.command(snapshot.id, { type: "submit" });
       if (!res.ok) return fail("illegal_transition", "提交被拒绝");
       return reply(s, []);
     },
 
-    async draftFiling(id) {
+    async draftFiling(id, forTask) {
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以把交付物放进知识库");
       const s = writable(id);
       if (isFailure(s)) return s;
-      const task = s.taskId ? await tasks.getTask(s.taskId) : undefined;
+      const target = forTask ?? s.taskId;
+      const task = target && s.taskIds.includes(target) ? await tasks.getTask(target) : undefined;
       if (!task || task.state !== "delivered") return fail("illegal_transition", "任务交付之后才能放进知识库");
       const title = (await summaryOf(task.id))?.title ?? task.id;
       s.filingDraft = `${title}（模拟模式按标题起草的描述，请按实际内容修改）`;
@@ -750,7 +775,7 @@ export function createMockSessions(
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认跳过清单项");
       const s = writable(id);
       if (isFailure(s)) return s;
-      if (s.taskId) return fail("session_has_task", "任务已经开始，清单不能再改");
+      if (await openTask(s)) return fail("session_has_task", "任务已经开始，清单不能再改");
       const item = (s.employee ? CHECKLISTS[s.employee] : undefined)?.find((i) => i.id === itemId);
       if (!item) return fail("invalid_input", `开工清单里没有这一项：${itemId}`);
       if (item.required) return fail("invalid_input", `“${item.label}”是必需项，不能跳过`);
@@ -768,32 +793,40 @@ export function createMockSessions(
 
     async records(role) {
       const summaries = await allSummaries();
+      const taskList = await tasks.listTasks();
       const items: RecordItem[] = [];
       for (const summary of summaries) {
-        if (!summary.taskId || !summary.taskState) continue;
-        items.push({
-          taskId: summary.taskId,
-          group: recordGroupOf(summary.taskState),
-          title: summary.title,
-          employee: summary.employee ?? "",
-          state: summary.taskState,
-          statusText: summary.statusText ?? "",
-          // 记录里的状态点按读的人的角色算，和侧栏列表走同一套规则
-          statusDot: dotOf(role, summary.status, summary.taskState, false),
-          sessionId: summary.id,
-          workspaceId: summary.workspaceId,
-          workspaceName: summary.workspaceName ?? "",
-          updatedAt: summary.updatedAt,
+        // 每个任务一行：同一个会话先后运行的任务各占一行，按各自的状态分组
+        const ids = summary.taskIds ?? (summary.taskId ? [summary.taskId] : []);
+        ids.forEach((taskId, index) => {
+          const task = taskList.find((t) => t.id === taskId);
+          if (!task) return;
+          const latest = index === ids.length - 1;
+          items.push({
+            taskId,
+            group: recordGroupOf(task.state),
+            title: summary.title,
+            employee: summary.employee ?? "",
+            state: task.state,
+            statusText: task.statusText ?? "",
+            // 记录里的状态点按读的人的角色算，和侧栏列表走同一套规则；早先的任务已经结束，不再提示
+            statusDot: latest ? dotOf(role, summary.status, task.state, false) : "idle",
+            sessionId: summary.id,
+            // 由旧任务推导出的只读会话没有“第几次运行”
+            ...(summary.readOnly ? {} : { runNumber: index + 1 }),
+            workspaceId: summary.workspaceId,
+            workspaceName: summary.workspaceName ?? "",
+            updatedAt: latest ? summary.updatedAt : task.updatedAt,
+          });
         });
       }
       return items;
     },
   };
-
   /** 全部会话（含归档的），带状态点：工作区列表和记录 tab 都从这里取 */
   async function allSummaries(): Promise<SessionSummary[]> {
     const own = await Promise.all([...sessions.values()].map(view));
-    const bound = new Set(own.map((s) => s.taskId));
+    const bound = new Set(own.flatMap((s) => s.taskIds ?? []));
     // 种子任务的旧任务会话也列出来：和 Go 一样，没绑会话的任务以只读会话出现
     const legacy = await Promise.all((await tasks.listTasks()).filter((t) => !bound.has(t.id)).map(legacyDetail));
     const summaries = [...own, ...legacy.map(({ messages: _m, ...rest }) => rest)];

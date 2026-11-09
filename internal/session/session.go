@@ -146,7 +146,9 @@ const sessionScanEvery = time.Second
 type cachedView struct {
 	at        int
 	updatedAt string
-	view      View
+	// task 当时会话当前任务的指纹（见 taskStamp）
+	task string
+	view View
 }
 
 // busyText 上一条回复还没结束时又发来消息：说明一声。
@@ -157,13 +159,15 @@ const ErrWorkspaceUnknown = "workspace_not_found"
 
 // View 读取时返回的会话。
 type View struct {
-	ID          string         `json:"id"`
-	WorkspaceID string         `json:"workspaceId"`
-	Status      string         `json:"status"`
-	ReadOnly    bool           `json:"readOnly"`
-	Title       string         `json:"title"`
-	Employee    string         `json:"employee,omitempty"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspaceId"`
+	Status      string `json:"status"`
+	ReadOnly    bool   `json:"readOnly"`
+	Title       string `json:"title"`
+	Employee    string `json:"employee,omitempty"`
+	// TaskID 当前任务（会话里最新的一个）；TaskIDs 按开工顺序的全部任务
 	TaskID      string         `json:"taskId,omitempty"`
+	TaskIDs     []string       `json:"taskIds"`
 	Draft       map[string]any `json:"draft,omitempty"`
 	Attachments []Attachment   `json:"attachments"`
 	CreatedAt   string         `json:"createdAt"`
@@ -245,8 +249,8 @@ func (m *Manager) read(id string) (*Detail, error) {
 	}
 	messages := m.projectPermissions(visibleMessages(current.messages), current)
 
-	if current.taskID != "" {
-		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
+	if len(current.taskIDs) > 0 {
+		if messages, err = m.withTasks(messages, current.taskIDs, current); err != nil {
 			return nil, err
 		}
 	} else {
@@ -439,7 +443,7 @@ func (m *Manager) AddAttachments(id string, role contract.Role, files []contract
 	if err != nil {
 		return nil, err
 	}
-	if current.taskID != "" {
+	if m.openTask(current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
 	}
 	t := &turn{manager: m, current: current}
@@ -471,8 +475,8 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 		return nil, err
 	}
 	defer done()
-	if t.current.taskID != "" {
-		return nil, failure(ErrSessionHasTask, "这个会话已有任务，要做新任务请开新会话")
+	if err := m.refuseNewTask(t.current); err != nil {
+		return nil, err
 	}
 	if t.current.employee == "" {
 		return nil, failure(ErrEmployeeMissing, "请先确认由哪个员工接手")
@@ -551,7 +555,7 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 	view := &View{
 		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
-		Employee: summary.Employee, TaskID: summary.ID, Attachments: []Attachment{},
+		Employee: summary.Employee, TaskID: summary.ID, TaskIDs: []string{summary.ID}, Attachments: []Attachment{},
 		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk,
 	}
 	m.applySummary(view, summary)
@@ -569,7 +573,7 @@ func (m *Manager) getLegacy(id string) (*Detail, error) {
 		if summary.ID != taskID {
 			continue
 		}
-		messages, err := m.withTask(nil, taskID, nil)
+		messages, err := m.withTasks(nil, []string{taskID}, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -591,7 +595,9 @@ func (m *Manager) List(workspaceID string, includeArchived bool) ([]*View, error
 		if current == nil {
 			continue
 		}
-		bound[current.taskID] = true
+		for _, taskID := range current.taskIDs {
+			bound[taskID] = true
+		}
 		if workspaceID != "" && current.workspaceID != workspaceID {
 			continue
 		}
@@ -621,7 +627,7 @@ func notFound(id string) error {
 func (m *Manager) view(current *record) *View {
 	view := &View{
 		ID: current.id, WorkspaceID: current.workspaceID, Status: StatusReception, Title: titleOf(current),
-		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
+		Employee: current.employee, TaskID: current.taskID, TaskIDs: append([]string{}, current.taskIDs...), Draft: current.draft,
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
 		WaitingFor: []contract.Role{}, Archived: current.archived, PermissionMode: current.mode(),

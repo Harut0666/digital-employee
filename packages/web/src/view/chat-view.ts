@@ -3,9 +3,11 @@
 // 任务卡片上的按钮由后端在读取时配上（只配给当前暂停的卡片），前端不推算。
 
 import type { DeliverableRef, QcCheckResult, TaskEvent, TaskState } from "@de/core/contract";
+import { deriveStepRows, type StepRow, type StepRowDef } from "./step-rows";
 import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
 import { modelNotices, selectedModelNotice } from "./session-model";
 import { derivePermissionCard, fileChangeOf, permissionModeLabel, traceOf, type FileChangeView, type PermissionCardView, type PermissionTrace } from "./permission-mode";
+import { latestTaskId } from "./task-runs";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -42,7 +44,10 @@ export type ChatItem =
   | (ItemBase & { kind: "use_file"; path: string; name: string; size?: number; reason?: string; confirmed: boolean; actions: TaskAction[]; active: boolean })
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
-  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[] })
+  /** 交付物；会话里有多个任务时带着任务号和第几次运行（下载取这个任务的交付物） */
+  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[]; taskId?: string; run?: number })
+  /** 早先任务的步骤行（会话里先后运行过多个任务）：留在这个任务开工的位置，只读 */
+  | (ItemBase & { kind: "past_steps"; taskId: string; run: number; rows: StepRow[] })
   /** 权限确认（T48）：Agent 想做的动作和三个答复按钮；答复后只剩一行结果 */
   | (ItemBase & { kind: "permission" } & PermissionCardView)
   /** Agent 写的文件：一行说明，点开看改动 */
@@ -72,6 +77,17 @@ export interface ChatTask {
   deliverables: DeliverableRef[];
 }
 
+/** 早先的一个任务（会话里先后运行过多个任务）：对话里它的步骤行和交付物按各自的时间点显示 */
+export interface PastRun {
+  taskId: string;
+  /** 第几次运行（从 1 开始） */
+  run: number;
+  state: TaskState;
+  deliverables: DeliverableRef[];
+  events: readonly TaskEvent[];
+  steps: readonly StepRowDef[];
+}
+
 /** 正在说的一轮（来自会话事件流）：说完之后它的内容会变成会话里的消息 */
 export interface LiveTurn {
   turn: number;
@@ -98,8 +114,15 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
   items.splice(start, 0, item);
 }
 
-export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn, role: UiRole = "initiator"): ChatItem[] {
-  const items = deriveMessages(session, task, events, role);
+export function deriveChat(
+  session: SessionDetail,
+  task?: ChatTask,
+  events: readonly TaskEvent[] = [],
+  live?: LiveTurn,
+  past: readonly PastRun[] = [],
+  role: UiRole = "initiator",
+): ChatItem[] {
+  const items = deriveMessages(session, task, events, past, role);
   if (!live || (!live.text && live.tools.length === 0)) return items;
   // 还没写成消息的这一轮排在最后一条之后
   const ts = session.updatedAt;
@@ -111,7 +134,7 @@ export function deriveChat(session: SessionDetail, task?: ChatTask, events: read
   return items;
 }
 
-function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[], role: UiRole): ChatItem[] {
+function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[], past: readonly PastRun[], role: UiRole): ChatItem[] {
   const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -122,6 +145,9 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
   };
   const lastConfirm = lastIndex((c) => c.type === "employee_confirm");
   const lastDraftForm = lastIndex((c) => c.type === "form" && !c.submitted);
+  // 会话里先后运行多个任务：任务交付或终止后（closed）还可以为下一次运行填表单；已经开过工的表单卡之前的草稿卡片不再算
+  const lastStarted = lastIndex((c) => c.type === "form" && c.submitted === true);
+  const preparing = session.status === "drafting" || session.status === "closed";
   const writable = !session.readOnly;
   // 入库确认卡片排在交付物之后：先能下载，再决定要不要入库
   const filings: ChatItem[] = [];
@@ -166,7 +192,24 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
     const ts = session.messages.at(-1)?.ts ?? session.updatedAt;
     items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
   }
-  items.push(...filings);
+  // 早先的任务：步骤行紧跟在它开工的位置，交付物在它交付的时间点
+  for (const run of past) {
+    const rows = deriveStepRows(run.events, run.steps, { fallbackModel: undefined });
+    const first = run.events[0];
+    if (first && rows.some((row) => row.status !== "pending")) {
+      insertByTime(items, { key: `steps-${run.taskId}`, ts: first.ts, kind: "past_steps", taskId: run.taskId, run: run.run, rows });
+    }
+    const deliveredEvent = run.events.find((e) => e.type === "state_changed" && e.to === "delivered");
+    if (run.state === "delivered" && run.deliverables.length > 0 && deliveredEvent) {
+      insertByTime(items, { key: `delivered-${run.taskId}`, ts: deliveredEvent.ts, kind: "delivered", deliverables: run.deliverables, taskId: run.taskId, run: run.run });
+    }
+  }
+  // 入库确认卡片：当前任务的排在最后；早先任务的紧跟在它交付之后
+  const latest = latestTaskId(session);
+  for (const filing of filings) {
+    if (filing.kind === "filing" && filing.taskId !== latest && past.some((run) => run.taskId === filing.taskId)) insertByTime(items, filing);
+    else items.push(filing);
+  }
 
   // 模型切换说明（T39）：会话里选的模型、任务运行中的切换，按时间插进对话
   const selected = selectedModelNotice(session);
@@ -202,7 +245,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
           active: writable && session.status === "reception" && index === lastConfirm,
         };
       case "form": {
-        const editable = !card.submitted && writable && session.status === "drafting" && index === lastDraftForm;
+        const editable = !card.submitted && writable && preparing && index === lastDraftForm && index > lastStarted;
         return {
           ...base,
           kind: "form",
@@ -237,7 +280,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
           confirmed: card.confirmed ?? false,
           actions,
           // 按钮由后端按“还没开工、文件还在、人还没确认”配好；确认过、开工后都没有
-          active: writable && session.status === "drafting" && !card.confirmed && actions.length > 0,
+          active: writable && preparing && !card.confirmed && actions.length > 0,
         };
     }
   }

@@ -647,9 +647,20 @@ func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
 		"- 正在和你说话的人：" + contract.RoleLabels[t.role],
 	}
 	if t.current.taskID != "" {
+		// 会话里可能先后运行过多个任务：以最新的一个为当前任务回答问题
 		lines = append(lines, "- 任务："+t.current.taskID)
-	} else {
-		lines = append(lines, "- 任务：还没有提交")
+		if len(t.current.taskIDs) > 1 {
+			lines = append(lines, fmt.Sprintf("- 这个会话已运行 %d 个任务，上面是最新的一个；更早的任务：%s",
+				len(t.current.taskIDs), strings.Join(t.current.taskIDs[:len(t.current.taskIDs)-1], "、")))
+		}
+	}
+	if t.manager.openTask(t.current) == nil {
+		// 没有未结束的任务：可以准备（下一次）运行；最新的任务已交付或终止时，表单草稿沿用上一次的
+		if t.current.taskID == "" {
+			lines = append(lines, "- 任务：还没有提交")
+		} else {
+			lines = append(lines, "- 最新的任务已经结束，要再来一版可以填表单草稿并发表单卡片，由人确认后提交")
+		}
 		lines = append(lines, "- 表单草稿："+compactJSON(t.current.draft))
 		names := []string{}
 		for _, attachment := range t.current.attachments {
@@ -678,14 +689,14 @@ func (loop *turnLoop) assistantTools(config *contract.EmployeeConfig) ([]tool, e
 		ticked[name] = true
 	}
 	tools := []tool{}
-	if t.current.taskID != "" {
-		if ticked[contract.ToolQueryTask] {
-			tools = append(tools, t.queryTaskTool())
-		}
-		tools = append(tools, t.proposeCardTool())
-	} else {
-		tools = append(tools, t.fillFormDraftTool(config), t.proposeCardTool())
+	if t.current.taskID != "" && ticked[contract.ToolQueryTask] {
+		tools = append(tools, t.queryTaskTool())
 	}
+	// 没有未结束的任务时可以准备（下一次）运行：填表单草稿、发表单卡片；有未结束的任务时只能发任务卡片
+	if t.manager.openTask(t.current) == nil {
+		tools = append(tools, t.fillFormDraftTool(config))
+	}
+	tools = append(tools, t.proposeCardTool())
 	knowledge, err := t.knowledgeTools(ticked)
 	if err != nil {
 		return nil, err

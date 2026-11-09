@@ -40,8 +40,8 @@ export interface SessionApi {
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */
   skipChecklistItem(id: string, item: string): Promise<SessionResult>;
-  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
-  draftFiling(id: string): Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写。taskId 是要入库的任务，不给就是最新的 */
+  draftFiling(id: string, taskId?: string): Promise<SessionResult>;
   /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
   modelOptions(): Promise<ModelConnectionOption[]>;
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
@@ -127,7 +127,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
-    draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
+    draftFiling: (id, taskId) => act(session(id, "/filing-draft"), JSON.stringify(taskId ? { taskId } : {})),
     preflight: (taskId) => read<PreflightResult>(url(taskId ? `preflight?taskId=${encodeURIComponent(taskId)}` : "preflight")),
     subscribeSession(id, onEvent) {
       // 服务端每件事都带 event 名；EventSource 带不了请求头，但事件流是只读的，不依赖角色

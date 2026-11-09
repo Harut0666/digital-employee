@@ -80,6 +80,19 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 	return dot
 }
 
+// DotForTask 记录里某个任务的状态点：会话的最新任务就是会话的状态点；
+// 更早的任务已经结束，不再提示（“已完成未读”只属于最新的任务）。
+func (m *Manager) DotForTask(sessionID, taskID string, role contract.Role) string {
+	if sessionID == "" {
+		return StatusDotIdle
+	}
+	current, err := m.load(sessionID)
+	if err != nil || (taskID != "" && current.taskID != taskID) {
+		return StatusDotIdle
+	}
+	return m.DotFor(sessionID, role)
+}
+
 // SummaryOf 一个会话的摘要（按读的人的角色算状态点）；写操作之后回给它，界面不用再读一次列表。
 func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 	if strings.HasPrefix(id, legacyPrefix) {
@@ -97,7 +110,7 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 	return &summary, nil
 }
 
-// Record 记录 tab 里的一条：所有工作区里已开工的任务。
+// Record 记录 tab 里的一条：所有工作区里已开工的任务，每个任务一行（同一个会话的多次运行各占一行）。
 type Record struct {
 	TaskID     string             `json:"taskId"`
 	Group      string             `json:"group"`
@@ -108,6 +121,8 @@ type Record struct {
 	StatusDot  string             `json:"statusDot"`
 	// SessionID 任务所在的会话；直接从任务接口建的任务没有会话
 	SessionID string `json:"sessionId,omitempty"`
+	// RunNumber 这是会话里的第几次运行（从 1 开始）；没有会话的任务为 0
+	RunNumber int `json:"runNumber,omitempty"`
 	// WorkspaceID、WorkspaceName 任务属于哪个工作区
 	WorkspaceID   string `json:"workspaceId"`
 	WorkspaceName string `json:"workspaceName"`
@@ -179,7 +194,9 @@ func (m *Manager) Summarize(role contract.Role, workspaceName func(id string) st
 	}
 	bound := map[string]bool{}
 	for _, state := range current {
-		bound[state.current.taskID] = true
+		for _, taskID := range state.current.taskIDs {
+			bound[taskID] = true
+		}
 		if state.current.archived && !includeArchived {
 			continue
 		}
@@ -293,12 +310,23 @@ func (m *Manager) visibleIDs() []string {
 	return sortedKeys(m.seen)
 }
 
-// cachedView 会话的投影：消息条数没变就沿用上一次的（侧栏每一两秒读一次全部会话，不必每次回放日志）。
+// taskStamp 会话当前任务的指纹：任务推进（状态变了、多了事件）时会话日志不一定有新行，
+// 缓存的投影要靠它判断是否过期。
+func (m *Manager) taskStamp(current *record) string {
+	snapshot, ok := m.recordOf(current.taskID)
+	if !ok {
+		return current.taskID
+	}
+	return fmt.Sprintf("%s/%s/%d", current.taskID, snapshot.State, snapshot.LastSeq)
+}
+
+// cachedView 会话的投影：消息条数和当前任务都没变就沿用上一次的（侧栏每一两秒读一次全部会话，不必每次回放日志）。
 func (m *Manager) cachedView(current *record) *View {
+	stamp := m.taskStamp(current)
 	m.mu.Lock()
 	cached, seen := m.views[current.id]
 	m.mu.Unlock()
-	if seen && cached.at == len(current.messages) && cached.updatedAt == current.updatedAt {
+	if seen && cached.at == len(current.messages) && cached.updatedAt == current.updatedAt && cached.task == stamp {
 		return &cached.view
 	}
 	view := m.view(current)
@@ -307,7 +335,7 @@ func (m *Manager) cachedView(current *record) *View {
 		m.views = map[string]cachedView{}
 	}
 	// 列表里只留最近的这一份：消息条数决定它还能不能用，不必都留着
-	m.views[current.id] = cachedView{at: len(current.messages), updatedAt: current.updatedAt, view: *view}
+	m.views[current.id] = cachedView{at: len(current.messages), updatedAt: current.updatedAt, task: stamp, view: *view}
 	m.mu.Unlock()
 	return view
 }
@@ -421,7 +449,7 @@ func (m *Manager) Records() []Record {
 		records = append(records, Record{
 			TaskID: summary.ID, Group: recordGroupOf(summary.State), Title: summary.Title, Employee: summary.Employee,
 			State: summary.State, StatusText: summary.StatusText,
-			SessionID: bound[summary.ID].id, WorkspaceID: summary.WorkspaceID, UpdatedAt: summary.UpdatedAt,
+			SessionID: bound[summary.ID].id, RunNumber: bound[summary.ID].run, WorkspaceID: summary.WorkspaceID, UpdatedAt: summary.UpdatedAt,
 		})
 	}
 	sort.SliceStable(records, func(i, j int) bool {
@@ -441,12 +469,12 @@ func recordsStamp(summaries []contract.TaskSummary, bound map[string]boundSessio
 	parts := make([]string, 0, len(summaries))
 	for _, summary := range summaries {
 		// 没有会话的任务（直接从任务接口建的）用空串
-		sessionID, sessionUpdated := "", ""
+		sessionID, sessionUpdated, run := "", "", 0
 		if boundTo, ok := bound[summary.ID]; ok && boundTo.record != nil {
-			sessionID, sessionUpdated = boundTo.id, boundTo.record.updatedAt
+			sessionID, sessionUpdated, run = boundTo.id, boundTo.record.updatedAt, boundTo.run
 		}
-		hash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
-			summary.ID, summary.State, summary.Title, summary.UpdatedAt, summary.WorkspaceID, sessionID, sessionUpdated)))
+		hash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d",
+			summary.ID, summary.State, summary.Title, summary.UpdatedAt, summary.WorkspaceID, sessionID, sessionUpdated, run)))
 		parts = append(parts, hex.EncodeToString(hash[:]))
 	}
 	sort.Strings(parts)
@@ -469,10 +497,11 @@ func recordGroupOf(state contract.TaskState) string {
 	}
 }
 
-// boundSession 任务所在的会话。
+// boundSession 任务所在的会话，以及它是会话里的第几次运行。
 type boundSession struct {
 	id     string
 	record *record
+	run    int
 }
 
 // sessionsByTask 任务 → 绑定了它的会话；同一任务绑在多个会话上时取最新的会话。
@@ -480,13 +509,15 @@ func (m *Manager) sessionsByTask() map[string]boundSession {
 	out := map[string]boundSession{}
 	for _, id := range m.visibleIDs() {
 		current, err := m.store.read(id)
-		if err != nil || current == nil || current.taskID == "" {
+		if err != nil || current == nil {
 			continue
 		}
-		if existing, ok := out[current.taskID]; ok && parseTime(existing.record.updatedAt).After(parseTime(current.updatedAt)) {
-			continue
+		for _, taskID := range current.taskIDs {
+			if existing, ok := out[taskID]; ok && parseTime(existing.record.updatedAt).After(parseTime(current.updatedAt)) {
+				continue
+			}
+			out[taskID] = boundSession{id: id, record: current, run: runNumberOf(current, taskID)}
 		}
-		out[current.taskID] = boundSession{id: id, record: current}
 	}
 	return out
 }

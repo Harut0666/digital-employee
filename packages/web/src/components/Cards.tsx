@@ -26,6 +26,7 @@ import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
 import { FilingCard } from "./FilingCard";
+import { StepList } from "./StepList";
 
 export interface CardActions {
   role: UiRole;
@@ -44,7 +45,8 @@ export interface CardActions {
   openPanel: () => void;
   /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
   sections: { id: string; heading: string }[];
-  downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number) => string | undefined;
+  /** forTask：下载哪个任务的交付物；不给就是会话的当前任务（会话里有多个任务时，早先交付的任务带着自己的任务号） */
+  downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number, forTask?: string) => string | undefined;
 }
 
 /** 会话层的操作：确认员工、上传材料、提交表单。都只有发起人能做，后端仍会校验。 */
@@ -56,7 +58,7 @@ export interface SessionActions {
   useFolderFiles: (paths: string[]) => Promise<void>;
   submit: (form: Record<string, unknown>) => Promise<SessionResult>;
   /** 入库卡片：请模型起草描述 */
-  draftFiling: () => Promise<void>;
+  draftFiling: (taskId?: string) => Promise<void>;
   /** 入库卡片：人确认后放进知识库 */
   fileKnowledge: (filing: KnowledgeFiling) => Promise<void>;
   openKnowledge: () => void;
@@ -329,15 +331,25 @@ export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kin
   return (
     <div className="card ok">
       <div className="card-title" style={{ color: "var(--primary)" }}>
-        <CheckCircleFilled /> 已交付
+        <CheckCircleFilled /> 已交付{item.run ? `（第 ${item.run} 次运行）` : ""}
       </div>
       <div className="card-actions">
         {item.deliverables.map((d) => (
-          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind)} disabled={!actions.downloadUrl(d.kind)} {...linkProps(actions.downloadUrl(d.kind))}>
+          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind, undefined, item.taskId)} disabled={!actions.downloadUrl(d.kind, undefined, item.taskId)} {...linkProps(actions.downloadUrl(d.kind, undefined, item.taskId))}>
             {names[d.kind] ?? d.kind}
           </Button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** 早先任务的步骤行：留在这个任务开工的位置，只读（轨迹详情只看当前任务）。 */
+export function PastRunSteps({ item }: { item: Extract<ChatItem, { kind: "past_steps" }> }) {
+  return (
+    <div className="past-run">
+      <div className="notice">第 {item.run} 次运行的步骤</div>
+      <StepList rows={item.rows} onOpen={() => {}} />
     </div>
   );
 }
@@ -500,6 +512,8 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <ReturnConfirmCard key={item.key} item={item} actions={actions} />;
     case "delivered":
       return <DeliveredCard key={item.key} item={item} actions={actions} />;
+    case "past_steps":
+      return <PastRunSteps key={item.key} item={item} />;
     case "filing":
       return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
     case "use_file":

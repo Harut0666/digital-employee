@@ -235,11 +235,11 @@ describe("deriveChat 里的权限内容", () => {
 
   test("等答复的卡：发起人能点；换成审核人就只能看", () => {
     const messages = [msg({ kind: "card", card: pendingCard() })];
-    const mine = deriveChat(session(messages), undefined, [], undefined, "initiator")[0];
+    const mine = deriveChat(session(messages), undefined, [], undefined, [], "initiator")[0];
     expect(mine?.kind === "permission" && mine.canAnswer).toBe(true);
-    const theirs = deriveChat(session(messages), undefined, [], undefined, "reviewer")[0];
+    const theirs = deriveChat(session(messages), undefined, [], undefined, [], "reviewer")[0];
     expect(theirs?.kind === "permission" && theirs.canAnswer).toBe(false);
-    const readOnly = deriveChat(session(messages, { readOnly: true }), undefined, [], undefined, "initiator")[0];
+    const readOnly = deriveChat(session(messages, { readOnly: true }), undefined, [], undefined, [], "initiator")[0];
     expect(readOnly?.kind === "permission" && readOnly.canAnswer).toBe(false);
   });
 
