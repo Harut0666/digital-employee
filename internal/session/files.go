@@ -184,25 +184,52 @@ func (t *turn) planWrite(arguments map[string]any) (writeTarget, string, error) 
 	return target, content, nil
 }
 
-// planEdit edit_file 的边界检查：路径合格、原文不空。
-func (t *turn) planEdit(arguments map[string]any) (writeTarget, string, string, error) {
+// editArgs edit_file 的参数。old_string、new_string 是现在的名字，oldText、newText 是早先的名字，两种都认。
+type editArgs struct {
+	target     writeTarget
+	oldText    string
+	newText    string
+	replaceAll bool
+}
+
+func firstString(arguments map[string]any, names ...string) (string, bool) {
+	for _, name := range names {
+		if value, ok := arguments[name].(string); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+// planEdit edit_file 的边界检查：路径合格、原文不空、新旧文本不同。
+func (t *turn) planEdit(arguments map[string]any) (editArgs, error) {
 	requested, _ := arguments["path"].(string)
 	target, err := t.resolveWritable(requested)
 	if err != nil {
-		return writeTarget{}, "", "", err
+		return editArgs{}, err
 	}
-	oldText, _ := arguments["oldText"].(string)
-	newText, hasNew := arguments["newText"].(string)
+	oldText, _ := firstString(arguments, "old_string", "oldText")
+	newText, hasNew := firstString(arguments, "new_string", "newText")
 	if oldText == "" {
-		return writeTarget{}, "", "", denied("缺少 oldText：要被换掉的原文（必须在文件里恰好出现一次）。")
+		return editArgs{}, denied("缺少 old_string：要被换掉的原文，不能为空（要新建文件请用 write_file）。")
 	}
 	if !hasNew {
-		return writeTarget{}, "", "", denied("缺少 newText：换成的新文本（要删掉这段就给空串）。")
+		return editArgs{}, denied("缺少 new_string：换成的新文本（要删掉这段就给空串）。")
+	}
+	if oldText == newText {
+		return editArgs{}, denied("new_string 和 old_string 相同，没有改动。")
 	}
 	if err := checkContent(newText); err != nil {
-		return writeTarget{}, "", "", err
+		return editArgs{}, err
 	}
-	return target, oldText, newText, nil
+	replaceAll, _ := arguments["replace_all"].(bool)
+	return editArgs{target: target, oldText: oldText, newText: newText, replaceAll: replaceAll}, nil
+}
+
+// usesCRLF 文件的换行以 CRLF 为主。
+func usesCRLF(content string) bool {
+	crlf := strings.Count(content, "\r\n")
+	return crlf > 0 && crlf >= strings.Count(content, "\n")-crlf
 }
 
 // objectOf 权限确认卡上写的对象：相对工作区目录的路径，统一用 /。
@@ -271,29 +298,37 @@ func (t *turn) fileWriteTools() []tool {
 	}
 	edit := tool{
 		spec: agent.ToolSpec{
-			Name:        contract.ToolEditFile,
-			Description: "把工作区目录里一个已有文本文件中的一段原文换成新文本。原文必须在文件里恰好出现一次：找不到或有多处都会报错（并说明是哪种），这时先 read_file 看清内容，再带上足够的上下文让原文唯一。",
-			Parameters: map[string]any{"type": "object", "required": []any{"path", "oldText", "newText"}, "properties": map[string]any{
-				"path":    map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
-				"oldText": map[string]any{"type": "string", "description": "要被换掉的原文，必须与文件里的一字不差，且恰好出现一次"},
-				"newText": map[string]any{"type": "string", "description": "换成的新文本；要删掉这段就给空串"},
+			Name: contract.ToolEditFile,
+			Description: "把工作区目录里一个已有文本文件中的一段原文换成新文本。replace_all 为 false（默认）时原文必须在文件里恰好出现一次：找不到或有多处都会报错（并说明是哪种），" +
+				"这时先 read_file 看清内容，再带上足够的上下文让 old_string 唯一；要把每一处都换掉就设 replace_all 为 true。old_string 不能为空，也不能等于 new_string。" +
+				"文件原来的换行风格（CRLF 或 LF）会保留。",
+			Parameters: map[string]any{"type": "object", "required": []any{"path", "old_string", "new_string"}, "properties": map[string]any{
+				"path":        map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
+				"old_string":  map[string]any{"type": "string", "description": "要被换掉的原文，必须与文件里的一字不差（换行不区分 CRLF 和 LF）"},
+				"new_string":  map[string]any{"type": "string", "description": "换成的新文本；要删掉这段就给空串"},
+				"replace_all": map[string]any{"type": "boolean", "description": "是否把所有匹配都换掉，默认 false（此时必须恰好匹配一处）"},
 			}},
 		},
 		action: ActionWriteFile,
 		guard: func(arguments map[string]any) error {
-			_, _, _, err := t.planEdit(arguments)
+			_, err := t.planEdit(arguments)
 			return err
 		},
 		describe: func(arguments map[string]any) (string, string) {
-			oldText, _ := arguments["oldText"].(string)
-			newText, _ := arguments["newText"].(string)
-			return objectOf(arguments), fmt.Sprintf("修改文件：把「%s」换成「%s」", snippet(oldText), snippet(newText))
+			oldText, _ := firstString(arguments, "old_string", "oldText")
+			newText, _ := firstString(arguments, "new_string", "newText")
+			detail := fmt.Sprintf("修改文件：把「%s」换成「%s」", snippet(oldText), snippet(newText))
+			if all, _ := arguments["replace_all"].(bool); all {
+				detail += "（替换所有匹配）"
+			}
+			return objectOf(arguments), detail
 		},
 		run: func(arguments map[string]any) (any, error) {
-			target, oldText, newText, err := t.planEdit(arguments)
+			plan, err := t.planEdit(arguments)
 			if err != nil {
 				return nil, err
 			}
+			target := plan.target
 			info, statErr := os.Stat(target.path)
 			switch {
 			case errors.Is(statErr, fs.ErrNotExist):
@@ -312,27 +347,40 @@ func (t *turn) fileWriteTools() []tool {
 			if err := checkContent(string(raw)); err != nil {
 				return nil, denied("%s 不是文本文件，不能用 edit_file 改。", target.rel)
 			}
-			content := string(raw)
-			switch count := strings.Count(content, oldText); {
+			// 读的时候统一成 LF 来匹配，写回时恢复文件原来的换行风格
+			crlf := usesCRLF(string(raw))
+			content := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			oldText := strings.ReplaceAll(plan.oldText, "\r\n", "\n")
+			newText := strings.ReplaceAll(plan.newText, "\r\n", "\n")
+			count := strings.Count(content, oldText)
+			switch {
 			case count == 0:
-				return nil, toolFailure("not_found", "在 %s 里没有找到要替换的原文。请先 read_file 看清文件内容，原文要与文件里的一字不差（含空格和换行）。", target.rel)
-			case count > 1:
-				return nil, toolFailure("ambiguous", "要替换的原文在 %s 里出现了 %d 处，需要恰好一处。请多带一些前后的内容，让原文唯一。", target.rel, count)
-			}
-			if oldText == newText {
-				return nil, toolFailure("no_change", "新文本和原文相同，没有改动。")
+				return nil, toolFailure("not_found", "在 %s 里没有找到要替换的原文。请先 read_file 看清文件内容，原文要与文件里的一字不差（含空格和缩进）。", target.rel)
+			case count > 1 && !plan.replaceAll:
+				return nil, toolFailure("ambiguous", "要替换的原文在 %s 里出现了 %d 处，需要恰好一处。请多带一些前后的内容，让 old_string 唯一；要全部替换请设 replace_all 为 true。", target.rel, count)
 			}
 			at := strings.Index(content, oldText)
+			replacements := 1
 			updated := content[:at] + newText + content[at+len(oldText):]
+			if plan.replaceAll {
+				replacements = count
+				updated = strings.ReplaceAll(content, oldText, newText)
+			}
+			if crlf {
+				updated = strings.ReplaceAll(updated, "\n", "\r\n")
+			}
 			if err := checkContent(updated); err != nil {
 				return nil, err
 			}
 			if err := os.WriteFile(target.path, []byte(updated), 0o644); err != nil {
 				return nil, fmt.Errorf("写不进 %s：%v", target.rel, err)
 			}
+			diff := editDiff(content, at, oldText, newText)
+			if replacements > 1 {
+				diff += fmt.Sprintf("\n（共替换 %d 处，上面是第一处）", replacements)
+			}
 			return map[string]any{
-				"path": target.rel, "action": "modified", "bytes": len(updated),
-				"diff": editDiff(content, at, oldText, newText),
+				"path": target.rel, "action": "modified", "bytes": len(updated), "replacements": replacements, "diff": diff,
 			}, nil
 		},
 	}
