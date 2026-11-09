@@ -201,7 +201,7 @@ describe("写文件的工具行", () => {
 });
 
 describe("权限留痕", () => {
-  test("自动放行和被模式拒绝都能在对话里看到；用户拒绝已经体现在确认卡上，不重复", () => {
+  test("自动放行和被模式拒绝都能在对话里看到；发起人拒绝已经体现在确认卡上，不重复", () => {
     expect(traceOf(msg({ kind: "permission_allowed", tool: "write_file", args: { path: "a.md" }, reason: "接受编辑模式：写入文件不用确认" }))).toEqual({
       tone: "allowed",
       text: "已放行 write_file a.md：接受编辑模式：写入文件不用确认",
@@ -210,7 +210,7 @@ describe("权限留痕", () => {
       tone: "denied",
       text: "已拒绝 write_file 交付/x.md：“交付”文件夹由程序写入交付物，Agent 不能写：交付/x.md",
     });
-    expect(traceOf(msg({ kind: "tool_denied", tool: "write_file", args: { path: "a.md" }, reason: "用户拒绝：发起人没有允许写入文件：a.md。" }))).toBeUndefined();
+    expect(traceOf(msg({ kind: "tool_denied", tool: "write_file", args: { path: "a.md" }, reason: "发起人拒绝：没有允许写入文件：a.md。", decision: "deny" }))).toBeUndefined();
     // 越权调用别的工具（approve 之类）的拒绝只进日志，不进对话
     expect(traceOf(msg({ kind: "tool_denied", tool: "approve", reason: "没有开放" }))).toBeUndefined();
   });

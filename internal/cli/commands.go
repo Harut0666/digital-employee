@@ -23,13 +23,13 @@ func newToolClient(deps Deps) (contract.ToolClient, error) {
 
 // modelSettings 模型设置：单目录模式下从工作区目录读，否则从应用目录读。
 func modelSettings(deps Deps) contract.ModelSettings {
-	return settings.LoadModelSettings(CaseAppDir(deps.Env, ""), settings.Env(deps.Env))
+	return settings.LoadModelSettings(CaseAppDir(deps.Env, ""))
 }
 
 // caseModelSettings 一条用例的模型设置：先看用例自己的应用目录，没有设置文件时用全局的。
 func caseModelSettings(appDir string, deps Deps) contract.ModelSettings {
 	if _, err := os.Stat(settings.Path(appDir)); err == nil {
-		return settings.LoadModelSettings(appDir, settings.Env(deps.Env))
+		return settings.LoadModelSettings(appDir)
 	}
 	return modelSettings(deps)
 }

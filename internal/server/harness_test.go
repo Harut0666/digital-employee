@@ -298,7 +298,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
-		model = agent.NewModelProvider(settings.LoadModelSettings(appDir, settings.Env(env)))
+		model = agent.NewModelProvider(settings.LoadModelSettings(appDir))
 	} else if config.scriptedModel && config.connection == nil {
 		// 剧本模式不走网络，但提交前检查照常检查会话模型（Spec 0006）：
 		// 给一个能通过检查的连接（指向本机、不存在的端口），否则会话里提交不了任务。
@@ -326,7 +326,7 @@ func newHarness(t *testing.T, script agent.ModelScript, options ...harnessOption
 		}); err != nil {
 			t.Fatalf("写模型设置失败：%v", err)
 		}
-		model = agent.NewModelProvider(settings.LoadModelSettings(appDir, settings.Env(env)))
+		model = agent.NewModelProvider(settings.LoadModelSettings(appDir))
 	}
 	if config.wrapModel != nil {
 		model = config.wrapModel(model)

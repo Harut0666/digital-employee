@@ -49,7 +49,7 @@ const ErrFormSettled = "form_settled"
 const kindEmployeeFormDecided = "employee_form_decided"
 
 // rejectedReason “不是这个员工”交回 Agent 的话。
-const rejectedReason = "用户拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。"
+const rejectedReason = "发起人拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。"
 
 // Sample 应用目录里的公开样例：员工、预填的表单字段、样例材料文件。
 type Sample struct {
@@ -347,9 +347,7 @@ func (loop *turnLoop) runEmployee(ctx context.Context, employees []Employee, con
 	if err != nil {
 		return nil, err
 	}
-	if speaker := speakerRole(current, loop.job.role); speaker != contract.RoleInitiator {
-		return nil, denied("现在和你说话的是%s，只有发起人可以让员工开工。请发起人来说，或让 TA 在对话里提出。", contract.RoleLabels[speaker])
-	}
+	// 说话的不是发起人时，权限关口（turnLoop.gate）已经拒绝了，到不了这里
 	if err := m.refuseNewTask(current); err != nil {
 		return nil, toolFailure(ErrSessionHasTask, "%s", err.Error())
 	}
@@ -379,8 +377,9 @@ func (loop *turnLoop) runEmployee(ctx context.Context, employees []Employee, con
 	}
 	mode := current.mode()
 	ready := readyForStart(config, fields, names)
-	// 免确认直接开工：auto 和 yolo，表单完整有效且必需清单项备齐；auto 下目录文件用作材料仍要人确认
-	if ready && (mode == PermissionYolo || (mode == PermissionAuto && !hasFolder)) {
+	// 免确认直接开工：运行员工在这个模式下免问（auto、yolo），表单完整有效且必需清单项备齐；
+	// 带目录文件时还要“使用目录文件”在这个模式下也免问（只有 yolo），否则弹表单让人确认
+	if ready && Decide(mode, ActionRunEmployee) == VerdictAllow && (!hasFolder || Decide(mode, ActionUseFolderFile) == VerdictAllow) {
 		return loop.startDirect(ctx, id, name, config, fields, materials, mode, arguments)
 	}
 	return loop.askForm(ctx, id, name, config, fields, materials, reason)
@@ -413,7 +412,17 @@ func (loop *turnLoop) startDirect(ctx context.Context, id, name string, config *
 		Reason: fmt.Sprintf("%s模式：%s的表单完整有效，必需的开工清单项已备齐，不用确认直接开工", PermissionModeLabels[mode], name)}); err != nil {
 		return nil, err
 	}
-	return startedResult(snapshot), nil
+	// 目录文件也是自动确认的（只有放开模式走到这里）：每一份都留痕，事后能核对用了哪些文件
+	for _, material := range materials {
+		if material.Source != MaterialFolder {
+			continue
+		}
+		if err := loop.write(Message{Kind: KindPermissionAllowed, Tool: "use_folder_file", Args: map[string]any{"path": material.Path},
+			Reason: fmt.Sprintf("%s模式：自动确认使用目录文件 %s（随 %s 的表单一起复制进任务）", PermissionModeLabels[mode], material.Path, name)}); err != nil {
+			return nil, err
+		}
+	}
+	return startedResult(snapshot.ID, snapshot.State), nil
 }
 
 // toolErrorOf 会话业务错误 → 交给 Agent 的工具错误（带错误码和说明）。
@@ -425,9 +434,10 @@ func toolErrorOf(err error) error {
 	return err
 }
 
-func startedResult(snapshot *contract.TaskSnapshot) map[string]any {
+// startedResult run_employee 开工成功时交给 Agent 的结果：任务 ID 和当前状态，不等任务跑完。
+func startedResult(taskID contract.TaskID, state contract.TaskState) map[string]any {
 	return map[string]any{
-		"started": true, "taskId": snapshot.ID, "state": snapshot.State, "stateLabel": contract.StateLabels[snapshot.State],
+		"started": true, "taskId": taskID, "state": state, "stateLabel": contract.StateLabels[state],
 	}
 }
 
@@ -487,11 +497,9 @@ func (loop *turnLoop) askForm(ctx context.Context, id, name string, config *cont
 	answered.Card = &copied
 	loop.bus.publish(AgentEvent{Turn: loop.job.id, Type: EventMessage, Msg: &answered})
 	if res.rejected {
-		return nil, denied("%s", rejectedReason)
+		return nil, deniedByInitiator("%s", rejectedReason)
 	}
-	return map[string]any{
-		"started": true, "taskId": res.taskID, "state": res.state, "stateLabel": contract.StateLabels[res.state],
-	}, nil
+	return startedResult(res.taskID, res.state), nil
 }
 
 // ---------------------------------------------------------------- 开工

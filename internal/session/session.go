@@ -311,6 +311,25 @@ func (m *Manager) beginUnlocked(id string, role contract.Role) (*turn, func(), e
 	return m.beginLocked(id, role, true)
 }
 
+// beginAside 人的操作不用等这一轮：只占“人的操作”那把锁（两个人同时点只有第一个进去），
+// 不占前台 Agent 这一轮的写锁。给不改草稿、材料、任务的操作用（选模型）：Agent 正在回复或停在权限确认、
+// 员工表单卡上时也能做，写进日志的选择从下一轮对话起生效，当前这一轮继续用它开始时选定的模型。
+func (m *Manager) beginAside(id string) (*turn, func(), error) {
+	if _, err := m.load(id); err != nil {
+		return nil, nil, err
+	}
+	human := m.humanLock(id)
+	if !human.TryLock() {
+		return nil, nil, failure(ErrSessionBusy, "上一个操作还在处理，请稍候")
+	}
+	current, err := m.load(id)
+	if err != nil {
+		human.Unlock()
+		return nil, nil, err
+	}
+	return &turn{manager: m, current: current, role: contract.RoleInitiator, tasks: m.deps.Engine}, human.Unlock, nil
+}
+
 func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*turn, func(), error) {
 	if _, err := m.load(id); err != nil {
 		return nil, nil, err

@@ -416,8 +416,8 @@ export function createMockSessions(
       emit(s, turn, { type: "tool_start", id: `mock_call_${turn}_write`, tool: "write_file", args });
       await later(pace(30));
       const end = (extra: Partial<SessionAgentEvent>) => emit(s, turn, { type: "tool_end", id: `mock_call_${turn}_write`, tool: "write_file", args, ...extra });
-      const deny = (reason: string) => {
-        write(s, { kind: "tool_denied", tool: "write_file", args, reason }, []);
+      const deny = (reason: string, byInitiator = false) => {
+        write(s, { kind: "tool_denied", tool: "write_file", args, reason, ...(byInitiator ? { decision: "deny" } : {}) }, []);
         emit(s, turn, { type: "message" });
         end({ reason, isErr: true });
       };
@@ -452,7 +452,7 @@ export function createMockSessions(
           return finish("", "stopped");
         }
         if (decision === "deny") {
-          deny(`用户拒绝：发起人没有允许写入文件：${args.path}。请换个办法，或问问发起人想怎么做。`);
+          deny(`发起人拒绝：没有允许写入文件：${args.path}。请换个办法，或问问发起人想怎么做。`, true);
           return finish("好的，那我不写了。");
         }
         if (decision === "always_allow") s.always.add("write_file");
@@ -537,7 +537,7 @@ export function createMockSessions(
       }
       if (s.permissionMode === "plan") {
         const reason = `计划模式下只能读，不能运行员工：${employee.name}（${employee.id}）。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`;
-        write(s, { kind: "tool_denied", tool: "run_employee", args, reason }, []);
+        write(s, { kind: "tool_denied", tool: "run_employee", args, reason, decision: "deny" }, []);
         emit(s, turn, { type: "message" });
         end({ reason, isErr: true });
         return finish(`计划模式下我只能给方案：打算让${employee.name}来做，请切换模式后再让我开工。`);
@@ -588,8 +588,8 @@ export function createMockSessions(
         return finish("", "stopped");
       }
       if (result.rejected) {
-        const reason = "用户拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。";
-        write(s, { kind: "tool_denied", tool: "run_employee", args, reason }, []);
+        const reason = "发起人拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。";
+        write(s, { kind: "tool_denied", tool: "run_employee", args, reason, decision: "deny" }, []);
         emit(s, turn, { type: "message" });
         end({ reason, isErr: true });
         return finish("好的，我再确认一下该由谁来做。");

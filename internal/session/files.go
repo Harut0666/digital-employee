@@ -27,6 +27,58 @@ var writeForbiddenDirs = map[string]string{
 	"材料": "“材料”文件夹存放上传的材料，Agent 不能写",
 }
 
+// canonicalSegment 路径段在 Windows 上实际指向的名字：段尾的点和空格会被悄悄去掉，大小写不敏感。
+// 比较保留文件夹时一律用它，写法再绕也认得出来。
+func canonicalSegment(segment string) string {
+	return strings.ToLower(strings.TrimRight(segment, ". "))
+}
+
+// forbiddenDir 这一段是不是程序自己写入的文件夹（“交付”“材料”）；是则返回说明。
+func forbiddenDir(segment string) (string, bool) {
+	why, forbidden := writeForbiddenDirs[canonicalSegment(segment)]
+	return why, forbidden
+}
+
+// windowsDevices Windows 的保留设备名：不论带不带扩展名，都不是普通文件。
+var windowsDevices = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true, "conin$": true, "conout$": true,
+}
+
+// isWindowsDevice CON、NUL、COM1~9、LPT1~9（含上标数字）等设备名，带扩展名（nul.txt）也算。
+func isWindowsDevice(segment string) bool {
+	stem := strings.ToLower(strings.TrimRight(segment, ". "))
+	if dot := strings.Index(stem, "."); dot >= 0 {
+		stem = strings.TrimRight(stem[:dot], " ")
+	}
+	if windowsDevices[stem] {
+		return true
+	}
+	runes := []rune(stem)
+	if len(runes) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		switch last := runes[3]; {
+		case last >= '1' && last <= '9', last == '¹', last == '²', last == '³':
+			return true
+		}
+	}
+	return false
+}
+
+// unwritableSegment 这一段的写法本身就不能写：Windows 会把它变成别的东西（去掉段尾的点和空格、
+// 把冒号当数据流、把 CON/NUL 当设备），检查和实际写到的位置就对不上了。返回拒绝原因，合格返回空串。
+func unwritableSegment(segment string) string {
+	switch {
+	case strings.Contains(segment, ":"):
+		return fmt.Sprintf("路径里的“%s”含有冒号（Windows 的数据流写法），不能写", segment)
+	case strings.ContainsAny(segment, "<>\"|?*") || strings.IndexFunc(segment, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0:
+		return fmt.Sprintf("文件名“%s”里不能含有 < > \" | ? * 或控制字符", segment)
+	case segment != ".." && strings.TrimRight(segment, ". ") != segment:
+		return fmt.Sprintf("路径里的“%s”以点或空格结尾，Windows 会悄悄去掉它们，不能写", segment)
+	case isWindowsDevice(segment):
+		return fmt.Sprintf("“%s”是 Windows 的设备名，不是文件，不能写", segment)
+	}
+	return ""
+}
+
 // writeTarget 一次写操作要写的文件：真实路径和相对工作区目录的路径（/ 分隔）。
 type writeTarget struct {
 	path string
@@ -43,6 +95,17 @@ func (t *turn) resolveWritable(raw string) (writeTarget, error) {
 	if root == "" {
 		return writeTarget{}, denied("工作区目录不存在，没有地方可写。")
 	}
+	// 先看写法：Windows 会悄悄改写的路径段（段尾的点和空格、冒号、设备名）不用解析，直接拒绝。
+	// 否则“交付”“材料”还不存在时，“材料./x.md”能躲过名字比较，被系统建成“材料”
+	requested, segmentsErr := relativeSegments(raw)
+	if segmentsErr != nil {
+		return writeTarget{}, denied("%s。我只能写工作区目录里的文件。", segmentsErr.Error())
+	}
+	for _, segment := range requested {
+		if reason := unwritableSegment(segment); reason != "" {
+			return writeTarget{}, denied("%s：%s", reason, raw)
+		}
+	}
 	target, rel, err := resolveInWorkspace(root, raw)
 	if err != nil {
 		return writeTarget{}, denied("%s。我只能写工作区目录里的文件。", err.Error())
@@ -50,14 +113,20 @@ func (t *turn) resolveWritable(raw string) (writeTarget, error) {
 	if rel == "." {
 		return writeTarget{}, denied("这是工作区目录本身，不是文件：%s", raw)
 	}
-	// 请求的路径和解开链接之后的路径都不能带隐藏的一段
-	requested, _ := relativeSegments(raw)
-	for _, segment := range append(requested, strings.Split(rel, "/")...) {
+	// 请求的路径和解开链接之后的路径都不能带隐藏的一段；解开之后的路径同样不能是奇怪的写法
+	resolved := strings.Split(rel, "/")
+	for _, segment := range append(append([]string{}, requested...), resolved...) {
 		if segment != ".." && hiddenName(segment) {
 			return writeTarget{}, denied("不能写隐藏文件或隐藏文件夹：%s", raw)
 		}
 	}
-	if why, forbidden := writeForbiddenDirs[strings.Split(rel, "/")[0]]; forbidden {
+	for _, segment := range resolved {
+		if reason := unwritableSegment(segment); reason != "" {
+			return writeTarget{}, denied("%s：%s", reason, raw)
+		}
+	}
+	// 保留文件夹按规范化之后的名字比较：先看解开之后的路径，再看请求的第一段
+	if why, forbidden := forbiddenDir(resolved[0]); forbidden {
 		return writeTarget{}, denied("%s：%s", why, raw)
 	}
 	if err := rejectDanglingLinks(root, rel); err != nil {
@@ -152,7 +221,7 @@ func snippet(text string) string {
 	return text
 }
 
-// fileWriteTools 员工接手后开放的文件写入工具。动作类别是“写入文件”，要过权限关口。
+// fileWriteTools 前台 Agent 的文件写入工具（write_file、edit_file）。动作类别是“写入文件”，要过权限关口（先看边界，再看权限模式和说话人的角色）。
 func (t *turn) fileWriteTools() []tool {
 	write := tool{
 		spec: agent.ToolSpec{

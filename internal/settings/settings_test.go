@@ -212,11 +212,12 @@ func TestModelSettingsKeepKeysFromTheFileOnly(t *testing.T) {
 	})); err != nil {
 		t.Fatal(err)
 	}
-	plain := LoadModelSettings(dir, Env{})
+	plain := LoadModelSettings(dir)
 	if plain.Connections[0].APIKey != "file-key" {
 		t.Fatalf("没有环境变量时应读文件 Key：%q", plain.Connections[0].APIKey)
 	}
-	withEnv := LoadModelSettings(dir, Env{"DEEPSEEK_API_KEY": "env-key"})
+	t.Setenv("DEEPSEEK_API_KEY", "env-key")
+	withEnv := LoadModelSettings(dir)
 	if withEnv.Connections[0].APIKey != "file-key" {
 		t.Fatalf("环境变量不应覆盖文件里的 Key：%q", withEnv.Connections[0].APIKey)
 	}
@@ -229,7 +230,7 @@ func TestFreshDirectoryHasNoConnections(t *testing.T) {
 	if len(doc.Connections) != 0 || doc.LastModel != nil {
 		t.Fatalf("全新目录应没有连接、lastModel 为空：%+v %+v", doc.Connections, doc.LastModel)
 	}
-	models := LoadModelSettings(dir, Env{})
+	models := LoadModelSettings(dir)
 	if len(models.Connections) != 0 || models.Default != (contract.ModelRef{}) {
 		t.Fatalf("全新目录的模型设置为空：%+v", models)
 	}

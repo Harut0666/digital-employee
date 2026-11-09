@@ -388,7 +388,7 @@ func TestReadingIsAlwaysAllowed(t *testing.T) {
 // ---------------------------------------------------------------- 三种答复
 
 func TestThreeAnswersToAPermissionRequest(t *testing.T) {
-	t.Run("拒绝：把用户拒绝交给模型，不写文件", func(t *testing.T) {
+	t.Run("拒绝：把发起人拒绝交给模型，不写文件", func(t *testing.T) {
 		h := newHarness(t, frontdeskScript(
 			modelCalls(contract.ToolWriteFile, map[string]any{"path": "a.md", "content": "甲"}),
 			modelSays("好的，那我不写了。"),
@@ -404,9 +404,9 @@ func TestThreeAnswersToAPermissionRequest(t *testing.T) {
 		if h.workspaceHas("a.md") {
 			t.Fatal("拒绝之后文件不该出现")
 		}
-		// 模型拿到的工具结果是“用户拒绝”，并写明被拒绝的对象
+		// 模型拿到的工具结果是“发起人拒绝”，并写明被拒绝的对象
 		results := toolResultTexts(h)
-		if len(results) != 1 || !strings.Contains(results[0], "用户拒绝") || !strings.Contains(results[0], "a.md") {
+		if len(results) != 1 || !strings.Contains(results[0], "发起人拒绝") || !strings.Contains(results[0], "a.md") {
 			t.Fatalf("交给模型的拒绝 = %v", results)
 		}
 		detail := h.readSession(created.ID)
@@ -415,7 +415,7 @@ func TestThreeAnswersToAPermissionRequest(t *testing.T) {
 			t.Fatalf("确认卡 = %+v", cards)
 		}
 		// 拒绝也写进会话日志
-		if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != contract.ToolWriteFile || !strings.Contains(denied[0].Reason, "用户拒绝") {
+		if denied := deniedTools(detail); len(denied) != 1 || denied[0].Tool != contract.ToolWriteFile || !strings.Contains(denied[0].Reason, "发起人拒绝") || denied[0].Decision != session.DecisionDeny {
 			t.Fatalf("拒绝留痕 = %+v", denied)
 		}
 		if got := lastAssistant(detail.Messages); got != "好的，那我不写了。" {

@@ -20,7 +20,7 @@ func (m *Manager) openTask(current *record) *contract.TaskSnapshot {
 }
 
 // refuseNewTask 会话里已有未结束的任务时拒绝再开新任务，错误说明原因。
-// Submit 和以后的 run_employee 共用这一句，Agent 会把它转告给人。
+// Submit 和 run_employee 共用这一句，Agent 会把它转告给人。
 func (m *Manager) refuseNewTask(current *record) error {
 	open := m.openTask(current)
 	if open == nil {

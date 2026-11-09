@@ -321,6 +321,8 @@ export interface SessionMessage {
   model?: ModelRef;
   /** permission_mode_set：选的权限模式 */
   mode?: PermissionMode;
+  /** tool_denied：为 "deny" 表示是发起人自己拒绝的（权限确认卡上的“拒绝”、员工表单上的“不是这个员工”），不是程序按边界或模式拒绝的 */
+  decision?: string;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
