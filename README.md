@@ -53,7 +53,7 @@ digital-employee/
 
 ### 方式一：双击 exe（评审演示用，不需要安装开发环境）
 
-1. 构建一次 exe（需要 Go 1.27.3+、Bun 1.4+）：`powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1`（前端构建 → `go build`（`go:embed` 打进前端与资源）→ init/A-01 冒烟），产物是 `dist/digital-employee.exe`（约 27MB）。
+1. 构建一次 exe（需要 Go 1.27.3+、Bun 1.4+）：`powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1`（前端构建 → `go build`（`go:embed` 打进前端与资源）→ init/A-01 冒烟），产物是 `dist/digital-employee.exe`（约 28MB）。
 2. 双击运行。首次启动在应用目录 `%APPDATA%\digital-employee-app\`（`DE_APP_DIR` 可覆盖）准备全局内容：释放默认员工配置到 `employees\`、公开样例到 `samples\`（**已存在的文件不覆盖**），写一份不含 Key 的 `settings.json`；工作区登记在 `workspaces.json`，所有工作区的会话与任务在 `sessions\`、`tasks\`。首次启动没有工作区时建“我的工作区”，目录是 `文档\数字员工`（只放「交付」和上传的「材料」）。然后自动打开浏览器到 `http://localhost:8787`。
 3. 端口 8787 被占用时自动往后找空闲端口，控制台打印实际地址；不想自动开浏览器就设 `DE_NO_OPEN=1`。
 4. 欢迎页点「载入公开样例」：用第 44 周样例（销售明细 + 周会纪要）一键建一份**草稿任务**，点「提交」即可看到发起 → 执行 → 质检 → 审核 → 交付的完整流程。没有 API Key 时用剧本式模型启动：
@@ -64,7 +64,7 @@ $env:DE_SCRIPTED="$env:APPDATA\digital-employee-app\samples\cases\scripts\A-01.j
 
 5. 配真实模型：设置 → 模型连接，填 Base URL 与 API Key，点“测试连接”“拉取模型”，勾选模型并保存；然后在新会话输入框右下角选模型。
 
-实测（Windows 11 x64）：exe 约 **27MB**；冷启动到接口可用约 **0.57 秒**（Go 版实测）；剧本模式跑完 A-01 到 delivered 约数秒。体积与冷启动的逐项对比见 [Go 迁移验收](docs/go-migration/architecture-and-parity.md)。
+实测（Windows 11 x64）：exe 约 **28MB**；冷启动到接口可用约 **0.57 秒**（Go 版实测）；剧本模式跑完 A-01 到 delivered 约数秒。体积与冷启动的逐项对比见 [Go 迁移验收](docs/go-migration/architecture-and-parity.md)。
 
 exe 也能当命令行用：`digital-employee.exe init`（只准备应用目录）、`run-case` / `run-cases` / `check` / `replay` / `fixtures`；`mcp-server` 是为兼容旧用法保留的占位（工具已在进程内直连）。
 
@@ -324,7 +324,7 @@ employees/weekly-report/
 - Spec 0006 已落地（T36–T43）：工作区即目录（应用目录 + 工作区登记 + 旧数据一次性迁移 + 单目录模式）、设置里拉取模型、侧栏“工作区 | 记录”、会话模型与运行中切换、前台 Agent 流式循环、目录材料、交付物写入工作区、对话里的步骤行。
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 30 条在剧本模式 30/30 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
 - 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
-- 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 27MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
+- 单文件 exe：`scripts/build-go.ps1` → `dist/digital-employee.exe`（约 28MB），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/smoke-go.ps1` 覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
 - 原生窗口：同一个 exe 加 `--window` 用 MyGo 打开（系统 WebView2），与浏览器方式共用应用目录。
 - 已知限制：
   - 字体未嵌入。ticket 里的“思源黑体子集（OFL）”需要仓库里不存在、也没找到可合法分发来源的字体文件，因此**跳过字体嵌入**并保留回退：图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（`noto` 等缺失时由阅读端回退），不嵌入字体二进制。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
