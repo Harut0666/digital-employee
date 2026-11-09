@@ -258,7 +258,7 @@ func TestWeeklyReportFrontdeskCannotUseTheKnowledgeBase(t *testing.T) {
 	if len(refused) != 1 || refused[0].Tool != contract.ToolKBSearch || refused[0].Reason == "" {
 		t.Fatalf("越权调用的留痕：%+v", refused)
 	}
-	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[query_task run_employee list_files read_file use_folder_file write_file edit_file]" {
+	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[query_task run_employee todo_write ask_user_question list_files read_file use_folder_file find_files search_content write_file edit_file shell]" {
 		t.Fatalf("开放的工具：%s", names)
 	}
 }
@@ -292,7 +292,7 @@ func TestTickedFrontdeskSearchesThenReadsTheKnowledgeBase(t *testing.T) {
 
 	h.say(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
 
-	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[run_employee list_files read_file use_folder_file write_file edit_file kb_search kb_read]" {
+	if names := fmt.Sprint(toolNames(frontdeskRequests(h)[0].Request.Tools)); names != "[run_employee todo_write ask_user_question list_files read_file use_folder_file find_files search_content write_file edit_file shell kb_search kb_read]" {
 		t.Fatalf("开放的工具：%s", names)
 	}
 	// 两次读取都写进会话日志：搜索只有索引字段，读取有正文

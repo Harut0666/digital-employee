@@ -222,6 +222,11 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       session.reload();
     },
     openKnowledge: () => setSelection({ kind: "page", page: "knowledge" }),
+    // 提问卡上的“提交回答”：失败（校验不过、已取消）交给卡片显示
+    answerQuestion: async (requestId, answers) => {
+      if (!sessionId) return { ok: false, error: "not_found", message: "没有选中会话" };
+      return settle(api.answerQuestion(sessionId, requestId, answers));
+    },
     // 权限确认卡上的三个按钮：答复之后这一轮接着往下走，会话由 settle 重读
     async decidePermission(requestId, decision) {
       if (!sessionId) return;

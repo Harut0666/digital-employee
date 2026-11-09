@@ -15,6 +15,8 @@ import type {
   PermissionDecision,
   FormMaterial,
   PermissionMode,
+  QuestionAnswer,
+  QuestionItem,
   RecordGroup,
   RecordItem,
   SessionAttachment,
@@ -25,6 +27,7 @@ import type {
   SessionSummary,
   StatusDot,
   TaskSnapshot,
+  TodoItem,
   TaskSummary,
   TurnAccepted,
   UiRole,
@@ -87,6 +90,11 @@ interface MockSession {
   decisions: Map<string, string>;
   /** 正在等人答复的权限确认 */
   pending?: { requestId: string; resolve: (decision: string) => void };
+  /** 提问卡（ask_user_question）：还在等人答复的（resolve）、已答复的答案或已取消 */
+  questions: Map<string, { resolve?: (answers: QuestionAnswer[] | "cancelled") => void }>;
+  questionResults: Map<string, QuestionAnswer[] | "cancelled">;
+  /** Agent 最新的待办清单（todo_write） */
+  todos: TodoItem[];
   /** 员工表单卡的答复（requestId → confirmed / rejected / cancelled，confirmed 时带任务号） */
   formDecisions: Map<string, { decision: string; taskId?: string }>;
   /** 还在等人答复的员工表单：Agent 弹出的有一轮在等（resolve），载入公开样例弹出的没有 */
@@ -154,6 +162,29 @@ const PERMISSION_BUTTONS: PermissionChoice[] = [
 ];
 /** 模拟模式不接模型：人说“把……写成文件”之类的话，就演示一次 write_file 经过权限关口 */
 const WRITE_REQUEST = /(写|存|保存|整理).{0,12}(文件|md|文档)/;
+/** 模拟模式的新工具演示：说“待办 / 计划步骤”演示 todo_write，说“问我 / 提问”演示 ask_user_question，说“运行命令”演示 shell 确认卡 */
+const TODO_REQUEST = /待办|todo|列.{0,4}步骤|分几步/i;
+const QUESTION_REQUEST = /问我|提问|选一个|让我选/;
+const SHELL_REQUEST = /运行命令|跑个命令|命令行|shell/i;
+const DEMO_QUESTIONS: QuestionItem[] = [
+  {
+    id: "period",
+    header: "统计周期",
+    question: "要出哪一周的周报？",
+    options: [
+      { label: "第 44 周（推荐）", description: "目录里最新的一周" },
+      { label: "第 43 周", description: "上一周" },
+    ],
+  },
+  {
+    id: "extras",
+    header: "附加章节",
+    question: "除了正文，还要附上哪些内容？",
+    multiSelect: true,
+    options: [{ label: "品类明细" }, { label: "门店排名" }, { label: "异常原因" }],
+  },
+];
+const DEMO_SHELL = { command: "Get-ChildItem -Recurse -Filter *.md | Measure-Object", description: "统计工作区里有多少个 Markdown 文件", workdir: "D:\\工作区\\我的工作区" };
 const WRITE_ARGS = { path: "notes/周会要点.md", content: "# 周会要点\n- 华南环比下降\n- 华东持平\n" };
 
 export function createMockSessions(
@@ -219,6 +250,7 @@ export function createMockSessions(
       // 绑定未结束的任务时是任务的当前模型；任务已结束（T45）或还没任务时是选过的模型，没选过沿用 lastModel
       ...(s.taskId && !closed ? { model: taskModels.get(s.taskId) } : { model: s.selected ?? lastModel, modelSelected: s.selected !== undefined }),
       permissionMode: s.permissionMode,
+      todos: [...s.todos],
       id: s.id,
       workspaceId: s.workspaceId,
       status,
@@ -325,7 +357,7 @@ export function createMockSessions(
       const decision = s.decisions.get(card.requestId);
       return {
         ...m,
-        card: waiting ? { ...card, pending: true, decision: undefined, choices: PERMISSION_BUTTONS } : { ...card, pending: false, decision: decision ?? "cancelled", choices: undefined },
+        card: waiting ? { ...card, pending: true, decision: undefined, choices: card.action === "run_command" ? PERMISSION_BUTTONS.filter((c) => c.decision !== "always_allow") : PERMISSION_BUTTONS } : { ...card, pending: false, decision: decision ?? "cancelled", choices: undefined },
       };
     });
   }
@@ -341,7 +373,19 @@ export function createMockSessions(
     });
   }
 
-  const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: projectForms(s, out), session: await view(s) });
+  /** 提问卡读取时配上状态：已答复（带答案）、仍在等、或已取消（对应 Go 的 projectQuestions） */
+function projectQuestions(s: MockSession, messages: SessionMessage[]): SessionMessage[] {
+  return messages.map((m) => {
+    const card = m.card;
+    if (!card || card.type !== "question" || !card.requestId) return m;
+    const result = s.questionResults.get(card.requestId);
+    if (Array.isArray(result)) return { ...m, card: { ...card, pending: false, decision: "answered", answers: result } };
+    if (result === "cancelled" || !s.questions.has(card.requestId)) return { ...m, card: { ...card, pending: false, decision: "cancelled", answers: undefined } };
+    return { ...m, card: { ...card, pending: true, decision: undefined, answers: undefined } };
+  });
+}
+
+const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: projectForms(s, out), session: await view(s) });
 
   // ---- 正在说的一轮：和 Go 后端一样逐字出现，说完再写进消息、推 turn_end ----
   const listeners = new Map<string, Set<(event: SessionAgentEvent) => void>>();
@@ -471,6 +515,127 @@ export function createMockSessions(
     return turn;
   }
 
+  /** 演示 todo_write：整表替换两次，对话里出现两张待办清单卡（最新的展开，旧的收起） */
+  function startTodoTurn(s: MockSession): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    const lists: TodoItem[][] = [
+      [
+        { content: "读本周的销售明细和纪要", status: "in_progress" },
+        { content: "核对统计周期", status: "pending" },
+        { content: "把要点写进 notes/周会要点.md", status: "pending" },
+      ],
+      [
+        { content: "读本周的销售明细和纪要", status: "completed" },
+        { content: "核对统计周期", status: "completed" },
+        { content: "把要点写进 notes/周会要点.md", status: "in_progress" },
+      ],
+    ];
+    void (async () => {
+      for (const todos of lists) {
+        if (s.cancelled) break;
+        const id = `mock_call_${turn}_todo_${todos[0]?.status}`;
+        emit(s, turn, { type: "tool_start", id, tool: "todo_write", args: { todos } });
+        await later(pace(30));
+        s.todos = todos;
+        const out: SessionMessage[] = [];
+        write(s, { kind: "todo_written", todos }, out);
+        emit(s, turn, { type: "message", message: out[0] });
+        emit(s, turn, { type: "tool_end", id, tool: "todo_write", args: { todos }, result: { message: "已更新待办" } });
+        await later(pace(60));
+      }
+      if (!s.cancelled) write(s, { kind: "assistant", text: "计划列好了，接下来我按清单一项项做。" }, []);
+      s.running = undefined;
+      emit(s, turn, { type: "turn_end", reason: s.cancelled ? "stopped" : "completed" });
+    })();
+    return turn;
+  }
+
+  /** 演示 ask_user_question：弹出提问卡，这一轮暂停，人选完提交后继续；停止时记为已取消 */
+  function startQuestionTurn(s: MockSession): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    void (async () => {
+      const requestId = newRequestId();
+      const out: SessionMessage[] = [];
+      write(s, { kind: "card", card: { type: "question", requestId, questions: DEMO_QUESTIONS, pending: true } }, out);
+      emit(s, turn, { type: "message", message: out[0] });
+      const result = await new Promise<QuestionAnswer[] | "cancelled">((resolve) => {
+        s.questions.set(requestId, { resolve });
+      });
+      s.questions.delete(requestId);
+      s.questionResults.set(requestId, result);
+      if (result === "cancelled" || s.cancelled) {
+        s.questionResults.set(requestId, "cancelled");
+        s.running = undefined;
+        emit(s, turn, { type: "turn_end", reason: "stopped" });
+        return;
+      }
+      write(s, { kind: "assistant", text: `好的，按你选的来：${result.map((a) => [...a.selected, a.custom].filter(Boolean).join("、")).join("；")}。` }, []);
+      s.running = undefined;
+      emit(s, turn, { type: "turn_end", reason: "completed" });
+    })();
+    return turn;
+  }
+
+  /** 演示 shell 经过权限关口：计划拒绝、放开直接放行（留痕）、其余弹带命令和警告的确认卡（没有“总是允许”） */
+  function startShellTurn(s: MockSession): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    const args = { description: DEMO_SHELL.description, command: DEMO_SHELL.command };
+    void (async () => {
+      const finish = (text: string, reason: "completed" | "stopped" = "completed") => {
+        if (text) write(s, { kind: "assistant", text }, []);
+        s.running = undefined;
+        emit(s, turn, { type: "turn_end", reason });
+      };
+      if (s.permissionMode === "plan") {
+        write(s, { kind: "tool_denied", tool: "shell", args, reason: "计划模式下只能读，不能运行命令。请先把打算怎么做（包括打算运行的命令）告诉发起人，等 TA 切换权限模式后再动手。" }, []);
+        return finish(`计划模式下我不能运行命令。打算运行：${DEMO_SHELL.command}（${DEMO_SHELL.description}），请切换模式后再让我跑。`);
+      }
+      if (s.permissionMode !== "yolo") {
+        const requestId = newRequestId();
+        const out: SessionMessage[] = [];
+        const choices = PERMISSION_BUTTONS.filter((c) => c.decision !== "always_allow");
+        write(
+          s,
+          {
+            kind: "card",
+            card: {
+              type: "permission", requestId, action: "run_command", actionLabel: "运行命令", tool: "shell", object: "运行命令", detail: DEMO_SHELL.description,
+              command: DEMO_SHELL.command, workdir: DEMO_SHELL.workdir, warnings: [], pending: true, choices,
+            },
+          },
+          out,
+        );
+        emit(s, turn, { type: "message", message: out[0] });
+        const decision = await new Promise<string>((resolve) => {
+          s.pending = { requestId, resolve };
+        });
+        s.pending = undefined;
+        s.decisions.set(requestId, decision);
+        if (decision === "cancelled" || s.cancelled) {
+          s.decisions.set(requestId, "cancelled");
+          return finish("", "stopped");
+        }
+        if (decision === "deny") {
+          write(s, { kind: "tool_denied", tool: "shell", args, reason: "发起人拒绝：没有允许运行命令。请换个办法，或问问发起人想怎么做。", decision: "deny" }, []);
+          return finish("好的，那我不运行命令了。");
+        }
+      } else {
+        write(s, { kind: "permission_allowed", tool: "shell", args, reason: "放开模式：运行命令不用确认" }, []);
+      }
+      write(s, { kind: "tool_called", tool: "shell", args, result: { output: "Count    : 12\n", exitCode: 0 } }, []);
+      finish("命令跑完了：工作区里有 12 个 Markdown 文件。");
+    })();
+    return turn;
+  }
   const newRequestId = () => Math.random().toString(16).slice(2, 10).padEnd(8, "0") + Date.now().toString(16).slice(-8).padStart(8, "0");
 
   /** 会话里按员工的开工清单判定：会话材料文件名 + 表单 + 人确认跳过的项 */
@@ -698,6 +863,33 @@ export function createMockSessions(
       return reply(s, []);
     },
 
+    async answerQuestion(id, requestId, answers) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以回答提问");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const message = s.messages.find((m) => m.card?.type === "question" && m.card.requestId === requestId);
+      const card = message?.card;
+      if (!card) return fail("not_found", `没有这张提问：${requestId}`);
+      const waiting = s.questions.get(requestId);
+      if (!waiting || s.questionResults.has(requestId)) return fail("permission_settled", "这张确认已经答复或取消了");
+      // 校验规则照搬 Go 的 validateAnswers：逐题对应、选项存在、单选只能选一个、每题至少回答一点
+      const questions = card.questions ?? [];
+      const checked: QuestionAnswer[] = [];
+      for (const q of questions) {
+        const a = answers.find((x) => x.id === q.id);
+        if (!a) return fail("invalid_input", `问题 ${q.id} 还没有回答`);
+        const labels = new Set(q.options.map((o) => o.label));
+        if (a.selected.some((l) => !labels.has(l))) return fail("invalid_input", `问题 ${q.id} 没有这个选项`);
+        if (a.selected.length > 1 && !q.multiSelect) return fail("invalid_input", `问题 ${q.id} 是单选，只能选一个`);
+        const custom = (a.custom ?? "").trim();
+        if (a.selected.length === 0 && !custom) return fail("invalid_input", `问题 ${q.id} 还没有回答`);
+        checked.push(custom ? { id: q.id, selected: a.selected, custom } : { id: q.id, selected: a.selected });
+      }
+      if (answers.some((a) => !questions.some((q) => q.id === a.id))) return fail("invalid_input", "答案里有不存在的问题");
+      waiting.resolve?.(checked);
+      return reply(s, []);
+    },
+
     async listSessions(workspaceId, options) {
       const own = await Promise.all(
         [...sessions.values()].filter((s) => (!workspaceId || s.workspaceId === workspaceId) && (options?.archived || !s.archived)).map(view),
@@ -725,7 +917,7 @@ export function createMockSessions(
       // 打开会话就算已读（Go 后端写在会话日志里，模拟模式记在内存里）
       s.readUpTo = lastSeq(s.taskId);
       // 写文件的工具行要给界面（Go 后端把全部工具留痕都返回，界面只取写文件的）；别的工具留痕模拟模式不给
-      const messages = projectForms(s, projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file")));
+      const messages = projectQuestions(s, projectForms(s, projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file"))));
       return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskIds.length > 0 ? await withTasks(messages, s.taskIds, s) : messages };
     },
 
@@ -769,6 +961,9 @@ export function createMockSessions(
         permissionMode: "ask",
         always: new Set(),
         decisions: new Map(),
+        questions: new Map(),
+        questionResults: new Map(),
+        todos: [],
         formDecisions: new Map(),
         forms: new Map(),
         files: [],
@@ -790,6 +985,9 @@ export function createMockSessions(
       // 正在说：这句话排进这一轮，在下一步之前送达（模拟模式直接接在这轮的话后面说）
       if (s.running) return { ok: true, turn: s.running.turn };
       if (WRITE_REQUEST.test(text)) return { ok: true, turn: startWriteTurn(s) };
+      if (TODO_REQUEST.test(text)) return { ok: true, turn: startTodoTurn(s) };
+      if (QUESTION_REQUEST.test(text)) return { ok: true, turn: startQuestionTurn(s) };
+      if (SHELL_REQUEST.test(text)) return { ok: true, turn: startShellTurn(s) };
       // 模拟模式不接模型：按员工名里的字粗略匹配，匹配上就演示一次 run_employee；已有任务时只有说“再来一版”之类才算要再开工
       const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
       if (guess && (!s.taskId || /再来|再出|重新|再做|新的一?版|下一/.test(text))) return { ok: true, turn: startRunEmployeeTurn(s, guess, text) };
@@ -811,6 +1009,7 @@ export function createMockSessions(
       s.running = undefined;
       // 等权限确认时被停止：未决的确认记为已取消
       s.pending?.resolve("cancelled");
+      for (const question of s.questions.values()) question.resolve?.("cancelled");
       for (const form of s.forms.values()) form.resolve?.({ rejected: false, cancelled: true } as never);
       return { ok: true, stopped: true, turn: running.turn };
     },

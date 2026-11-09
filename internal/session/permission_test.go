@@ -27,6 +27,10 @@ func TestDecideFollowsTheMatrix(t *testing.T) {
 		ActionUseFolderFile: {
 			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAsk, PermissionYolo: VerdictAllow,
 		},
+		// 命令行没有沙箱：只有放开模式放行，计划拒绝，其余每次问
+		ActionShell: {
+			PermissionPlan: VerdictDeny, PermissionAsk: VerdictAsk, PermissionAcceptEdits: VerdictAsk, PermissionAuto: VerdictAsk, PermissionYolo: VerdictAllow,
+		},
 		"": {
 			PermissionPlan: VerdictAllow, PermissionAsk: VerdictAllow, PermissionAcceptEdits: VerdictAllow, PermissionAuto: VerdictAllow, PermissionYolo: VerdictAllow,
 		},
@@ -43,7 +47,7 @@ func TestDecideFollowsTheMatrix(t *testing.T) {
 // 档位是单调的：越往松，免问的越多，不存在高档位反而问得更多的动作。
 func TestModesAreMonotonic(t *testing.T) {
 	rank := map[Verdict]int{VerdictDeny: 0, VerdictAsk: 1, VerdictAllow: 2}
-	for _, action := range []string{ActionWriteFile, ActionRunEmployee, ActionUseFolderFile} {
+	for _, action := range []string{ActionWriteFile, ActionRunEmployee, ActionUseFolderFile, ActionShell} {
 		previous := -1
 		for _, mode := range PermissionModes {
 			current := rank[Decide(mode, action)]

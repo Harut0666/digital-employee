@@ -7,6 +7,8 @@ import { deriveStepRows, type StepRow, type StepRowDef } from "./step-rows";
 import type { AgentToolView, PauseView, SessionAttachment, SessionCard, SessionDetail, SessionEmployee, TaskAction, UiRole } from "../api/types";
 import { derivePermissionCard, fileChangeOf, traceOf, type FileChangeView, type PermissionCardView, type PermissionTrace } from "./permission-mode";
 import { latestTaskId } from "./task-runs";
+import { deriveTodoCard, latestTodoId, type TodoCardView } from "./todo";
+import { deriveQuestionCard, type QuestionCardView } from "./question";
 
 interface ItemBase {
   /** React key，取自消息 ID */
@@ -53,6 +55,10 @@ export type ChatItem =
   | (ItemBase & { kind: "permission" } & PermissionCardView)
   /** Agent 写的文件：一行说明，点开看改动 */
   | (ItemBase & { kind: "file_change" } & FileChangeView)
+  /** 待办清单（todo_write）：一张紧凑的卡，最新的一张展开，旧的收起 */
+  | (ItemBase & { kind: "todo" } & TodoCardView)
+  /** 提问（ask_user_question）：Agent 向发起人提的结构化问题 */
+  | (ItemBase & { kind: "question"; card: SessionCard; view: QuestionCardView })
   /** 自动放行、被拒绝的留痕 */
   | (ItemBase & { kind: "trace" } & PermissionTrace)
   /** 正在说的一轮里已经调用的工具（可折叠成一行） */
@@ -188,6 +194,9 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
         else if (m.card) items.push(cardItem(base, m.card));
         break;
+      case "todo_written":
+        items.push({ ...base, kind: "todo", ...deriveTodoCard(m, m.id === latestTodoId(session.messages)) });
+        break;
       // 权限模式切换：输入框左下角的下拉已显示当前模式，轨迹里留痕，对话里不再插说明
       case "tool_called": {
         // 写文件的工具行：点开看改了什么；别的工具留痕只进会话日志
@@ -282,6 +291,8 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         return filingItem(base, card);
       case "permission":
         return { ...base, kind: "permission", ...derivePermissionCard(card, { writable, role }) };
+      case "question":
+        return { ...base, kind: "question", card, view: deriveQuestionCard(card, { writable, role }) };
       case "folder_file":
         return {
           ...base,

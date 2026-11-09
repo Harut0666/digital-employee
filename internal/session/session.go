@@ -91,6 +91,8 @@ type Deps struct {
 	Tools contract.ToolClient
 	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
 	Filing FilingSource
+	// LocalAddrs 本服务被访问过的地址（Host:Port）：shell 命令里出现它们要加警告（见 shell.go）。nil 表示不知道
+	LocalAddrs func() []string
 	// Sample 应用目录里的公开样例（T49“载入公开样例”）；nil 或返回 nil 表示没有样例
 	Sample func() *Sample
 	Now    func() time.Time
@@ -197,6 +199,8 @@ type View struct {
 	Unread bool `json:"unread"`
 	// PermissionMode 权限模式（T48）：plan、ask、accept_edits、auto、yolo；新会话总是 ask
 	PermissionMode string `json:"permissionMode"`
+	// Todos Agent 最新的待办清单（todo_write）；没写过时为空数组
+	Todos []TodoItem `json:"todos"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -576,7 +580,7 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
 		Employee: summary.Employee, TaskID: summary.ID, TaskIDs: []string{summary.ID}, Attachments: []Attachment{},
-		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk,
+		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: PermissionAsk, Todos: []TodoItem{},
 		Archived: m.legacyArchived.has(legacyPrefix + summary.ID),
 	}
 	m.applySummary(view, summary)
@@ -656,6 +660,7 @@ func (m *Manager) view(current *record) *View {
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
 		WaitingFor: []contract.Role{}, Archived: current.archived, PermissionMode: current.mode(),
+		Todos: append([]TodoItem{}, current.todos...),
 	}
 	if current.employee != "" {
 		view.Status = StatusDrafting

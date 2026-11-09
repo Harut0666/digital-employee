@@ -76,6 +76,22 @@ type tool struct {
 	guard func(arguments map[string]any) error
 	// describe 动作的对象（文件路径）和一句话说明，写在权限确认卡上
 	describe func(arguments map[string]any) (object, detail string)
+	// noAlways 权限确认卡上不提供“本会话总是允许这一类”（shell：每条命令都可能不同）
+	noAlways bool
+	// redact 写进会话日志的参数（shell：命令截断到 4KB）；nil 表示原样
+	redact func(arguments map[string]any) map[string]any
+	// decorate 给权限确认卡补充这个工具特有的内容（shell：命令、工作目录、风险提示）
+	decorate func(card *Card, arguments map[string]any)
+	// forceAsk 模式本来放行时仍要问人（shell：命令里出现本机服务地址）；返回原因
+	forceAsk func(arguments map[string]any) (bool, string)
+}
+
+// loggedArgs 写进会话日志的参数。
+func (item tool) loggedArgs(arguments map[string]any) any {
+	if item.redact != nil {
+		return item.redact(arguments)
+	}
+	return arguments
 }
 
 // turn 一条回复的处理过程。
@@ -456,7 +472,7 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 		sort.Strings(names)
 		reason := fmt.Sprintf("工具 %s 现在没有开放给前台 Agent。现在可用的工具：%s。", call.Name, strings.Join(names, "、"))
 		end(nil, reason, true)
-		return loop.deny(call, &denial{reason: reason})
+		return loop.deny(call, tool{}, &denial{reason: reason})
 	}
 	// 工具在写锁里执行、并当场写留痕：它可能改会话状态（草稿、待发的卡片），执行和留痕要看到同一份现状，
 	// 也不能和人的提交、确认交错。
@@ -494,16 +510,16 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
 	switch {
 	case errors.As(runErr, &refused):
-		_, writeErr = loop.deny(call, refused)
+		_, writeErr = loop.deny(call, item, refused)
 	case runErr != nil:
-		failed := Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Reason: runErr.Error()}
+		failed := Message{Kind: KindToolCalled, Tool: call.Name, Args: item.loggedArgs(call.Arguments), Reason: runErr.Error()}
 		var coded *toolError
 		if errors.As(runErr, &coded) {
 			failed.Result = map[string]any{"error": coded.code, "message": coded.message}
 		}
 		writeErr = loop.write(failed)
 	default:
-		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: call.Arguments, Result: result})
+		writeErr = loop.write(Message{Kind: KindToolCalled, Tool: call.Name, Args: item.loggedArgs(call.Arguments), Result: result})
 	}
 	switch {
 	case refused != nil:
@@ -529,8 +545,8 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 	return agent.ToolResultBlock(call.ID, string(raw), false), nil
 }
 
-func (loop *turnLoop) deny(call agent.ContentBlock, refused *denial) (agent.ContentBlock, error) {
-	message := Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: refused.reason}
+func (loop *turnLoop) deny(call agent.ContentBlock, item tool, refused *denial) (agent.ContentBlock, error) {
+	message := Message{Kind: KindToolDenied, Tool: call.Name, Args: item.loggedArgs(call.Arguments), Reason: refused.reason}
 	if refused.byInitiator {
 		message.Decision = DecisionDeny
 	}

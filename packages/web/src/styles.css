@@ -15,5 +15,6 @@
 @import "./styles/chat.css";
 @import "./styles/markdown.css";
 @import "./styles/cards.css";
+@import "./styles/tl2-cards.css";
 @import "./styles/trace.css";
 @import "./styles/panel.css";

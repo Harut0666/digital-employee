@@ -380,30 +380,70 @@ func (t *turn) folderTools() []tool {
 	}
 	read := tool{
 		spec: agent.ToolSpec{
-			Name:        "read_file",
-			Description: "读工作区目录里一个文件的文本内容，支持 csv、xlsx、docx、txt、md，超过 2 万字截断。",
+			Name: "read_file",
+			Description: "读工作区目录里一个文本文件，输出带行号（“行号: 文本”）。默认从第 1 行读起，单次最多 2000 行、每行最多 2000 个字符、全部内容最多 50KB；" +
+				"没读完时页脚会写出下一次该用的 offset。用 offset（从 1 起）和 limit 翻页。csv、xlsx、docx 先转成文本再分页；二进制文件报错。" +
+				"找内容请先用 find_files / search_content，读之前不要用命令行 cat。",
 			Parameters: map[string]any{"type": "object", "required": []any{"path"}, "properties": map[string]any{
-				"path": map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
+				"path":   map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
+				"offset": map[string]any{"type": "integer", "description": "从第几行读起，从 1 起，默认 1"},
+				"limit":  map[string]any{"type": "integer", "description": "最多读多少行，默认也是上限 2000"},
 			}},
 		},
 		run: func(arguments map[string]any) (any, error) {
 			requested, _ := arguments["path"].(string)
-			target, _, err := resolveInWorkspace(t.workspaceDir(), requested)
+			offset, limit := 1, 0
+			if raw, present := arguments["offset"]; present && raw != nil {
+				value, ok := wholeNumber(raw)
+				if !ok || value < 1 {
+					return nil, toolFailure("invalid_offset", "offset 从 1 起（第一行是 1），收到 %v。", raw)
+				}
+				offset = value
+			}
+			if raw, present := arguments["limit"]; present && raw != nil {
+				value, ok := wholeNumber(raw)
+				if !ok || value < 1 {
+					return nil, toolFailure("invalid_limit", "limit 必须是正整数，收到 %v。", raw)
+				}
+				limit = value
+			}
+			target, rel, err := resolveInWorkspace(t.workspaceDir(), requested)
 			if err != nil {
 				return nil, denied("%s。我只能读工作区目录里的文件。", err.Error())
 			}
-			client := t.manager.deps.Tools
-			if client == nil {
-				return nil, errors.New("没有可用的工具客户端")
+			info, statErr := os.Stat(target)
+			switch {
+			case errors.Is(statErr, fs.ErrNotExist):
+				return nil, toolFailure("file_missing", "文件不存在：%s。", displayPath(rel))
+			case statErr != nil:
+				return nil, fmt.Errorf("读不了 %s：%v", displayPath(rel), statErr)
+			case info.IsDir():
+				return nil, toolFailure("is_directory", "%s 是文件夹，不是文件。要看里面有什么请用 list_files 或 find_files。", displayPath(rel))
+			case !info.Mode().IsRegular():
+				return nil, toolFailure("not_a_file", "%s 不是普通文件。", displayPath(rel))
 			}
-			result, err := client.Call(contract.ToolReadFile, map[string]any{"path": target})
+			var outcome readOutcome
+			switch strings.ToLower(filepath.Ext(target)) {
+			case ".xlsx", ".docx":
+				// 这两种是压缩包：先用现有解析转成文本，再按同样的方式分页
+				text, parseErr := t.parsedText(target)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				outcome, err = readLines(strings.NewReader(text), offset, limit)
+			default:
+				outcome, err = readTextFile(target, offset, limit)
+			}
 			if err != nil {
-				return nil, err
+				if errors.Is(err, errNotText) {
+					return nil, toolFailure("not_text", "%s：%s。", displayPath(rel), err.Error())
+				}
+				return nil, toolFailure("read_failed", "%s：%s", displayPath(rel), err.Error())
 			}
-			if !result.OK {
-				return nil, errors.New(result.Error)
-			}
-			return result.Data, nil
+			return map[string]any{
+				"path": rel, "text": outcome.Text, "totalLines": outcome.Total,
+				"startLine": outcome.Start, "endLine": outcome.End, "truncated": outcome.Truncated,
+			}, nil
 		},
 	}
 	use := tool{

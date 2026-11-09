@@ -32,6 +32,8 @@ const (
 	KindPermissionModeSet = "permission_mode_set"
 	// KindPermissionAllowed 权限模式或“本会话总是允许”让一个动作免问放行（T48）：留痕，轨迹里能看到
 	KindPermissionAllowed = "permission_allowed"
+	// KindTodoWritten Agent 用 todo_write 整表替换了待办清单（Todos）；新的消息类型，旧版本的读取方认不得它也不会出错
+	KindTodoWritten = "todo_written"
 
 	kindCreated = "created"
 	// kindPermissionDecided 权限确认卡有了答复（RequestID、Decision、Action）；只改变会话状态，卡片上体现
@@ -111,13 +113,17 @@ type Message struct {
 	RequestID string `json:"requestId,omitempty"`
 	Decision  string `json:"decision,omitempty"`
 	Action    string `json:"action,omitempty"`
+	// Todos 待办清单（todo_written）
+	Todos []TodoItem `json:"todos,omitempty"`
+	// Answers 提问的答案（question_answered）
+	Answers []QuestionAnswer `json:"answers,omitempty"`
 }
 
 // visible 读取历史时是否返回（状态变更已体现在会话字段上）。
 func (m Message) visible() bool {
 	switch m.Kind {
 	case kindCreated, kindModelSelected, kindEmployeeSet, kindDraftSet, kindAttachmentAdded, kindTaskBound, kindFilingDrafted, kindChecklistSkipped,
-		kindRename, kindArchive, kindRead, KindTurnText, kindEmployeeFormDecided:
+		kindRename, kindArchive, kindRead, KindTurnText, kindEmployeeFormDecided, kindQuestionAnswered:
 		return false
 	}
 	return true
@@ -155,6 +161,8 @@ type record struct {
 	permissionMode string
 	// alwaysAllowed 本会话总是允许的动作类别；换权限模式时清空
 	alwaysAllowed map[string]bool
+	// todos 最新的待办清单（todo_write 整表替换）
+	todos []TodoItem
 }
 
 func (r *record) apply(message Message) {
@@ -178,6 +186,8 @@ func (r *record) apply(message Message) {
 			}
 			r.alwaysAllowed[message.Action] = true
 		}
+	case KindTodoWritten:
+		r.todos = message.Todos
 	case kindEmployeeSet:
 		r.employee = message.Employee
 	case kindDraftSet:
