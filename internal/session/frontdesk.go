@@ -55,8 +55,13 @@ func denied(format string, args ...any) error {
 type tool struct {
 	spec agent.ToolSpec
 	run  func(arguments map[string]any) (any, error)
+	// runCtx 需要等人（员工表单卡）的工具用它代替 run：等待期间要响应停止
+	runCtx func(ctx context.Context, arguments map[string]any) (any, error)
 	// action 动作类别（ActionWriteFile 等）：非空的工具执行前要过权限关口（turnLoop.gate）；空表示读，始终允许
 	action string
+	// selfDecide 工具自己处理“放行”和“问”：关口只负责计划模式的拒绝。
+	// 运行员工的“问”是员工表单卡，使用目录文件的“问”是“使用目录文件”卡，都不再叠一张权限确认卡。
+	selfDecide bool
 	// guard 始终适用的边界检查（路径越界、隐藏文件、大小……），不受权限模式影响；返回的错误就是拒绝原因
 	guard func(arguments map[string]any) error
 	// describe 动作的对象（文件路径）和一句话说明，写在权限确认卡上
@@ -73,10 +78,6 @@ type turn struct {
 	out []Message
 	// cards 回复说完之后才发出的卡片
 	cards []Card
-	// proposed 模型提议了员工
-	proposed bool
-	// drafted 模型改了表单草稿
-	drafted bool
 }
 
 func (t *turn) write(message Message) error {
@@ -143,11 +144,8 @@ func (loop *turnLoop) run(ctx context.Context) (turnOutcome, error) {
 	if err != nil {
 		return turnOutcome{mode: turnErrored, reason: TurnError}, err
 	}
-	t := &turn{manager: deps, current: current, role: loop.job.role, tasks: deps.deps.Engine}
+	t := &turn{manager: deps, current: current, role: speakerRole(current, loop.job.role), tasks: deps.deps.Engine}
 	loop.turn = t
-	if current.employee == "" {
-		return loop.route(ctx), nil
-	}
 	return loop.assist(ctx), nil
 }
 
@@ -471,7 +469,16 @@ func (loop *turnLoop) call(ctx context.Context, open map[string]tool, call agent
 	case refusal != "":
 		runErr = &denial{reason: refusal}
 	default:
-		result, runErr = item.run(call.Arguments)
+		if item.runCtx != nil {
+			result, runErr = item.runCtx(ctx, call.Arguments)
+		} else {
+			result, runErr = item.run(call.Arguments)
+		}
+		if errors.Is(runErr, errTurnCancelled) {
+			// 等人的时候被停止：动作没有执行；留痕“已取消”由调用方统一补写
+			end(nil, cancelledResult, true)
+			return agent.ToolResultBlock(call.ID, cancelledResult, true), nil
+		}
 	}
 
 	// 执行完写留痕（工具可能改了草稿、待发的卡片，留痕紧跟着写下）
@@ -522,265 +529,4 @@ func (loop *turnLoop) deny(call agent.ContentBlock, reason string) (agent.Conten
 // denyLocked 在写锁里写越权留痕。
 func (loop *turnLoop) denyLocked(call agent.ContentBlock, reason string) error {
 	return loop.write(Message{Kind: KindToolDenied, Tool: call.Name, Args: call.Arguments, Reason: reason})
-}
-
-// ---------------------------------------------------------------- 接待
-
-const receptionPrompt = `你是数字员工系统的前台 Agent，负责判断发起人要做的工作该由哪个员工接手。你说话平实、简短，用中文回答。
-
-- 看懂要做什么后，调用 propose_employee 提议一个员工，并用一句话说明理由。提议之后由人确认，你不能替人确认，也不能自己开始工作。
-- 只能提议下面列出的员工。没有合适的员工就如实说，不要硬选。
-- 说不清要做什么时，问一句，不要猜。
-
-## 可接手的员工
-`
-
-func receptionSystem(employees []Employee) string {
-	lines := make([]string, 0, len(employees))
-	for _, employee := range employees {
-		lines = append(lines, fmt.Sprintf("- %s（id：%s）：%s", employee.Name, employee.ID, employee.Description))
-	}
-	return receptionPrompt + strings.Join(lines, "\n") + "\n"
-}
-
-func (loop *turnLoop) proposeEmployeeTool(employees []Employee) tool {
-	t := loop.turn
-	ids := make([]any, 0, len(employees))
-	for _, employee := range employees {
-		ids = append(ids, employee.ID)
-	}
-	return tool{
-		spec: agent.ToolSpec{
-			Name:        "propose_employee",
-			Description: "提议由哪个员工接手这项工作。提议后程序会发出确认卡片，由人确认。",
-			Parameters: map[string]any{
-				"type":     "object",
-				"required": []any{"employee"},
-				"properties": map[string]any{
-					"employee": map[string]any{"type": "string", "enum": ids, "description": "员工 id"},
-					"reason":   map[string]any{"type": "string", "description": "一句话说明为什么由这个员工接手"},
-				},
-			},
-		},
-		run: func(arguments map[string]any) (any, error) {
-			id, _ := arguments["employee"].(string)
-			reason, _ := arguments["reason"].(string)
-			for _, employee := range employees {
-				if employee.ID == id {
-					t.proposed = true
-					t.cards = append(t.cards, confirmCard(employees, id, SourceModel, reason))
-					return map[string]any{"proposed": id}, nil
-				}
-			}
-			return nil, fmt.Errorf("没有这个员工：%s", id)
-		},
-	}
-}
-
-// defaultEmployee 设置里的默认员工；没设或已不存在时返回空串。
-func (loop *turnLoop) defaultEmployee(employees []Employee) string {
-	deps := loop.turn.manager.deps
-	if deps.DefaultEmployee == nil {
-		return ""
-	}
-	id := deps.DefaultEmployee()
-	for _, employee := range employees {
-		if employee.ID == id {
-			return id
-		}
-	}
-	return ""
-}
-
-// route 按“默认员工 → 模型提议 → 列出员工手选”决定谁接手。
-func (loop *turnLoop) route(ctx context.Context) turnOutcome {
-	t := loop.turn
-	t.role = loop.job.role
-	employees, err := t.manager.deps.Employees()
-	if err != nil {
-		loop.say(Message{Kind: KindNotice, Text: "读不到员工列表：" + err.Error()})
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	}
-	if id := loop.defaultEmployee(employees); id != "" {
-		if err := loop.write(Message{Kind: KindNotice, Text: "这项工作默认由下面的员工接手，请确认。"}); err != nil {
-			return turnOutcome{mode: turnErrored, reason: TurnError}
-		}
-		t.cards = append(t.cards, confirmCard(employees, id, SourceDefault, ""))
-		_ = loop.flushCards()
-		return turnOutcome{mode: turnCompleted, reason: TurnCompleted}
-	}
-	text, reason, err := loop.converse(ctx, receptionSystem(employees), t.history(), []tool{loop.proposeEmployeeTool(employees)})
-	if reason == TurnStopped || reason == TurnError {
-		if reason == TurnStopped && text != "" {
-			loop.say(Message{Kind: KindAssistant, Text: text})
-		}
-		if reason == TurnStopped {
-			return turnOutcome{mode: turnStopped, reason: TurnStopped}
-		}
-		// 模型不可用：给出员工手选卡片，人照样能往下走
-		if err := loop.write(Message{Kind: KindNotice, Text: "模型暂时不可用，我判断不了该由谁接手。请从列表里选择员工。"}); err != nil {
-			return turnOutcome{mode: turnErrored, reason: TurnError}
-		}
-	} else if text != "" {
-		if err := loop.write(Message{Kind: KindAssistant, Text: text}); err != nil {
-			return turnOutcome{mode: turnErrored, reason: TurnError}
-		}
-	}
-	// 卡片都放在一句话之后：先说话，再给卡片
-	if !t.proposed {
-		t.cards = append(t.cards, confirmCard(employees, "", SourceManual, ""))
-	}
-	if err := loop.flushCards(); err != nil {
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	}
-	return turnOutcome{mode: turnCompleted, reason: reason}
-}
-
-// ---------------------------------------------------------------- 接手之后
-
-const handoverNote = "（系统提示）发起人已确认由你接手。请根据此前的对话把能确定的信息填进表单草稿；信息不足时问一句，不要猜。"
-
-// assistantSystem 员工的 frontdesk.md 加上这个会话的现状。
-func (loop *turnLoop) assistantSystem(config *contract.EmployeeConfig) string {
-	t := loop.turn
-	lines := []string{
-		strings.TrimSpace(config.Frontdesk), "", "## 当前会话", "",
-		"- 正在和你说话的人：" + contract.RoleLabels[t.role],
-	}
-	if t.current.taskID != "" {
-		// 会话里可能先后运行过多个任务：以最新的一个为当前任务回答问题
-		lines = append(lines, "- 任务："+t.current.taskID)
-		if len(t.current.taskIDs) > 1 {
-			lines = append(lines, fmt.Sprintf("- 这个会话已运行 %d 个任务，上面是最新的一个；更早的任务：%s",
-				len(t.current.taskIDs), strings.Join(t.current.taskIDs[:len(t.current.taskIDs)-1], "、")))
-		}
-	}
-	if t.manager.openTask(t.current) == nil {
-		// 没有未结束的任务：可以准备（下一次）运行；最新的任务已交付或终止时，表单草稿沿用上一次的
-		if t.current.taskID == "" {
-			lines = append(lines, "- 任务：还没有提交")
-		} else {
-			lines = append(lines, "- 最新的任务已经结束，要再来一版可以填表单草稿并发表单卡片，由人确认后提交")
-		}
-		lines = append(lines, "- 表单草稿："+compactJSON(t.current.draft))
-		names := []string{}
-		for _, attachment := range t.current.attachments {
-			names = append(names, attachment.Name)
-		}
-		lines = append(lines, "- 已提供的材料："+strings.Join(names, "、"))
-		lines = append(lines, checklistLines(config, t.current)...)
-	}
-	lines = append(lines, "", permissionPrompt(t.current.mode()))
-	return strings.Join(lines, "\n") + "\n"
-}
-
-func compactJSON(value any) string {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
-}
-
-// assistantTools 这个阶段开放的工具：固定的草稿类工具，加上 frontdesk.md 勾选的只读工具。
-func (loop *turnLoop) assistantTools(config *contract.EmployeeConfig) ([]tool, error) {
-	t := loop.turn
-	ticked := map[string]bool{}
-	for _, name := range contract.FrontdeskTools(config.Frontdesk) {
-		ticked[name] = true
-	}
-	tools := []tool{}
-	if t.current.taskID != "" && ticked[contract.ToolQueryTask] {
-		tools = append(tools, t.queryTaskTool())
-	}
-	// 没有未结束的任务时可以准备（下一次）运行：填表单草稿、发表单卡片；有未结束的任务时只能发任务卡片
-	if t.manager.openTask(t.current) == nil {
-		tools = append(tools, t.fillFormDraftTool(config))
-	}
-	tools = append(tools, t.proposeCardTool())
-	knowledge, err := t.knowledgeTools(ticked)
-	if err != nil {
-		return nil, err
-	}
-	// 目录读取工具对所有员工都开放：工作区就是目录，Agent 要能看见里面有什么
-	tools = append(tools, t.folderTools()...)
-	return append(append(tools, t.fileWriteTools()...), knowledge...), nil
-}
-
-// unavailableText 模型不可用时程序自己说的话：任务的现状不需要模型也说得清。
-func (loop *turnLoop) unavailableText() string {
-	t := loop.turn
-	text := "模型暂时不可用，我现在回答不了。可以直接在卡片上操作。"
-	if t.current.taskID == "" {
-		return text
-	}
-	snapshot, found := t.tasks.Get(t.current.taskID)
-	if !found {
-		return text
-	}
-	text += "任务现在的状态是“" + contract.StateLabels[snapshot.State] + "”。"
-	if snapshot.Pause != nil {
-		text += snapshot.Pause.Message
-	}
-	return text
-}
-
-// assist 员工接手后的一条回复。
-func (loop *turnLoop) assist(ctx context.Context) turnOutcome {
-
-	t := loop.turn
-	config, err := t.manager.deps.LoadEmployee(t.current.employee)
-	if err != nil {
-		loop.say(Message{Kind: KindNotice, Text: "读不到员工配置：" + err.Error()})
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	}
-	tools, err := loop.assistantTools(config)
-	if err != nil {
-		loop.say(Message{Kind: KindNotice, Text: "读不到工具列表：" + err.Error()})
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	}
-
-	text, reason, err := loop.converse(ctx, loop.assistantSystem(config), t.history(), tools)
-
-	switch {
-	case reason == TurnStopped:
-
-		if text != "" {
-			loop.say(Message{Kind: KindAssistant, Text: text})
-		}
-		return turnOutcome{mode: turnStopped, reason: TurnStopped}
-	case reason == TurnError:
-		loop.say(Message{Kind: KindNotice, Text: loop.unavailableText()})
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	case reason == TurnCompleted && text == "":
-		// 什么都没说（比如只填了草稿）：不用写空回复
-	case err != nil:
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	default:
-		if err := loop.write(Message{Kind: KindAssistant, Text: text}); err != nil {
-			return turnOutcome{mode: turnErrored, reason: TurnError}
-		}
-	}
-
-	// 填过表单草稿：再给出表单卡片，人接着在卡片上操作。字段照着最新状态取（草稿要看得见）
-
-	if t.drafted {
-		if current, loadErr := loop.job.manager.load(loop.job.session); loadErr == nil {
-			t.current = current
-		}
-
-		t.cards = append(t.cards, t.formCard())
-	}
-
-	if err := loop.flushCards(); err != nil {
-		return turnOutcome{mode: turnErrored, reason: TurnError}
-	}
-	return turnOutcome{mode: turnCompleted, reason: reason}
-}
-
-func (t *turn) formCard() Card {
-	return Card{
-		Type: CardForm, Employee: t.current.employee, Draft: t.current.draft,
-		Attachments: append([]Attachment{}, t.current.attachments...),
-	}
 }

@@ -1,7 +1,7 @@
 // 权限关口的单元测试（T48）：运行员工和把目录文件用作材料这两类动作的处理。
 //
-// 真正的 run_employee 在 T49 接入，这里用测试里的假工具走同一个关口（turnLoop.call → gate），
-// 和 HTTP 主接缝（internal/server/permission_test.go）里写文件的测试互补。
+// 这里用测试里的假工具走同一个关口（turnLoop.call → gate）验证“问”的通用路径，
+// 和 HTTP 主接缝里写文件（permission_test.go）、run_employee 与 use_folder_file（employee_tool_test.go）的测试互补。
 package session
 
 import (

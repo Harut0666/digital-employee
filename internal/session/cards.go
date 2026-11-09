@@ -27,6 +27,8 @@ const (
 	CardUseFile = "folder_file"
 	// CardPermission 权限确认（T48）：权限模式要求先问人时，Agent 想做的动作和三个答复按钮
 	CardPermission = "permission"
+	// CardEmployeeForm 员工表单（T49）：run_employee 弹出的结构化表单，取代“确认员工”卡、开工清单卡和提交按钮
+	CardEmployeeForm = "employee_form"
 )
 
 // 员工确认卡片的来源。
@@ -96,6 +98,36 @@ type Card struct {
 	Decision    string `json:"decision,omitempty"`
 	// Choices 等答复时的三个按钮；答复之后、取消之后没有
 	Choices []PermissionChoice `json:"choices,omitempty"`
+
+	// employee_form：Employee 是员工 ID，Draft 是 Agent 预填的表单字段（人在卡片上改了以后以人提交的为准），
+	// Prefilled 是其中 Agent 预填的字段名，Materials 是 Agent 给的材料及来源；人在卡片上补传的材料不在这里，
+	// 它们是会话材料。Reason 是 Agent 的一句话理由。RequestID、Pending、Decision、TaskID 同上：答复之后
+	// Decision 是 confirmed、rejected 之一，停止时是 cancelled，确认开工后 TaskID 是创建的任务。
+	// Standalone 表示不是 Agent 弹出的（载入公开样例）：没有一轮在等它，重启后仍可确认。
+	EmployeeName string         `json:"employeeName,omitempty"`
+	Prefilled    []string       `json:"prefilled,omitempty"`
+	Materials    []FormMaterial `json:"materials,omitempty"`
+	Standalone   bool           `json:"standalone,omitempty"`
+	// Baseline 弹出卡片时会话里已有的材料文件名：之后新出现的（人在卡片上补传的）才算这张卡上补的材料
+	Baseline []string `json:"baseline,omitempty"`
+	// Checklist 这个员工的开工清单定义：卡片上随人改字段、补材料实时判定哪些已备齐、能不能确认（最终以后端为准）
+	Checklist []contract.ChecklistItem `json:"checklist,omitempty"`
+}
+
+// 员工表单上一份材料的来源。
+const (
+	MaterialAttachment = "attachment" // 会话里已有的材料（上传的，或之前确认过的目录文件）
+	MaterialFolder     = "folder"     // 工作区目录里的文件，确认开工时复制进任务
+	MaterialSample     = "sample"     // 应用目录里的公开样例文件，确认开工时复制进任务
+)
+
+// FormMaterial 员工表单上 Agent 给的一份材料。
+type FormMaterial struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size,omitempty"`
+	Source string `json:"source"`
+	// Path 目录文件在工作区目录里的相对路径（source=folder）
+	Path string `json:"path,omitempty"`
 }
 
 // PermissionChoice 权限确认卡上的一个答复按钮：Decision 就是答复时提交的决定。
@@ -103,10 +135,6 @@ type PermissionChoice struct {
 	Decision string `json:"decision"`
 	Label    string `json:"label"`
 	Style    string `json:"style"`
-}
-
-func confirmCard(employees []Employee, proposed, source, reason string) Card {
-	return Card{Type: CardEmployeeConfirm, Proposed: proposed, Source: source, Reason: reason, Candidates: employees}
 }
 
 // projectEvent 一条任务事件在会话里的样子；不需要显示时返回 false。

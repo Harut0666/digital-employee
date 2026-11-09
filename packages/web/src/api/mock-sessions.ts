@@ -13,6 +13,7 @@ import type {
   ModelRef,
   PermissionChoice,
   PermissionDecision,
+  FormMaterial,
   PermissionMode,
   RecordGroup,
   RecordItem,
@@ -86,6 +87,10 @@ interface MockSession {
   decisions: Map<string, string>;
   /** 正在等人答复的权限确认 */
   pending?: { requestId: string; resolve: (decision: string) => void };
+  /** 员工表单卡的答复（requestId → confirmed / rejected / cancelled，confirmed 时带任务号） */
+  formDecisions: Map<string, { decision: string; taskId?: string }>;
+  /** 还在等人答复的员工表单：Agent 弹出的有一轮在等（resolve），载入公开样例弹出的没有 */
+  forms: Map<string, { resolve?: (result: { rejected: boolean; taskId?: string }) => void }>;
   files: File[];
   messages: SessionMessage[];
   createdAt: string;
@@ -126,8 +131,9 @@ function recordGroupOf(state: string): RecordGroup {
  * 状态点（和 internal/session/status.go 的 StatusDot 一样的优先级）：
  * 等你处理 → 运行中 → 已完成未读 → 空闲。待人工处理不算等你处理。
  */
-function dotOf(role: UiRole, status: string, state: string | undefined, unread: boolean): StatusDot {
-  if (status === "reception" || status === "drafting") return role === "initiator" ? "waiting" : "idle";
+function dotOf(role: UiRole, status: string, state: string | undefined, unread: boolean, waitingForm = false): StatusDot {
+  // 员工表单在等发起人确认（T49）；没有任务的会话只是聊天，空闲
+  if (waitingForm && role === "initiator") return "waiting";
   if (state === "awaiting_initiator" && role === "initiator") return "waiting";
   if (state === "awaiting_review" && role === "reviewer") return "waiting";
   if (state !== undefined && RUNNING.has(state)) return "running";
@@ -226,7 +232,7 @@ export function createMockSessions(
       taskState: summary?.state,
       statusText: summary?.statusText,
       waitingFor: summary?.waitingFor ?? [],
-      statusDot: dotOf(getRole(), status, summary?.state, unread),
+      statusDot: dotOf(getRole(), status, summary?.state, unread, s.forms.size > 0),
       unread,
       archived: s.archived,
       workspaceName: WORKSPACE_NAMES[s.workspaceId] ?? "",
@@ -322,7 +328,18 @@ export function createMockSessions(
     });
   }
 
-  const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: out, session: await view(s) });
+  /** 员工表单卡读取时配上状态（对应 Go 的 projectEmployeeForms） */
+  function projectForms(s: MockSession, messages: SessionMessage[]): SessionMessage[] {
+    return messages.map((m) => {
+      const card = m.card;
+      if (!card || card.type !== "employee_form" || !card.requestId) return m;
+      const decided = s.formDecisions.get(card.requestId);
+      if (decided) return { ...m, card: { ...card, pending: false, decision: decided.decision, ...(decided.taskId ? { taskId: decided.taskId } : {}) } };
+      return { ...m, card: s.forms.has(card.requestId) ? { ...card, pending: true, decision: undefined } : { ...card, pending: false, decision: "cancelled" } };
+    });
+  }
+
+  const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResult> => ({ ok: true, messages: projectForms(s, out), session: await view(s) });
 
   // ---- 正在说的一轮：和 Go 后端一样逐字出现，说完再写进消息、推 turn_end ----
   const listeners = new Map<string, Set<(event: SessionAgentEvent) => void>>();
@@ -452,17 +469,136 @@ export function createMockSessions(
     return turn;
   }
 
-  function route(s: MockSession, text: string, out: SessionMessage[]) {
-    const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
-    if (guess) {
-      write(s, { kind: "assistant", text: `这项工作适合由${guess.name}接手，请确认。` }, out);
-      write(s, { kind: "card", card: { type: "employee_confirm", proposed: guess.id, source: "model", reason: guess.description, candidates: roster() } }, out);
-    } else {
-      write(s, { kind: "assistant", text: "我判断不出该由谁接手，请从下面选一位员工。" }, out);
-      write(s, { kind: "card", card: { type: "employee_confirm", source: "manual", candidates: roster() } }, out);
+  const newRequestId = () => Math.random().toString(16).slice(2, 10).padEnd(8, "0") + Date.now().toString(16).slice(-8).padStart(8, "0");
+
+  /** 会话里按员工的开工清单判定：会话材料文件名 + 表单 + 人确认跳过的项 */
+  const checklistFor = (employee: string, form: Record<string, unknown>, names: string[], skipped: ReadonlySet<string>) => {
+    const items = CHECKLISTS[employee];
+    return items ? evaluateChecklist(items, form, names.map((name) => ({ name })), skipped) : undefined;
+  };
+
+  /** 开工：和 Go 的 startEmployeeTask 一样，清单备齐才建任务；跳过的项开工时写进表单字段并留痕 */
+  async function beginTask(s: MockSession, employee: string, form: Record<string, unknown>, files: File[], skipped: ReadonlySet<string>): Promise<SessionResult & { taskId?: string }> {
+    const open = await openTask(s);
+    if (open) return fail("session_has_task", `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`);
+    const checklist = checklistFor(employee, form, files.map((f) => f.name), skipped);
+    if (checklist && !checklist.ready) return fail("checklist_incomplete", `开工清单还缺：${checklist.missing.join("、")}。备齐后才能开工。`);
+    const out: SessionMessage[] = [];
+    const skippedItems = (CHECKLISTS[employee] ?? []).filter((i) => i.skipField && checklist?.items.some((e) => e.id === i.id && e.status === "skipped"));
+    for (const item of skippedItems) {
+      write(s, { kind: "notice", text: `发起人确认跳过开工清单的“${item.label}”${item.skipLabel ? `（${item.skipLabel}）` : ""}。` }, out);
     }
+    const startForm = { ...form, ...Object.fromEntries(skippedItems.map((i) => [i.skipField!, true])) };
+    // 模拟任务按上传项判定材料：会话里的文件没有上传项，按扩展名归位
+    const uploads: UploadItem[] = files.map((file) => ({ slot: /\.docx$/i.test(file.name) ? "minutesFiles" : "salesFile", file }));
+    const snapshot = await tasks.createTask({ employee, form: startForm, uploads, model: s.selected ?? lastModel });
+    s.employee = employee;
+    s.taskId = snapshot.id;
+    s.taskIds.push(snapshot.id);
+    taskModels.set(snapshot.id, s.selected ?? lastModel);
+    const res = await tasks.command(snapshot.id, { type: "submit" });
+    if (!res.ok) return fail("illegal_transition", "提交被拒绝");
+    return { ok: true, messages: out, session: await view(s), taskId: snapshot.id };
   }
 
+  const materialFile = (name: string) => new File([`模拟的 ${name}`], name);
+
+  /** 一次 run_employee（对应 Go 的 runEmployee）：计划拒绝；auto、yolo 表单完整有效且必需项备齐时直接开工，否则弹员工表单卡等人答复 */
+  function startRunEmployeeTurn(s: MockSession, employee: EmployeeInfo, text: string): number {
+    const turn = ++s.turn;
+    s.cancelled = false;
+    s.running = { turn, timer: setTimeout(() => {}, 0) };
+    emit(s, turn, { type: "turn_start" });
+    const week = /第\s*(\d{1,2})\s*周/.exec(text)?.[1];
+    const fields: Record<string, unknown> = week ? { period: { year: 2026, week: Number(week) } } : {};
+    // 有开工清单的员工（经营周报）：目录里的销售明细和纪要就是材料
+    const materials: FormMaterial[] = CHECKLISTS[employee.id]
+      ? [
+          { name: "销售明细.xlsx", size: 28_000, source: "folder", path: "销售明细.xlsx" },
+          { name: "周会纪要_2026W44.docx", size: 18_000, source: "folder", path: "周会纪要_2026W44.docx" },
+        ]
+      : [];
+    const args = { employee: employee.id, fields, materials: materials.map((m) => m.path ?? m.name) };
+    const callId = `mock_call_${turn}_run_employee`;
+    const finish = (said: string, reason: "completed" | "stopped" = "completed") => {
+      if (said) write(s, { kind: "assistant", text: said }, []);
+      s.running = undefined;
+      emit(s, turn, { type: "turn_end", reason });
+    };
+    void (async () => {
+      emit(s, turn, { type: "tool_start", id: callId, tool: "run_employee", args });
+      await later(pace(30));
+      const end = (extra: Partial<SessionAgentEvent>) => emit(s, turn, { type: "tool_end", id: callId, tool: "run_employee", args, ...extra });
+      const open = await openTask(s);
+      if (open) {
+        const reason = `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`;
+        end({ reason, isErr: true });
+        return finish(reason);
+      }
+      if (s.permissionMode === "plan") {
+        const reason = `计划模式下只能读，不能运行员工：${employee.name}（${employee.id}）。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。`;
+        write(s, { kind: "tool_denied", tool: "run_employee", args, reason }, []);
+        emit(s, turn, { type: "message" });
+        end({ reason, isErr: true });
+        return finish(`计划模式下我只能给方案：打算让${employee.name}来做，请切换模式后再让我开工。`);
+      }
+      const hasFolder = materials.some((m) => m.source === "folder");
+      const ready = Boolean(week) && (checklistFor(employee.id, fields, materials.map((m) => m.name), new Set())?.ready ?? true);
+      if (ready && (s.permissionMode === "yolo" || (s.permissionMode === "auto" && !hasFolder))) {
+        const started = await beginTask(s, employee.id, fields, materials.map((m) => materialFile(m.name)), new Set());
+        if (!started.ok) {
+          end({ reason: started.message, isErr: true });
+          return finish(started.message);
+        }
+        write(s, { kind: "permission_allowed", tool: "run_employee", args, reason: `${modeName(s.permissionMode)}模式：${employee.name}的表单完整有效，必需的开工清单项已备齐，不用确认直接开工` }, []);
+        emit(s, turn, { type: "message" });
+        end({ result: { started: true, taskId: started.taskId } });
+        return finish(`${employee.name}已经开工了。`);
+      }
+      const requestId = newRequestId();
+      const cardOut: SessionMessage[] = [];
+      write(
+        s,
+        {
+          kind: "card",
+          card: {
+            type: "employee_form",
+            requestId,
+            employee: employee.id,
+            employeeName: employee.name,
+            draft: fields,
+            prefilled: Object.keys(fields),
+            materials,
+            checklist: CHECKLISTS[employee.id],
+            baseline: s.files.map((f) => f.name),
+            pending: true,
+            reason: employee.description,
+          },
+        },
+        cardOut,
+      );
+      emit(s, turn, { type: "message", message: projectForms(s, cardOut)[0] });
+      const result = await new Promise<{ rejected: boolean; taskId?: string; cancelled?: boolean }>((resolve) => {
+        s.forms.set(requestId, { resolve });
+      });
+      s.forms.delete(requestId);
+      if (result.cancelled || s.cancelled) {
+        s.formDecisions.set(requestId, { decision: "cancelled" });
+        end({ reason: "已取消", isErr: true });
+        return finish("", "stopped");
+      }
+      if (result.rejected) {
+        const reason = "用户拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。";
+        write(s, { kind: "tool_denied", tool: "run_employee", args, reason }, []);
+        emit(s, turn, { type: "message" });
+        end({ reason, isErr: true });
+        return finish("好的，我再确认一下该由谁来做。");
+      }
+      end({ result: { started: true, taskId: result.taskId } });
+      finish(`${employee.name}已经开工了。`);
+    })();
+    return turn;
+  }
   /** 从人说过的话里取“第 N 周”填进草稿 */
   function draftFromWords(s: MockSession) {
     const said = s.messages.filter((m) => m.kind === "user").map((m) => m.text ?? "").join(" ");
@@ -587,7 +723,7 @@ export function createMockSessions(
       // 打开会话就算已读（Go 后端写在会话日志里，模拟模式记在内存里）
       s.readUpTo = lastSeq(s.taskId);
       // 写文件的工具行要给界面（Go 后端把全部工具留痕都返回，界面只取写文件的）；别的工具留痕模拟模式不给
-      const messages = projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file"));
+      const messages = projectForms(s, projectPermissions(s, s.messages.filter((m) => m.kind !== "tool_called" || m.tool === "write_file")));
       return { ...(await view(s)), checklist: checklistOf(s), messages: s.taskIds.length > 0 ? await withTasks(messages, s.taskIds, s) : messages };
     },
 
@@ -623,6 +759,8 @@ export function createMockSessions(
         permissionMode: "ask",
         always: new Set(),
         decisions: new Map(),
+        formDecisions: new Map(),
+        forms: new Map(),
         files: [],
         messages: [],
         turn: 0,
@@ -641,28 +779,15 @@ export function createMockSessions(
       write(s, { kind: "user", role: getRole(), text: text.trim() }, []);
       // 正在说：这句话排进这一轮，在下一步之前送达（模拟模式直接接在这轮的话后面说）
       if (s.running) return { ok: true, turn: s.running.turn };
-      if (!s.employee) {
-        const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
-        const steps = guess
-          ? [
-              { text: `这项工作适合由${guess.name}接手，请确认。`, tools: ["propose_employee"] },
-            ]
-          : [{ text: "我判断不出该由谁接手，请从下面选一位员工。" }];
-        // 卡片在轮次说完之后落到会话里
-        const turn = startTurn(s, steps, () => {
-          if (s.employee) return;
-          write(s, { kind: "card", card: guess ? { type: "employee_confirm", proposed: guess.id, source: "model", reason: guess.description, candidates: roster() } : { type: "employee_confirm", source: "manual", candidates: roster() } }, []);
-        });
-        return { ok: true, turn };
-      }
       if (WRITE_REQUEST.test(text)) return { ok: true, turn: startWriteTurn(s) };
+      // 模拟模式不接模型：按员工名里的字粗略匹配，匹配上就演示一次 run_employee；已有任务时只有说“再来一版”之类才算要再开工
+      const guess = employees.find((e) => [...e.name.replace(/员工$/, "")].filter((ch) => text.includes(ch)).length >= 2);
+      if (guess && (!s.taskId || /再来|再出|重新|再做|新的一?版|下一/.test(text))) return { ok: true, turn: startRunEmployeeTurn(s, guess, text) };
       if (s.taskId) {
         const turn = startTurn(s, [{ text: "模拟模式不接模型。任务进展见卡片和右栏，操作请点卡片上的按钮。" }]);
         return { ok: true, turn };
       }
-      draftFromWords(s);
-      const steps = [{ text: "已按你说的更新表单，请检查后提交。" }];
-      const turn = startTurn(s, steps, () => write(s, { kind: "card", card: formCard(s) }, []));
+      const turn = startTurn(s, [{ text: "模拟模式不接模型，我判断不出该让哪位员工做。可以说“出第 44 周周报”试试。" }]);
       return { ok: true, turn };
     },
 
@@ -676,6 +801,7 @@ export function createMockSessions(
       s.running = undefined;
       // 等权限确认时被停止：未决的确认记为已取消
       s.pending?.resolve("cancelled");
+      for (const form of s.forms.values()) form.resolve?.({ rejected: false, cancelled: true } as never);
       return { ok: true, stopped: true, turn: running.turn };
     },
 
@@ -700,6 +826,81 @@ export function createMockSessions(
       write(s, { kind: "notice", text: `${picked.name}已接手。` }, out);
       draftFromWords(s);
       write(s, { kind: "card", card: formCard(s) }, out);
+      return reply(s, out);
+    },
+
+    /** 员工表单卡上的答复：规则照搬 Go 的 AnswerEmployeeForm（只有发起人；清单没备齐拒绝；只能答一次） */
+    async answerEmployeeForm(id, requestId, answer) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以答复员工表单");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const message = s.messages.find((m) => m.card?.type === "employee_form" && m.card.requestId === requestId);
+      const card = message?.card;
+      if (!card) return fail("not_found", `没有这张员工表单：${requestId}`);
+      const waiting = s.forms.get(requestId);
+      if (!waiting || s.formDecisions.has(requestId)) return fail("form_settled", "这张表单已经答复或取消了");
+      if (answer.decision === "reject") {
+        s.forms.delete(requestId);
+        s.formDecisions.set(requestId, { decision: "rejected" });
+        waiting.resolve?.({ rejected: true });
+        return reply(s, []);
+      }
+      const form = answer.form ?? card.draft ?? {};
+      const files = [
+        ...(card.materials ?? []).filter((m) => m.source !== "attachment").map((m) => materialFile(m.name)),
+        ...s.files.filter((f) => answer.attachments.includes(f.name) || (card.materials ?? []).some((m) => m.source === "attachment" && m.name === f.name)),
+      ];
+      const items = CHECKLISTS[card.employee ?? ""] ?? [];
+      for (const item of answer.skipped) {
+        const found = items.find((i) => i.id === item);
+        if (!found) return fail("invalid_input", `开工清单里没有这一项：${item}`);
+        if (found.required) return fail("invalid_input", `“${found.label}”是必需项，不能跳过`);
+      }
+      const started = await beginTask(s, card.employee ?? "", form, files, new Set(answer.skipped));
+      if (!started.ok) return started;
+      s.forms.delete(requestId);
+      s.formDecisions.set(requestId, { decision: "confirmed", taskId: started.taskId });
+      waiting.resolve?.({ rejected: false, taskId: started.taskId });
+      return reply(s, started.messages);
+    },
+
+    /** 载入公开样例：把样例的输入预填成一张员工表单，人确认即开工（样例材料不写进人的工作目录） */
+    async loadSampleForm(id) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以载入公开样例");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const open = await openTask(s);
+      if (open) return fail("session_has_task", `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`);
+      const employee = employees.find((e) => e.id === "weekly-report") ?? employees[0];
+      if (!employee) return fail("not_found", "没有公开样例");
+      const requestId = newRequestId();
+      s.forms.set(requestId, {});
+      const out: SessionMessage[] = [];
+      const fields = { period: { year: 2026, week: 44 } };
+      write(
+        s,
+        {
+          kind: "card",
+          card: {
+            type: "employee_form",
+            requestId,
+            employee: employee.id,
+            employeeName: employee.name,
+            draft: fields,
+            prefilled: Object.keys(fields),
+            materials: [
+              { name: "销售明细.xlsx", size: 28_000, source: "sample" },
+              { name: "周会纪要_2026W44.docx", size: 18_000, source: "sample" },
+            ],
+            checklist: CHECKLISTS[employee.id],
+            baseline: s.files.map((f) => f.name),
+            pending: true,
+            standalone: true,
+            reason: "公开样例：正常任务（含纪要与数据不一致）",
+          },
+        },
+        out,
+      );
       return reply(s, out);
     },
 

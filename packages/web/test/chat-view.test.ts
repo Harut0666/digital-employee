@@ -36,7 +36,7 @@ describe("deriveChat", () => {
     const items = deriveChat(
       session([
         msg({ kind: "user", role: "initiator", text: "帮我出第 44 周的周报" }),
-        msg({ kind: "tool_called", tool: "propose_employee" }),
+        msg({ kind: "tool_called", tool: "run_employee" }),
         msg({ kind: "tool_denied", tool: "submit", reason: "没有开放" }),
         msg({ kind: "model_failed", reason: "401" }),
         msg({ kind: "assistant", text: "这项工作适合经营周报员工。" }),
@@ -50,7 +50,7 @@ describe("deriveChat", () => {
     ]);
   });
 
-  test("员工确认卡片：接待中只有最后一张能确认，员工接手后都失效", () => {
+  test("旧会话里的确认员工卡（T49 之前）只读显示，什么状态下都没有按钮", () => {
     const cards = [
       msg({ kind: "card", card: { type: "employee_confirm", source: "manual", candidates: EMPLOYEES } }),
       msg({ kind: "card", card: { type: "employee_confirm", proposed: "weekly-report", source: "model", reason: "要出周报", candidates: EMPLOYEES } }),
@@ -58,37 +58,32 @@ describe("deriveChat", () => {
     const reception = deriveChat(session(cards));
     expect(reception.map((i) => (i.kind === "employee_confirm" ? [i.proposed, i.source, i.active] : []))).toEqual([
       [undefined, "manual", false],
-      ["weekly-report", "model", true],
+      ["weekly-report", "model", false],
     ]);
     const last = reception[1];
     expect(last?.kind === "employee_confirm" && last.reason).toBe("要出周报");
     expect(last?.kind === "employee_confirm" && last.candidates.map((c) => c.id)).toEqual(["weekly-report", "kb-qa"]);
-
-    const drafting = deriveChat(session(cards, { status: "drafting", employee: "weekly-report" }));
-    expect(drafting.map((i) => i.kind === "employee_confirm" && i.active)).toEqual([false, false]);
-    // 只读会话里什么都不能点
     expect(deriveChat(session(cards, { readOnly: true })).map((i) => i.kind === "employee_confirm" && i.active)).toEqual([false, false]);
   });
 
-  test("表单卡片：最后一张可编辑，内容取会话里最新的草稿和材料；更早的已被取代；提交过的只读", () => {
+  test("员工表单卡：带着卡片本身，能不能操作看会话是否可写", () => {
+    const form = msg({
+      kind: "card",
+      card: { type: "employee_form", requestId: "r1", employee: "weekly-report", employeeName: "经营周报员工", pending: true, draft: { period: { year: 2026, week: 44 } }, prefilled: ["period"] },
+    });
+    const items = deriveChat(session([form]));
+    const item = items[0];
+    expect(item?.kind === "employee_form" && [item.card.requestId, item.card.prefilled, item.writable]).toEqual(["r1", ["period"], true]);
+    const readOnly = deriveChat(session([form], { readOnly: true }))[0];
+    expect(readOnly?.kind === "employee_form" && readOnly.writable).toBe(false);
+  });
+
+  test("旧会话里的表单卡：草稿表单只读（已不再使用）；任务里的已提交表单只读", () => {
     const first = msg({ kind: "card", card: { type: "form", employee: "weekly-report", attachments: [] } });
     const second = msg({ kind: "card", card: { type: "form", employee: "weekly-report", draft: { period: { year: 2026, week: 44 } }, attachments: [] } });
-    const drafting = session([first, second], {
-      status: "drafting",
-      employee: "weekly-report",
-      draft: { period: { year: 2026, week: 44 }, remark: "先写区域" },
-      attachments: [{ name: "销售明细.xlsx", size: 10 }],
-    });
-    const items = deriveChat(drafting);
-    expect(items.map((i) => (i.kind === "form" ? i.mode : ""))).toEqual(["superseded", "editable"]);
-    const editable = items[1];
-    expect(editable?.kind === "form" && [editable.employee, editable.draft, editable.attachments]).toEqual([
-      "weekly-report",
-      { period: { year: 2026, week: 44 }, remark: "先写区域" },
-      [{ name: "销售明细.xlsx", size: 10 }],
-    ]);
+    const drafting = session([first, second], { status: "drafting", employee: "weekly-report", draft: { period: { year: 2026, week: 44 }, remark: "先写区域" } });
+    expect(deriveChat(drafting).map((i) => (i.kind === "form" ? i.mode : ""))).toEqual(["superseded", "superseded"]);
 
-    // 提交后：任务投影出的已提交表单卡片只读，之前的草稿卡片不能再改
     const submitted = msg(
       { kind: "card", card: { type: "form", employee: "weekly-report", draft: { period: { year: 2026, week: 44 } }, attachments: [{ name: "销售明细.xlsx", size: 0 }], submitted: true, taskId: "t1", atSeq: 1 } },
       "t1",
@@ -98,7 +93,6 @@ describe("deriveChat", () => {
     const last = task[2];
     expect(last?.kind === "form" && last.attachments.map((a) => a.name)).toEqual(["销售明细.xlsx"]);
   });
-
   test("任务卡片：后端配了按钮的才是当前要处理的，其余已处理", () => {
     const approve = { command: "approve" as const, label: "通过并交付", roles: ["reviewer" as const], style: "primary" as const };
     const giveBack = { command: "return" as const, label: "退回修改", roles: ["reviewer" as const], style: "default" as const };

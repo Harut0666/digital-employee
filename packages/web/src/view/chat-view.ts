@@ -20,22 +20,25 @@ export type ChatItem =
   | (ItemBase & { kind: "agent"; text: string })
   // 模型切换说明（T39）不用单独的 kind：是程序说明，按 kind: "notice" 显示
   | (ItemBase & { kind: "notice"; text: string })
+  /** 旧会话里已发出的“确认员工”卡（T49 之前）：只读显示，不再有按钮 */
   | (ItemBase & {
       kind: "employee_confirm";
       proposed?: string;
       source: NonNullable<SessionCard["source"]>;
       reason?: string;
       candidates: SessionEmployee[];
-      active: boolean;
+      active: false;
     })
+  /** 表单卡：submitted 是任务里的表单；superseded 是旧会话里已发出的草稿表单（T49 之前，只读） */
   | (ItemBase & {
       kind: "form";
       employee: string;
       draft: Record<string, unknown>;
       attachments: SessionAttachment[];
-      /** editable：员工已接手、还没提交的最新一张；superseded：后面又发了新表单或已提交；submitted：任务里的表单 */
-      mode: "editable" | "superseded" | "submitted";
+      mode: "superseded" | "submitted";
     })
+  /** 员工表单（T49）：run_employee 弹出的结构化表单，人核对、补充、确认开工或“不是这个员工” */
+  | (ItemBase & { kind: "employee_form"; card: SessionCard; writable: boolean })
   | (ItemBase & { kind: "pause"; pause?: PauseView; actions: TaskAction[]; active: boolean })
   | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
   /** 送审提示：审核在右栏进行，对话里只说一句 */
@@ -136,23 +139,11 @@ export function deriveChat(
 
 function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[], past: readonly PastRun[], role: UiRole): ChatItem[] {
   const items: ChatItem[] = [];
-  const lastIndex = (match: (card: SessionCard) => boolean) => {
-    for (let i = session.messages.length - 1; i >= 0; i--) {
-      const card = session.messages[i]?.card;
-      if (card && match(card)) return i;
-    }
-    return -1;
-  };
-  const lastConfirm = lastIndex((c) => c.type === "employee_confirm");
-  const lastDraftForm = lastIndex((c) => c.type === "form" && !c.submitted);
-  // 会话里先后运行多个任务：任务交付或终止后（closed）还可以为下一次运行填表单；已经开过工的表单卡之前的草稿卡片不再算
-  const lastStarted = lastIndex((c) => c.type === "form" && c.submitted === true);
-  const preparing = session.status === "drafting" || session.status === "closed";
   const writable = !session.readOnly;
   // 入库确认卡片排在交付物之后：先能下载，再决定要不要入库
   const filings: ChatItem[] = [];
 
-  session.messages.forEach((m, index) => {
+  session.messages.forEach((m) => {
     const base = { key: m.id, ts: m.ts };
     switch (m.kind) {
       case "user":
@@ -166,7 +157,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         break;
       case "card":
         if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
-        else if (m.card) items.push(cardItem(base, m.card, index));
+        else if (m.card) items.push(cardItem(base, m.card));
         break;
       case "permission_mode_set":
         items.push({ ...base, kind: "notice", text: `权限模式切换为「${permissionModeLabel(m.mode)}」` });
@@ -231,7 +222,7 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
     };
   }
 
-  function cardItem(base: ItemBase, card: SessionCard, index: number): ChatItem {
+  function cardItem(base: ItemBase, card: SessionCard): ChatItem {
     const actions = card.actions ?? [];
     switch (card.type) {
       case "employee_confirm":
@@ -242,20 +233,19 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
           source: card.source ?? "manual",
           reason: card.reason,
           candidates: card.candidates ?? [],
-          active: writable && session.status === "reception" && index === lastConfirm,
+          active: false,
         };
-      case "form": {
-        const editable = !card.submitted && writable && preparing && index === lastDraftForm && index > lastStarted;
+      case "form":
         return {
           ...base,
           kind: "form",
           employee: card.employee ?? session.employee ?? "",
-          // 可编辑的卡片显示会话里最新的草稿和材料：卡片发出后人可能又上传了文件
-          draft: (editable ? session.draft : card.draft) ?? {},
-          attachments: (editable ? session.attachments : card.attachments) ?? [],
-          mode: card.submitted ? "submitted" : editable ? "editable" : "superseded",
+          draft: card.draft ?? {},
+          attachments: card.attachments ?? [],
+          mode: card.submitted ? "submitted" : "superseded",
         };
-      }
+      case "employee_form":
+        return { ...base, kind: "employee_form", card, writable };
       case "pause":
         return { ...base, kind: "pause", pause: card.pause, actions, active: actions.length > 0 };
       case "qc":
@@ -279,8 +269,8 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
           reason: card.reason,
           confirmed: card.confirmed ?? false,
           actions,
-          // 按钮由后端按“还没开工、文件还在、人还没确认”配好；确认过、开工后都没有
-          active: writable && preparing && !card.confirmed && actions.length > 0,
+          // 按钮由后端按“文件还在、人还没确认”配好；任务进行中（status 为 task）不能再加材料
+          active: writable && session.status !== "task" && !card.confirmed && actions.length > 0,
         };
     }
   }

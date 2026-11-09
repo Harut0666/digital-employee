@@ -20,11 +20,12 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
+import { EmployeeFormCard } from "./EmployeeFormCard";
 import { FilingCard } from "./FilingCard";
 import { StepList } from "./StepList";
 
@@ -49,14 +50,16 @@ export interface CardActions {
   downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number, forTask?: string) => string | undefined;
 }
 
-/** 会话层的操作：确认员工、上传材料、提交表单。都只有发起人能做，后端仍会校验。 */
+/** 会话层的操作：上传材料、答复员工表单。都只有发起人能做，后端仍会校验。 */
 export interface SessionActions {
   employees: EmployeeInfo[];
-  confirmEmployee: (employee: string) => Promise<void>;
+  /** 会话里现在的材料（员工表单卡据此认出人补传的） */
+  attachments: SessionAttachment[];
+  /** 员工表单卡上的答复（T49）：确认开工，或“不是这个员工” */
+  answerForm: (requestId: string, answer: EmployeeFormAnswer) => Promise<SessionResult>;
   upload: (files: File[]) => Promise<void>;
   /** 确认（或 @ 选择）目录里的文件作为材料：复制进会话，与上传等效 */
   useFolderFiles: (paths: string[]) => Promise<void>;
-  submit: (form: Record<string, unknown>) => Promise<SessionResult>;
   /** 入库卡片：请模型起草描述 */
   draftFiling: (taskId?: string) => Promise<void>;
   /** 入库卡片：人确认后放进知识库 */
@@ -130,56 +133,12 @@ export function TaskActionBar({
   );
 }
 
-function EmployeeConfirmCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "employee_confirm" }>; actions: CardActions; session: SessionActions }) {
-  const [busy, setBusy] = useState<string>();
+/** 旧会话里已发出的“确认员工”卡（T49 之前）：只读显示一行，不再有按钮。现在员工由 Agent 调 run_employee 带上，人在员工表单卡上确认。 */
+function EmployeeConfirmCard({ item }: { item: Extract<ChatItem, { kind: "employee_confirm" }> }) {
   const nameOf = (id: string) => item.candidates.find((c) => c.id === id)?.name ?? id;
-  const confirm = async (id: string) => {
-    setBusy(id);
-    try {
-      await session.confirmEmployee(id);
-    } finally {
-      setBusy(undefined);
-    }
-  };
-  if (!item.active) {
-    return (
-      <div className="card muted">
-        <TeamOutlined /> {item.proposed ? `提议由${nameOf(item.proposed)}接手` : "请选择员工"}（已处理）
-      </div>
-    );
-  }
-  const initiator = actions.role === "initiator";
-  const others = item.candidates.filter((c) => c.id !== item.proposed);
-  const intro =
-    item.source === "default" ? "按设置里的默认员工，由下面的员工接手：" : item.source === "model" ? "建议由下面的员工接手：" : "我判断不出该由谁接手，请选择一位员工：";
   return (
-    <div className="card">
-      <div className="card-title">
-        <TeamOutlined style={{ color: "var(--primary)" }} /> 确认由谁接手
-      </div>
-      <div className="card-body">{intro}</div>
-      {item.proposed && (
-        <div className="card-body">
-          <b>{nameOf(item.proposed)}</b>
-          {item.reason && <span className="chat-sub">　{item.reason}</span>}
-        </div>
-      )}
-      {initiator ? (
-        <div className="card-actions">
-          {item.proposed && (
-            <Button type="primary" loading={busy === item.proposed} disabled={busy !== undefined} onClick={() => confirm(item.proposed!)}>
-              确认由{nameOf(item.proposed)}接手
-            </Button>
-          )}
-          {others.map((c) => (
-            <Button key={c.id} loading={busy === c.id} disabled={busy !== undefined} title={c.description} onClick={() => confirm(c.id)}>
-              {item.proposed ? `改由${c.name}` : c.name}
-            </Button>
-          ))}
-        </div>
-      ) : (
-        <Handoff handoff={{ text: "等待发起人确认员工", switchTo: ["initiator"] }} onRole={actions.onRole} />
-      )}
+    <div className="card muted">
+      <TeamOutlined /> {item.proposed ? `提议由${nameOf(item.proposed)}接手` : "请选择员工"}（旧版确认卡，已不再使用）
     </div>
   );
 }
@@ -499,9 +458,11 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
         </div>
       );
     case "employee_confirm":
-      return <EmployeeConfirmCard key={item.key} item={item} actions={actions} session={session} />;
+      return <EmployeeConfirmCard key={item.key} item={item} />;
     case "form":
-      return <FormCard key={`${item.key}-${JSON.stringify(item.draft)}`} item={item} actions={actions} session={session} />;
+      return <FormCard key={item.key} item={item} session={session} />;
+    case "employee_form":
+      return <EmployeeFormCard key={`${item.key}-${item.card.pending}-${item.card.decision ?? ""}`} item={item} actions={actions} session={session} />;
     case "pause":
       return <PauseCard key={item.key} item={item} actions={actions} />;
     case "qc":

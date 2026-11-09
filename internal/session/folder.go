@@ -415,6 +415,13 @@ func (t *turn) folderTools() []tool {
 				"reason": map[string]any{"type": "string", "description": "一句话说明为什么用这个文件"},
 			}},
 		},
+		// 过权限关口（T49）：计划模式拒绝；放开模式自动确认；其余模式发“使用目录文件”卡，由人确认
+		action:     ActionUseFolderFile,
+		selfDecide: true,
+		describe: func(arguments map[string]any) (string, string) {
+			reason, _ := arguments["reason"].(string)
+			return objectOf(arguments), reason
+		},
 		run: func(arguments map[string]any) (any, error) {
 			requested, _ := arguments["path"].(string)
 			reason, _ := arguments["reason"].(string)
@@ -425,6 +432,26 @@ func (t *turn) folderTools() []tool {
 			info, err := os.Stat(target)
 			if err != nil || !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("没有这个文件：%s", rel)
+			}
+			// 每次读最新的记录：人可能在这一轮进行中换了模式
+			fresh, err := t.manager.load(t.current.id)
+			if err != nil {
+				return nil, err
+			}
+			if Decide(fresh.mode(), ActionUseFolderFile) == VerdictAllow {
+				if err := t.manager.refuseNewTask(fresh); err != nil {
+					return nil, toolFailure(ErrSessionHasTask, "%s", err.Error())
+				}
+				copied, err := t.manager.copyFolderMaterials(t, []string{rel})
+				if err != nil {
+					return nil, toolFailure(contract.ErrInvalidInput, "%s", err.Error())
+				}
+				trace := Message{Kind: KindPermissionAllowed, Tool: "use_folder_file", Args: arguments,
+					Reason: PermissionModeLabels[fresh.mode()] + "模式：自动确认使用目录文件"}
+				if err := t.write(trace); err != nil {
+					return nil, err
+				}
+				return map[string]any{"used": copied[0], "confirmed": "放开模式自动确认，文件已复制进会话材料"}, nil
 			}
 			t.cards = append(t.cards, Card{
 				Type: CardUseFile, Path: rel, Name: filepath.Base(target), Size: info.Size(), Reason: reason,
@@ -489,9 +516,24 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 	if m.openTask(current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
 	}
-	root := m.workspaceDir(current.workspaceID)
+	t := &turn{manager: m, current: current}
+	names, err := m.copyFolderMaterials(t, paths)
+	if err != nil {
+		return nil, err
+	}
+	// 再说一句“已把……”：这就是人确认这几张卡片的记录，读取时据此把卡片标成已确认
+	if err := t.write(Message{Kind: KindUser, Role: contract.RoleInitiator, Text: folderConfirmedNotice(names)}); err != nil {
+		return nil, err
+	}
+	return m.reply(t)
+}
+
+// copyFolderMaterials 把工作区目录里的文件复制进会话材料，写 attachment_added；返回规范化后的相对路径。
+// 一批里有一个路径不能用就整批拒绝，不留半份材料。人确认（UseFolderFiles、员工表单卡）和“放开”模式自动确认共用它。
+func (m *Manager) copyFolderMaterials(t *turn, paths []string) ([]string, error) {
+	root := m.workspaceDir(t.current.workspaceID)
 	if root == "" {
-		return nil, failure(ErrWorkspaceUnknown, "工作区目录不存在：%s", current.workspaceID)
+		return nil, failure(ErrWorkspaceUnknown, "工作区目录不存在：%s", t.current.workspaceID)
 	}
 	// 先全部校验，再把副本写进会话
 	type confirmed struct{ target, rel string }
@@ -508,11 +550,10 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 		seen[rel] = true
 		batch = append(batch, confirmed{target: target, rel: rel})
 	}
-	t := &turn{manager: m, current: current}
 	// 确认过的材料写进会话日志（attachment_added），人和程序都看得到这份材料
 	names := make([]string, 0, len(batch))
 	for _, item := range batch {
-		size, err := m.store.saveAttachment(id, contract.AttachmentInput{Name: filepath.Base(item.target), SourcePath: item.target})
+		size, err := m.store.saveAttachment(t.current.id, contract.AttachmentInput{Name: filepath.Base(item.target), SourcePath: item.target})
 		if err != nil {
 			return nil, err
 		}
@@ -521,11 +562,7 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 		}
 		names = append(names, item.rel)
 	}
-	// 再说一句“已把……”：这就是人确认这几张卡片的记录，读取时据此把卡片标成已确认
-	if err := t.write(Message{Kind: KindUser, Role: contract.RoleInitiator, Text: folderConfirmedNotice(names)}); err != nil {
-		return nil, err
-	}
-	return m.reply(t)
+	return names, nil
 }
 
 // SaveWorkspaceMaterials 对话里上传的文件同时写一份到 <目录>/材料/，重名加序号、不覆盖。

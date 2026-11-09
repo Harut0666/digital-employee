@@ -14,63 +14,42 @@ import (
 
 const qaEmployee = "knowledge-qa"
 
-func TestRoutingProposesTheQAEmployeeWhoAnswersFromTheKnowledgeBase(t *testing.T) {
+func TestAgentAnswersFromTheKnowledgeBaseWhenAQAEmployeeTicksIt(t *testing.T) {
 	script := caseScript(t, "A-01")
 	h := newHarness(t, script, withEmployee(qaEmployee), withScriptedModel())
 	filed := h.fileDelivered(h.deliveredReport().ID, map[string]any{"description": "第 44 周经营周报，华东、华南两个异常区域。", "tags": []string{"周报"}})
 	// 条目 ID 入库后才知道：前台 Agent 的剧本这时再写
 	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{
-		modelCalls("propose_employee", map[string]any{"employee": qaEmployee, "reason": "要查以前的周报"}),
-		modelSays("这是查询历史结论，适合知识库问答员工。"),
 		modelCalls(contract.ToolKBSearch, map[string]any{"query": "周报 44"}),
 		modelCalls(contract.ToolKBRead, map[string]any{"id": filed.ID}),
 		modelSays("第 44 周周报提到杭州湖滨店因商场消防改造停业三天。"),
 	}
 	created := h.createSession()
 
-	// 用事件流收：回复返回时这一轮可能刚开出来，还没结束（不能靠取消流来退出）
-	stream := h.openStream(created.ID)
-	defer stream.close()
-	turn := h.sayAsync(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
-	if events := h.waitTurn(stream, turn); events == nil {
-		t.Fatal("看不到这一轮的事件")
-	}
-
-	card := cardOf(t, h.readSession(created.ID).Messages, session.CardEmployeeConfirm)
-	if card.Proposed != qaEmployee || card.Source != session.SourceModel {
-		t.Fatalf("员工确认卡片 = %+v", card)
-	}
-	names := []string{}
-	for _, candidate := range card.Candidates {
-		names = append(names, candidate.Name)
-	}
-	if fmt.Sprint(names) != "[知识库问答员工 经营周报员工]" && fmt.Sprint(names) != "[经营周报员工 知识库问答员工]" {
-		t.Fatalf("候选员工：%v", names)
-	}
-
-	// 确认员工：接口立即返回，填表那一轮在会话事件流里跑完
-	answered := h.confirmed(created.ID, qaEmployee)
+	answered := h.say(created.ID, initiator, "上周周报里杭州湖滨店怎么了")
 
 	if got := textOf(t, answered.Messages, session.KindAssistant); !strings.Contains(got, "停业三天") {
 		t.Fatalf("回答 = %q", got)
 	}
-	handover := frontdeskRequests(h)[2].Request
-	if names := fmt.Sprint(toolNames(handover.Tools)); names != "[fill_form_draft propose_card list_files read_file use_folder_file write_file edit_file kb_search kb_read]" {
-		t.Fatalf("问答员工的前台 Agent 开放的工具：%s", names)
+	request := frontdeskRequests(h)[0].Request
+	// 问答员工勾选的知识库工具开放给会话里的 Agent；两个员工都能被 run_employee 调用
+	if names := fmt.Sprint(toolNames(request.Tools)); names != "[run_employee list_files read_file use_folder_file write_file edit_file kb_search kb_read]" {
+		t.Fatalf("开放的工具：%s", names)
 	}
-	system := handover.Messages[0].Content[0].Text
-	if !strings.Contains(system, "知识库问答员工") || !strings.Contains(system, "背景参考") {
-		t.Fatalf("接手后的系统提示词：%s", system)
+	system := request.Messages[0].Content[0].Text
+	for _, want := range []string{"知识库问答员工", "经营周报员工", "背景参考"} {
+		if !strings.Contains(system, want) {
+			t.Fatalf("系统提示词里没有 %q：%s", want, system)
+		}
 	}
 	called := []string{}
 	for _, call := range entriesOf(h.readSession(created.ID).Messages, session.KindToolCalled) {
 		called = append(called, call.Tool)
 	}
-	if fmt.Sprint(called) != "[propose_employee kb_search kb_read]" {
+	if fmt.Sprint(called) != "[kb_search kb_read]" {
 		t.Fatalf("会话日志里的工具调用：%v", called)
 	}
 }
-
 func TestChineseSentenceSearchFindsTheEntry(t *testing.T) {
 	script := caseScript(t, "A-01")
 	h := newHarness(t, script, withEmployee(qaEmployee), withScriptedModel())

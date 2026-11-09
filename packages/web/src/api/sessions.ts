@@ -3,6 +3,7 @@
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
 import type {
+  EmployeeFormAnswer,
   FolderListing,
   ModelConnectionOption,
   ModelRef,
@@ -51,6 +52,10 @@ export interface SessionApi {
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
   /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是询问 */
   setPermissionMode(id: string, mode: PermissionMode): Promise<SessionResult>;
+  /** 员工表单卡上的答复（T49）：确认开工（带人改过的字段、材料、确认跳过的项）或“不是这个员工”；只有发起人能答 */
+  answerEmployeeForm(id: string, requestId: string, answer: EmployeeFormAnswer): Promise<SessionResult>;
+  /** 欢迎页“载入公开样例”（T49）：把样例的输入预填成一张员工表单，人确认即开工 */
+  loadSampleForm(id: string): Promise<SessionResult>;
   /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
   decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
   /** 改会话的标题、归档 */
@@ -112,6 +117,8 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
     selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
     setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
+    answerEmployeeForm: (id, requestId, answer) => act(session(id, `/employee-forms/${encodeURIComponent(requestId)}`), JSON.stringify(answer)),
+    loadSampleForm: (id) => act(session(id, "/sample"), JSON.stringify({})),
     decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要

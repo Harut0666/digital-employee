@@ -12,6 +12,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -46,7 +47,7 @@ func ValidPermissionMode(mode string) bool {
 const (
 	// ActionWriteFile 新建或修改工作区内的文件（write_file、edit_file 同属这一类）
 	ActionWriteFile = "write_file"
-	// ActionRunEmployee 运行员工（T49 的 run_employee 接入）
+	// ActionRunEmployee 运行员工（run_employee）
 	ActionRunEmployee = "run_employee"
 	// ActionUseFolderFile 把目录里的文件用作材料
 	ActionUseFolderFile = "use_folder_file"
@@ -68,6 +69,9 @@ const (
 // ErrPermissionSettled 这张权限确认已经答复过（或已取消）。
 const ErrPermissionSettled = "permission_settled"
 
+// errTurnCancelled 等人的时候这一轮被停止：工具没有执行。
+var errTurnCancelled = errors.New("这一轮被停止")
+
 // Verdict 一个动作在某个模式下的处理。
 type Verdict string
 
@@ -80,8 +84,9 @@ const (
 
 // Decide Spec 0007 的矩阵。档位是单调的：越往松，免问的越多。
 //
-// 运行员工在 auto、yolo 下放行：表单完整有效就直接开工，否则由 run_employee 自己弹员工表单（T49），
-// 关口不替它判断表单。
+// 运行员工（run_employee，T49）在 auto、yolo 下放行：表单完整有效就直接开工，否则由 run_employee 自己弹员工表单；
+// ask、accept_edits 下的“问”也是员工表单卡（selfDecide），关口不替它判断表单。使用目录文件同理：yolo 自动确认，
+// 其余模式的“问”是“使用目录文件”卡。
 func Decide(mode, action string) Verdict {
 	switch action {
 	case ActionWriteFile:
@@ -149,15 +154,15 @@ func permissionPrompt(mode string) string {
 	lines := []string{"## 权限模式", "", "当前模式：" + PermissionModeLabels[mode] + "（" + mode + "）。"}
 	switch mode {
 	case PermissionPlan:
-		lines = append(lines, "计划模式是只读的：你只能读、列工作区目录里的文件，不能写文件，也不能运行员工；这类动作会被直接拒绝。请把打算怎么做的方案告诉发起人，等 TA 切换模式后再动手。")
+		lines = append(lines, "计划模式是只读的：你只能读、列工作区目录里的文件，不能写文件，不能运行员工，也不能把目录文件用作材料；这类动作会被直接拒绝。请把打算怎么做的方案告诉发起人，等 TA 切换模式后再动手。")
 	case PermissionAsk:
-		lines = append(lines, "询问模式：读文件不受限；写文件前程序会弹出权限确认，由发起人允许或拒绝。")
+		lines = append(lines, "询问模式：读文件不受限；写文件前程序会弹出权限确认，由发起人允许或拒绝；run_employee 一定会弹员工表单卡，由发起人核对并确认后才开工。")
 	case PermissionAcceptEdits:
-		lines = append(lines, "接受编辑模式：在工作区目录里写、改文件不用问发起人；运行员工、把目录文件用作材料仍要先确认。")
+		lines = append(lines, "接受编辑模式：在工作区目录里写、改文件不用问发起人；run_employee 仍一定会弹员工表单卡，把目录文件用作材料仍要先确认。")
 	case PermissionAuto:
-		lines = append(lines, "自动模式：写、改文件不用问；员工表单填得完整有效时直接开工，缺什么才让发起人补；把目录文件用作材料仍要先确认。")
+		lines = append(lines, "自动模式：写、改文件不用问；run_employee 的表单填得完整有效、必需的开工清单项都备齐时直接开工，缺什么才弹员工表单让发起人补；把目录文件用作材料仍要先确认（带目录文件的表单照样弹）。")
 	case PermissionYolo:
-		lines = append(lines, "放开模式：写、改文件、运行员工、把目录文件用作材料都不用再问发起人。")
+		lines = append(lines, "放开模式：写、改文件不用问，目录文件自动确认；run_employee 的表单完整有效、必需的开工清单项备齐时直接开工，否则弹员工表单让发起人补。")
 	}
 	lines = append(lines,
 		"动作被拒绝（工具结果写着“用户拒绝”或“不能”）时，不要原样重试，换个办法或问发起人想怎么做。",
@@ -210,16 +215,17 @@ func (m *Manager) settleWait(wait *permissionWait) bool {
 	return true
 }
 
-// pendingPermission 会话里有没有权限确认在等人答复（状态点显示“等你处理”）。
+// pendingPermission 会话里有没有权限确认或员工表单在等人答复（状态点显示“等你处理”）。
 func (m *Manager) pendingPermission(id string) bool {
 	m.permMu.Lock()
-	defer m.permMu.Unlock()
 	for _, wait := range m.waits {
 		if wait.session == id && !wait.settled {
+			m.permMu.Unlock()
 			return true
 		}
 	}
-	return false
+	m.permMu.Unlock()
+	return m.pendingForm(id)
 }
 
 // permissionButtons 权限确认卡上的三个按钮（decision 就是答复）。
@@ -260,7 +266,14 @@ func (loop *turnLoop) gate(ctx context.Context, call agent.ContentBlock, item to
 		return fmt.Sprintf("%s模式下只能读，不能%s%s。请先把打算怎么做告诉发起人，等 TA 切换权限模式后再动手。",
 			PermissionModeLabels[mode], label, suffixObject(object)), false, nil
 	case VerdictAllow:
+		if item.selfDecide {
+			return "", false, nil
+		}
 		return "", false, loop.traceAllowed(call, fmt.Sprintf("%s模式：%s不用确认", PermissionModeLabels[mode], label))
+	}
+	if item.selfDecide {
+		// 工具自己问：运行员工弹员工表单卡（一定要人确认，“总是允许”不适用），使用目录文件发“使用目录文件”卡
+		return "", false, nil
 	}
 	if current.alwaysAllowed[item.action] {
 		return "", false, loop.traceAllowed(call, fmt.Sprintf("本会话已选择总是允许「%s」", label))

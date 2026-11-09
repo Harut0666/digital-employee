@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/session"
 )
@@ -237,43 +236,6 @@ func TestMessageAfterDeliveryGetsANormalReplyAboutTheLatestTask(t *testing.T) {
 	}
 	if refused := entriesOf(reply.Messages, session.KindToolDenied); len(refused) != 0 {
 		t.Fatalf("本会话的任务不该被拒绝：%+v", refused)
-	}
-}
-
-func TestAgentCanPrepareAnotherRunAfterDelivery(t *testing.T) {
-	script := twice(caseScript(t, "A-01"))
-	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 45}}),
-		modelCalls("propose_card", map[string]any{"type": session.CardForm}),
-		modelSays("已填好第 45 周，请核对后提交。"),
-	}
-	h := newHarness(t, script, withScriptedModel())
-	sessionID, first := h.firstRun()
-	expectState(t, h.command(first, reviewer, cmd(contract.CmdApprove)), contract.StateDelivered)
-
-	h.sayTurn(sessionID, initiator, "再来一版，第 45 周")
-	got := h.readSession(sessionID)
-
-	if week := weekOf(t, got.Draft); week != 45 {
-		t.Fatalf("交付后表单草稿的周次 = %v", week)
-	}
-	requests := frontdeskRequests(h)
-	if names := toolNames(requests[0].Request.Tools); !strings.Contains(strings.Join(names, " "), "fill_form_draft") {
-		t.Fatalf("没有未结束的任务时应开放填表单草稿：%v", names)
-	}
-	forms := 0
-	for _, message := range got.Messages {
-		if message.Card != nil && message.Card.Type == session.CardForm && !message.Card.Submitted {
-			forms++
-		}
-	}
-	if forms == 0 {
-		t.Fatalf("交付后应能发表单卡片：%+v", got.Messages)
-	}
-	// 人确认提交，开第二个任务
-	second := h.submit(sessionID, nil).Session.TaskID
-	if week := weekOf(t, h.settled(second).Form); week != 45 || second == first {
-		t.Fatalf("第二个任务 = %s，周次 %v", second, week)
 	}
 }
 

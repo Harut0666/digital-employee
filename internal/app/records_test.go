@@ -121,9 +121,9 @@ func TestWorkspaceListCarriesSessionSummaries(t *testing.T) {
 	if item.Title != "帮我出第 44 周的经营周报" || item.UpdatedAt == "" || item.Archived {
 		t.Fatalf("会话摘要要带标题、更新时间和归档标记：%+v", item)
 	}
-	// 状态点由后端算出：说了一句话、还在等选员工的会话是“等你处理”
-	if item.StatusDot != "waiting" {
-		t.Fatalf("等人选员工的会话状态点应是等你处理：%+v", item)
+	// 状态点由后端算出：只是聊了一句、没有任务也没有在等人的表单，是空闲（T49 起没有“待确认员工”）
+	if item.StatusDot != "idle" {
+		t.Fatalf("还没有任务的会话状态点应是空闲：%+v", item)
 	}
 	// 归档的会话默认不列；取消归档后回来
 	if status, data := a.call(http.MethodPatch, "/api/sessions/"+inMine.ID, map[string]any{"archived": true}); status != http.StatusOK {

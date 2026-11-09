@@ -22,6 +22,8 @@ var sessionErrorStatus = map[string]int{
 	session.ErrSessionReadOnly: http.StatusConflict,
 	session.ErrSessionBusy:     http.StatusConflict,
 	session.ErrEmployeeMissing: http.StatusConflict,
+	// 这张员工表单已经答复或取消了
+	session.ErrFormSettled: http.StatusConflict,
 	// 这张权限确认已经答复或取消了
 	session.ErrPermissionSettled: http.StatusConflict,
 	// 必需项不齐：会话的现状不允许开工
@@ -100,6 +102,8 @@ func (s *Server) newSessions() *session.Manager {
 		// 前台 Agent 的 read_file 复用工具客户端的文件解析
 		Tools:  s.opts.ToolClient,
 		Filing: filingSource{server: s},
+		// 欢迎页“载入公开样例”（T49）：样例从应用目录取
+		Sample: s.sessionSample,
 		Now:    s.opts.Now,
 	})
 }
@@ -344,6 +348,75 @@ func (s *Server) handleDecidePermission(w http.ResponseWriter, r *http.Request) 
 	}
 	decision, _ := body["decision"].(string)
 	reply, err := s.sessions.DecidePermission(r.PathValue("id"), role, r.PathValue("requestId"), decision)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleAnswerEmployeeForm POST /api/sessions/{id}/employee-forms/{requestId}：发起人在员工表单卡上答复。
+// decision=confirm 是“确认开工”（form 是人改过的表单字段，attachments 是要带进任务的会话材料，
+// skipped 是人确认跳过的可跳过清单项）；decision=reject 是“不是这个员工”。
+func (s *Server) handleAnswerEmployeeForm(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	answer := session.FormAnswer{}
+	answer.Decision, _ = body["decision"].(string)
+	if raw, present := body["form"]; present && raw != nil {
+		form, ok := raw.(map[string]any)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "form 必须是 JSON 对象"))
+			return
+		}
+		answer.Form = form
+	}
+	for _, field := range []struct {
+		name string
+		into *[]string
+	}{{"attachments", &answer.Attachments}, {"skipped", &answer.Skipped}} {
+		raw, present := body[field.name]
+		if !present || raw == nil {
+			continue
+		}
+		items, ok := raw.([]any)
+		if !ok {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, field.name+" 必须是字符串数组"))
+			return
+		}
+		for _, item := range items {
+			text, ok := item.(string)
+			if !ok {
+				writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, field.name+" 必须是字符串数组"))
+				return
+			}
+			*field.into = append(*field.into, text)
+		}
+	}
+	reply, err := s.sessions.AnswerEmployeeForm(r.PathValue("id"), role, r.PathValue("requestId"), answer)
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
+// handleLoadSample POST /api/sessions/{id}/sample：欢迎页“载入公开样例”。把样例的输入预填成一张员工表单，人确认即开工。
+func (s *Server) handleLoadSample(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	reply, err := s.sessions.LoadSample(r.PathValue("id"), role)
 	if err != nil {
 		writeSessionError(w, err)
 		return

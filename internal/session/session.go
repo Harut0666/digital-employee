@@ -1,7 +1,7 @@
 // Package session 是会话模块：人和前台 Agent 的对话，独立于任务引擎。
 //
-// 会话只通过 contract.Engine 和任务打交道。Agent 能产生的只有草稿和提议，
-// 发送任务命令的路径只在人触发的 Submit 里，Agent 的工具拿到的是只读接口（见 frontdesk.go）。
+// 会话只通过 contract.Engine 和任务打交道。发送任务命令的路径只有开工（startEmployeeTask：员工表单卡上人确认，
+// 或 run_employee 在 auto、yolo 下免确认直接开工）和旧会话兼容的 Submit，Agent 的工具拿到的任务接口是只读的（见 frontdesk.go）。
 package session
 
 import (
@@ -91,6 +91,8 @@ type Deps struct {
 	Tools contract.ToolClient
 	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
 	Filing FilingSource
+	// Sample 应用目录里的公开样例（T49“载入公开样例”）；nil 或返回 nil 表示没有样例
+	Sample func() *Sample
 	Now    func() time.Time
 }
 
@@ -118,8 +120,11 @@ type Manager struct {
 	views map[string]cachedView
 	// recordsCache 记录 tab 的缓存：任务列表没变时不用再读每个会话的日志
 	// waits 正在等人答复的权限确认（T48），permMu 保护它和里面的 settled
-	permMu       sync.Mutex
-	waits        map[string]*permissionWait
+	permMu sync.Mutex
+	waits  map[string]*permissionWait
+	// forms 员工表单卡的等待（T49），formMu 保护这张表
+	formMu       sync.Mutex
+	forms        map[string]*formWait
 	recordsMu    sync.Mutex
 	recordsStamp string
 	records      []Record
@@ -134,7 +139,7 @@ func New(deps Deps) *Manager {
 	return &Manager{
 		deps: deps, store: newStore(deps.Dir, deps.Now),
 		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
-		humanLocks: map[string]*sync.Mutex{}, waits: map[string]*permissionWait{},
+		humanLocks: map[string]*sync.Mutex{}, waits: map[string]*permissionWait{}, forms: map[string]*formWait{},
 		scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour),
 	}
 }
@@ -269,7 +274,7 @@ func (m *Manager) read(id string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	messages := m.projectPermissions(visibleMessages(current.messages), current)
+	messages := m.projectCards(visibleMessages(current.messages), current)
 
 	if len(current.taskIDs) > 0 {
 		if messages, err = m.withTasks(messages, current.taskIDs, current); err != nil {
@@ -345,7 +350,7 @@ func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*tu
 	}, nil
 }
 func (m *Manager) reply(t *turn) (*Reply, error) {
-	messages := m.projectPermissions(visibleMessages(t.out), t.current)
+	messages := m.projectCards(visibleMessages(t.out), t.current)
 	// t.current 是写入之前的快照：补上这次新写进去的草稿和材料，清单按写完的样子显示
 	for _, message := range t.out {
 		if message.Kind == kindAttachmentAdded || message.Kind == kindDraftSet {
@@ -383,8 +388,8 @@ func (m *Manager) fullView(current *record) (*View, error) {
 	return view, nil
 }
 
-// Confirm 人在卡片上确认由哪个员工接手。这是人的动作，Agent 没有对应的工具。
-// 人说过话时紧接着开一轮，让 Agent 据此填表（这就是“下一步”）。
+// Confirm 旧会话兼容（T49 之前的“确认员工”卡）：把会话记到这个员工名下。新界面不再调用它：
+// 员工由 Agent 调 run_employee 时带上，人在员工表单卡上确认。这是人的动作，Agent 没有对应的工具。
 func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以确认员工")
@@ -393,34 +398,14 @@ func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Repl
 	if err != nil {
 		return nil, err
 	}
-	// 只放一次锁：确认员工可能写两张消息、再登记下一轮，各分支都走 defer 释放（T44 修双释放）
 	defer done()
-	err = m.confirmLocked(t, employee)
-
-	if err != nil {
-		if _, ok := err.(*handoverPending); !ok {
-			return nil, err
-		}
-		// 写锁还拿着就把填表那轮登记上：从这一刻起它就算在跑，紧接着发来的消息按插话送进这一轮。
-		// 这一轮自己放锁后再去调模型，由它在下一步之前接着填表。
-		var job *turnJob
-		job, err = m.startTurnLocked(id)
-		if err == nil {
-			noteSteer(job)
-		}
-		if err != nil {
-			return nil, err
-		}
+	if err := m.confirmLocked(t, employee); err != nil {
+		return nil, err
 	}
 	return m.reply(t)
 }
 
-// handoverPending 确认员工时人说过话：填表交给下一轮，不在这次请求里等模型。
-type handoverPending struct{}
-
-func (*handoverPending) Error() string { return "handover pending" }
-
-// confirmLocked 写确认员工和接手说明；人说过话时返回 handoverPending。
+// confirmLocked 写确认员工和接手说明。
 func (m *Manager) confirmLocked(t *turn, employee string) error {
 	if t.current.employee != "" {
 		return failure(contract.ErrIllegalTransition, "这个会话已由员工接手")
@@ -441,15 +426,7 @@ func (m *Manager) confirmLocked(t *turn, employee string) error {
 	if err := t.write(Message{Kind: kindEmployeeSet, Employee: employee}); err != nil {
 		return err
 	}
-	if err := t.write(Message{Kind: KindNotice, Text: name + "已接手。"}); err != nil {
-		return err
-	}
-	if t.current.spoken() {
-		// 人说过的话不用再说一遍：让 Agent 据此填表（这算一条插话，由新一轮在下一步之前送达）
-		return &handoverPending{}
-	}
-	t.cards = append(t.cards, t.formCard())
-	return t.flushCards()
+	return t.write(Message{Kind: KindNotice, Text: name + "已接手。"})
 }
 
 // AddAttachments 把人上传的材料暂存进会话，提交时才进任务。
