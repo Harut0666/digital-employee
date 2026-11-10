@@ -1,7 +1,8 @@
 # A-01 golden（TS 版对拍基准）
 
 这份基准由 TypeScript 版（git 标签 `legacy-ts-stack`）跑 A-01 生成，Go 版必须与它对齐，
-验收脚本是 `scripts/parity-a01.sh`：事件流先经 `scripts/normalize-events.py` 归一化，再逐字段 diff。
+由 `internal/parity`、`internal/tools/golden_a01_test.go` 等测试在 `go test ./...` 里逐字段比对。
+（早先的 `scripts/parity-a01.sh` / `normalize-events.py` 对拍脚本已随 TS 版移除，保留在同一标签里。）
 
 ## configHash 变更记录
 
@@ -19,4 +20,4 @@ configHash 是员工配置目录**全部文件内容**的 sha256（见 `internal
 ## 重新生成
 
 golden 由 TS 版生成，Go 版不重新生成；配置再变时按上表方式更新哈希并重跑
-`bash scripts/parity-a01.sh`，确认差异只有 `configHash` 一处。
+`go test ./internal/parity/ ./internal/tools/`，确认差异只有 `configHash` 一处。
