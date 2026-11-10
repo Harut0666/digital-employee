@@ -1,0 +1,31 @@
+{
+  "id": "B-03",
+  "title": "缺材料：没传专利清单，补传后从暂停处继续",
+  "employee": "literature-brief",
+  "form": { "direction": "固态电池电解质" },
+  "attachments": [],
+  "steps": [
+    { "actor": "initiator", "command": { "type": "submit" }, "expect": { "state": "awaiting_initiator", "pauseCode": "missing_list" } },
+    {
+      "actor": "initiator",
+      "command": {
+        "type": "supplement",
+        "attachments": [
+          { "name": "专利清单_固态电池电解质.csv", "path": "../scenario-b/专利清单_固态电池电解质.csv" }
+        ]
+      },
+      "expect": { "state": "awaiting_review", "pauseCode": "awaiting_review" }
+    },
+    { "actor": "reviewer", "command": { "type": "approve" }, "expect": { "state": "delivered", "deliverables": ["md", "qc_record"] } }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:硫化物/专利数量", "expected": 14, "tolerance": 0.08 }
+      ],
+      "mustContain": ["最终纳入分析：40 项发明", "来源清单"],
+      "pause": { "code": "missing_list", "messageContains": "专利清单" }
+    }
+  }
+}

@@ -56,6 +56,25 @@ func LoadEmployeeConfig(dir string) (*contract.EmployeeConfig, error) {
 	if problems := ConsistencyProblems(workflow); len(problems) > 0 {
 		return nil, errors.New(problems[0])
 	}
+	if qc.Profile == contract.QCProfileLiterature {
+		if qc.Literature == nil || len(qc.Literature.Sections) == 0 {
+			return nil, errors.New("qc.yaml 的 profile 是 literature，但 literature.sections 没有配置简报章节")
+		}
+		for name, step := range map[string]string{
+			"draft": workflow.QCSources.Draft, "rendered": workflow.QCSources.Rendered, "stats": workflow.QCSources.Stats,
+			"screen": workflow.QCSources.Screen, "scope": workflow.QCSources.Scope,
+		} {
+			found := false
+			for _, s := range workflow.Steps {
+				if s.ID == step {
+					found = true
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("workflow.yaml 的 qcSources.%s 指向步骤 %q，但它不在步骤中（literature 质检档需要 draft、rendered、stats、screen、scope）", name, step)
+			}
+		}
+	}
 
 	prompts := map[string]string{}
 	outputSchemas := map[string]map[string]any{}
@@ -413,6 +432,45 @@ func applyQCDefaults(qc *contract.QCConfig, raw map[string]any) {
 	qc.Builtin.ForbiddenTerms.Enabled = enabled("forbidden_terms")
 	qc.Builtin.Length.Enabled = enabled("length")
 	qc.Builtin.FeedbackResponse.Enabled = enabled("feedback_response")
+	if qc.Profile == contract.QCProfileLiterature {
+		applyLiteratureDefaults(qc)
+	}
+}
+
+// applyLiteratureDefaults 技术文献研判质检档：省略的参数按缺省值补。
+func applyLiteratureDefaults(qc *contract.QCConfig) {
+	d := contract.DefaultLiteratureQC()
+	if qc.Literature == nil {
+		qc.Literature = &contract.LiteratureQC{}
+	}
+	lit := qc.Literature
+	if lit.Sections == nil {
+		lit.Sections = []contract.SectionSpec{}
+	}
+	if lit.ForbiddenTerms == nil {
+		lit.ForbiddenTerms = []string{}
+	}
+	if lit.SummaryMaxItems <= 0 {
+		lit.SummaryMaxItems = d.SummaryMaxItems
+	}
+	if lit.MinCharts <= 0 {
+		lit.MinCharts = d.MinCharts
+	}
+	if lit.MaxPages <= 0 {
+		lit.MaxPages = d.MaxPages
+	}
+	if lit.MinIncluded <= 0 {
+		lit.MinIncluded = d.MinIncluded
+	}
+	if lit.IrrelevantMaxShare <= 0 {
+		lit.IrrelevantMaxShare = d.IrrelevantMaxShare
+	}
+	if lit.CutoffDate == "" {
+		lit.CutoffDate = d.CutoffDate
+	}
+	if lit.IncompleteYears <= 0 {
+		lit.IncompleteYears = d.IncompleteYears
+	}
 }
 
 // validateWorkflow 做契约层面的必填/取值校验（对应 zod schema）。

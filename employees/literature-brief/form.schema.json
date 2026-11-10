@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "技术研判任务",
+  "description": "填写技术方向并上传业务方给的专利清单，发起一份技术研判简报任务。",
+  "type": "object",
+  "required": ["direction"],
+  "properties": {
+    "direction": {
+      "type": "string",
+      "title": "技术方向",
+      "description": "要研判的技术方向，例如“固态电池电解质”“钠离子电池正极材料”“硅基负极材料”。资料库以电池材料方向为主。",
+      "minLength": 1
+    },
+    "patentList": {
+      "type": "string",
+      "title": "专利清单",
+      "description": "业务方提供的专利清单（CSV，UTF-8，含“专利编号”列，可有序号、标题、申请人、申请日）。清单是人工整理的，可能有重复行、编号错误、混入无关专利，员工会先核对。未上传时任务会暂停，等待补充。"
+    },
+    "remark": {
+      "type": "string",
+      "title": "备注",
+      "description": "对本次简报的补充要求，会作为写作要求交给员工，例如“风险部分多写一些”。不能要求引用资料库以外的内容，也不能要求写没有依据的结论。",
+      "default": ""
+    }
+  }
+}

@@ -1,0 +1,175 @@
+# 技术文献研判员工 · 工作步骤（docs/design.md §11）
+# 能力全写在配置里：换一套配置就换一个岗位（第二个员工，证明员工是配置而不是代码）。
+# activity 是步骤运行时给业务人员看的说法，界面默认显示它，工具名只在轨迹详情里出现。
+# 输入里以 "$" 开头的值按引用解析：$form.* 表单字段，$steps.<步骤>.* 步骤结果，$task.* 任务信息，
+# $config.* 取自 qc.yaml，$employee.dir 员工配置目录（专利库、论文库、路线词表都在里面）。
+#
+# 计算步骤的输出带 ok: false 和 pause 时任务暂停（清单与方向不符、资料不足），发起人补充或确认继续后从头重跑。
+id: literature-brief
+name: 技术文献研判员工
+description: 输入一个技术方向和专利清单，到本地专利库、论文库里检索、归类、比较，产出每条结论都带引用角标的研判简报（Markdown）。
+# 交付物的下载文件名（不含扩展名），{字段} 由表单填充；磁盘上的文件名不变
+deliverableName: 研判简报_{direction}
+
+limits:
+  task:
+    modelCalls: 30
+    durationSec: 900
+  toolRetry:
+    attempts: 3
+    backoffMs: [1000, 2000, 4000]
+  qcAutofix: 3
+
+admissionStep: admission
+factsStep: compute_stats
+qcSources:
+  draft: write_brief
+  rendered: render_brief
+  stats: compute_stats
+  screen: screen_list
+  scope: scope_check
+# 质检不通过都回到写简报这一步；表格、数量、来源清单由程序生成，出问题的只会是叙述
+qcFixSteps:
+  write: write_brief
+  causes: write_brief
+
+steps:
+  - id: admission
+    label: 准入校验
+    activity: 正在检查技术方向和专利清单
+    kind: compute
+    tool: validate_literature_submission
+    input:
+      direction: $form.direction
+      attachments: $task.attachments
+      employeeDir: $employee.dir
+
+  # 清单核对 1–3：去重、库中查不到的剔除、同族合并（程序）。清单一件都对不上库时在这里暂停
+  - id: screen_list
+    label: 核对专利清单
+    activity: 正在核对清单：去重、查库、合并同族
+    kind: compute
+    tool: screen_patent_list
+    input:
+      direction: $form.direction
+      listPath: $steps.admission.list.path
+      listName: $steps.admission.list.name
+      employeeDir: $employee.dir
+
+  # 清单核对 4：与方向无关的，模型逐条判断并给出理由
+  - id: judge_relevance
+    label: 判断是否与方向相关
+    activity: 正在逐条判断专利与技术方向是否相关
+    kind: judge
+    prompt: prompts/judge_relevance.md
+    input:
+      direction: $form.direction
+      inventions: $steps.screen_list.inventions
+      listTheme: $steps.screen_list.listTheme
+    tools: []
+    outputSchema: schemas/judge_relevance.json
+    limits:
+      rounds: 6
+      durationSec: 180
+
+  # 纳入范围（程序）：无关件超过一半 → 清单与方向不符；纳入 0 件或偏少 → 资料不足
+  - id: scope_check
+    label: 确定纳入范围
+    activity: 正在确定纳入分析的专利
+    kind: compute
+    tool: evaluate_scope
+    input:
+      screen: $steps.screen_list
+      relevance: $steps.judge_relevance.items
+      config: $config.literature
+      allowSmallSample: $form.allowSmallSample
+
+  - id: judge_routes
+    label: 技术路线归类
+    activity: 正在把专利归入技术路线
+    kind: judge
+    prompt: prompts/judge_routes.md
+    input:
+      direction: $form.direction
+      routes: $steps.screen_list.routes
+      inventions: $steps.scope_check.included
+    tools: []
+    outputSchema: schemas/judge_routes.json
+    limits:
+      rounds: 6
+      durationSec: 180
+
+  - id: compute_stats
+    label: 统计路线、趋势、申请人和转化线索
+    activity: 正在统计技术路线、申请趋势、主要申请人和转化线索
+    kind: compute
+    tool: compute_literature_stats
+    input:
+      direction: $form.direction
+      included: $steps.scope_check.included
+      assignments: $steps.judge_routes.assignments
+      config: $config.literature
+
+  # 补充检索：只查本地论文库，简报不得引用库外资料
+  - id: retrieve_papers
+    label: 检索佐证论文
+    activity: 正在论文库里检索佐证论文
+    kind: compute
+    tool: search_library
+    input:
+      direction: $form.direction
+      queries: $steps.compute_stats.routeNames
+      scope: papers
+      topK: 8
+      employeeDir: $employee.dir
+
+  - id: write_brief
+    label: 撰写研判简报
+    activity: 正在撰写研判简报
+    kind: judge
+    prompt: prompts/write_brief.md
+    input:
+      direction: $form.direction
+      remark: $form.remark
+      counts: $steps.scope_check.counts
+      smallSample: $steps.scope_check.smallSample
+      irrelevant: $steps.scope_check.irrelevant
+      duplicates: $steps.screen_list.duplicates
+      notFound: $steps.screen_list.notFound
+      familyMerged: $steps.screen_list.familyMerged
+      library: $steps.screen_list.library
+      stats: $steps.compute_stats
+      inventions: $steps.scope_check.included
+      papers: $steps.retrieve_papers.hits
+      structure: $config.literature.sections
+      summaryMaxItems: $config.literature.summaryMaxItems
+      forbiddenTerms: $config.literature.forbiddenTerms
+      feedback: $task.feedback
+      previousDraft: $steps.write_brief
+    tools: []
+    outputSchema: schemas/write_brief.json
+    limits:
+      rounds: 6
+      durationSec: 240
+    rework: true
+
+  - id: render_brief
+    label: 生成 Markdown 简报
+    activity: 正在生成 Markdown 简报和图表
+    kind: compute
+    tool: render_brief_md
+    input:
+      direction: $form.direction
+      draft: $steps.write_brief
+      stats: $steps.compute_stats
+      scope: $steps.scope_check
+      screen: $steps.screen_list
+      config: $config.literature
+      outDir: $task.dir
+      idempotencyKey: $task.idempotencyKey
+      employeeDir: $employee.dir
+
+  - id: qc
+    label: 质检
+    activity: 正在质检
+    kind: qc

@@ -1,0 +1,20 @@
+{
+  "id": "B-04",
+  "title": "输入前后矛盾：方向写硅基负极材料，清单是固态电池电解质，暂停并说明依据",
+  "employee": "literature-brief",
+  "form": { "direction": "硅基负极材料" },
+  "attachments": [
+    { "name": "专利清单_固态电池电解质.csv", "path": "../scenario-b/专利清单_固态电池电解质.csv" }
+  ],
+  "steps": [
+    { "actor": "initiator", "command": { "type": "submit" }, "expect": { "state": "awaiting_initiator", "pauseCode": "list_direction_mismatch" } },
+    { "actor": "initiator", "command": { "type": "continue_with_partial" }, "expect": { "ok": false, "error": "illegal_transition", "state": "awaiting_initiator" } },
+    { "actor": "initiator", "command": { "type": "terminate" }, "expect": { "state": "terminated" } }
+  ],
+  "expect": {
+    "state": "terminated",
+    "checks": {
+      "pause": { "code": "list_direction_mismatch", "messageContains": "固态电池电解质" }
+    }
+  }
+}

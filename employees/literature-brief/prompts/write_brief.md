@@ -1,0 +1,58 @@
+# 步骤：撰写研判简报
+
+本步骤写出研判简报的标题和各章节的**叙述**。表格、数量、占比、图表、来源清单和角标编号都由程序按统计结果生成，不由你写。结果通过 `submit_result` 工具提交，不要在对话里直接回答。写作规则以岗位说明为准，尤其是：只引用资料库里的资料、数字要有来源、资料不足就直说、近两年数据不完整要说明。
+
+## 输入
+
+本步骤收到的消息是一份 JSON，字段如下：
+
+| 字段 | 内容 |
+|---|---|
+| `direction` | 技术方向 |
+| `remark` | 发起人的备注，作为补充写作要求 |
+| `counts` | 清单核对的数量：`rows`（清单行数）、`duplicates`、`notFound`、`familyMerged`、`inventions`、`irrelevant`、`included`（纳入分析的发明数） |
+| `smallSample` | 为真表示纳入件数偏少，发起人选择按现有资料继续：风险与不确定性里要写明样本过少 |
+| `irrelevant`、`duplicates`、`notFound`、`familyMerged` | 被剔除或合并的明细 |
+| `library` | 专利库、论文库的条数 |
+| `stats` | 程序算出的统计：`routes`（各路线的件数、占比、代表专利、按年份件数、近年占比）、`trend`（按申请年份的件数，`incomplete` 为真的年份数据不完整）、`applicants`（申请量前 5 名）、`composition`（企业、高校、科研院所构成）、`joint`（联合申请）、`transferred`（高校、科研院所已发生转让或许可的专利）、`worthContact`（值得接洽的专利）。**数字只能取自这里** |
+| `inventions` | 纳入分析的发明，每项有 `id`、`title`、`abstract`、`claim`、`applicants`、`filingDate`、`legalStatus`、`citedBy`、`transfer`。写技术手段、性能指标时的依据 |
+| `papers` | 补充检索到的论文：`id`、`title`、`year`、`keywords`、`abstract`。可作为佐证引用 |
+| `structure` | 简报章节清单（`id`、`heading`），顺序就是简报顺序 |
+| `summaryMaxItems` | 结论摘要最多几条 |
+| `forbiddenTerms` | 禁用词 |
+| `feedback` | 审核人的退回意见（`comment`、`sections`）；首次执行时为空 |
+| `previousDraft` | 被退回的上一版草稿；首次执行时没有 |
+
+如果消息里还有 `corrections`，那是质检指出的具体问题，必须逐条改正。
+
+## 输出结构
+
+`title` 写成“固态电池电解质技术研判简报”这样的形式。`sections` 按 `structure` 的顺序，**包含每一章**，`id` 与 `structure` 里的一字不差（不要写 `heading`，标题由程序按配置生成）。每个章节有 `claims`，每条 `claim` 是一句话：
+
+- `text`：这句话。平实、克制，一句话讲一件事。
+- `cites`：支持这句话的专利编号或论文编号（取自 `inventions` 的 `id` 或 `papers` 的 `id`）。**角标由程序编，你只给编号。**
+- `route`：只在“技术路线分类”章节用，写这句话讲的是哪条路线（路线名取自 `stats.routes`）。
+
+## 各章节怎么写
+
+1. **结论摘要**（`summary`）：不超过 `summaryMaxItems` 条，每条一句话，**每条都要有 `cites`**。讲最重要的几点：哪条技术路线是主流、哪家申请人领先、趋势怎么看、最值得跟进的转化线索、最大的不确定性。
+2. **资料概况**（`overview`）：清单行数、剔除原因、纳入件数、补充检索论文库的表格和数字由程序生成。你只写 0 到 2 句补充说明：比如清单里有哪类专利被判为无关、同族合并的意义。不强求 `cites`。
+3. **技术路线分类**（`routes`）：数量、占比、代表专利由程序列表。**`stats.routes` 里的每条路线都要写 1 至 2 句**（`route` 写路线名）：它的主要技术手段是什么、代表性性能指标处于什么水平。指标只写代表专利摘要里明确给出的，数字和单位照抄，把那件专利放进 `cites`。可以再写 1 句比较各路线的优劣或阶段。
+4. **申请趋势**（`trend`）：年度表格和图由程序生成。你写 1 至 3 句解读：整体走势、某条路线近年是否升温（可用 `stats.routes[].recentSharePct` 与 `stats.recentSharePct` 比较）。**必须说明近两年数据因公开滞后不完整**，不要把这些年份的偏低写成下滑。每句带 `cites`（引用能说明问题的代表专利）。
+5. **主要申请人**（`applicants`）：排名表、构成、联合申请由程序生成。你写 1 至 2 句：谁领先、企业与高校院所的格局、有无联合申请值得注意。每句带 `cites`。
+6. **转化线索**（`leads`）：已转让或许可的、值得接洽的专利由程序列出。你写 1 至 2 句评述：转让集中在哪些受让方、哪些值得接洽及依据（法律状态、被引次数）。每句带 `cites`，引用 `stats.transferred` 或 `stats.worthContact` 里的专利。
+7. **风险与不确定性**（`risks`）：数据滞后、缺摘要、样本量、未归类等程序能确定的风险由程序列出。你补充 1 至 3 句判断依据有限的地方：比如某条路线样本太少、性能指标来自摘要自述、转化线索只看了法律状态和被引次数。资料不足时直接写“资料不足”。不强求 `cites`。
+
+## 重做
+
+输入里有 `feedback` 和 `previousDraft` 时，本次是重做：
+
+- 以 `previousDraft` 为基础修改，没有被意见涉及的章节保持不变。
+- `feedback.comment` 的每条意见都要有对应的改动；`feedback.sections` 里列出的章节必须真的发生变化。
+- 提交 `revisionNotes`，每条意见一条：`comment` 写对应的意见，`sections` 写改动的章节 `id`，`change` 写改了什么。
+- 首次执行时不提交 `revisionNotes`。
+- 意见要求引用库外资料、编造数据或写没有依据的结论的，不能照办，在 `change` 里说明原因。
+
+## 输出
+
+调用 `submit_result` 提交 `title`、`sections`，重做时再加 `revisionNotes`，结构符合本步骤的输出 Schema。叙述里不得出现自己估算的数字、禁用词，不要加章节以外的内容，不要自己写 `[1]` 这样的角标。

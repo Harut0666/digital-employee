@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "研判简报草稿",
+  "description": "撰写简报叙述的结果。每句话带 cites（专利编号或论文编号），角标由程序编号，表格、图表和来源清单由程序生成。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "sections"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "description": "简报标题，如“固态电池电解质技术研判简报”。" },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "description": "章节，顺序与 qc.yaml 的 literature.sections 一致，每一章都要有。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "claims"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "章节编号，取自输入的 structure。" },
+          "claims": {
+            "type": "array",
+            "description": "这一章的叙述，一句话一条。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text", "cites"],
+              "properties": {
+                "text": { "type": "string", "minLength": 1, "description": "一句话。不写角标，数字只用统计结果里的或所引资料原文里的。" },
+                "cites": {
+                  "type": "array",
+                  "description": "支持这句话的专利编号或论文编号；资料概况和风险与不确定性里的说明性句子可为空数组。",
+                  "items": { "type": "string", "minLength": 1 }
+                },
+                "route": { "type": "string", "description": "只在“技术路线分类”章节用：这句话讲的是哪条路线（路线名）。" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "revisionNotes": {
+      "type": "array",
+      "description": "仅重做时提供：逐条退回意见对应的修改说明。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment", "sections", "change"],
+        "properties": {
+          "comment": { "type": "string", "minLength": 1, "description": "对应的退回意见。" },
+          "sections": { "type": "array", "items": { "type": "string" }, "description": "改动的章节编号。" },
+          "change": { "type": "string", "minLength": 1, "description": "改了什么。" }
+        }
+      }
+    }
+  }
+}

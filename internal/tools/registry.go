@@ -37,6 +37,8 @@ type Registry struct {
 	render    RenderFunc
 	faults    map[string]contract.FaultMode
 	faultTime time.Duration
+	// chartFontPaths 场景 B 图表的中文字体候选路径；空则按系统默认找
+	chartFontPaths []string
 }
 
 var _ contract.ToolClient = (*Registry)(nil)
@@ -332,6 +334,10 @@ func (r *Registry) Call(name string, args any) (contract.ToolCallResult, error) 
 			return failure(name, err), nil
 		}
 		return contract.ToolCallResult{OK: true, Data: out}, nil
+	}
+
+	if result, handled := r.callLiterature(name, args); handled {
+		return result, nil
 	}
 
 	return contract.ToolCallResult{

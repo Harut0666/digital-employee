@@ -1,7 +1,7 @@
 // 步骤入参里的 $ 引用解析（语法见 contract.StepConfig 与 docs/design.md）：
 //
 //	$form.<path>  $steps.<stepId>.<path>  $rendered.<stepId>
-//	$task.dir  $task.attachments  $task.feedback  $task.idempotencyKey  $config.<path>
+//	$task.dir  $task.attachments  $task.feedback  $task.idempotencyKey  $config.<path>  $employee.dir
 //
 // 路径段 "[*]" 对数组逐项取值；引用不存在（含步骤尚未执行）解析为 nil；其余值原样传入。
 // 移植自 packages/core/src/engine/refs.ts。
@@ -22,6 +22,8 @@ type RefContext struct {
 	Attachments any
 	Feedback    any
 	QCConfig    any
+	// EmployeeDir 员工配置目录：$employee.dir。员工自带的资料（如场景 B 的专利库、论文库）放在它下面
+	EmployeeDir string
 	// StepOutput 某步骤最近一次完成的输出；没有时返回 nil
 	StepOutput func(stepID string) any
 	// RenderedOutput 某步骤输出的报告草稿，已完成槽位渲染；没有时返回 nil
@@ -30,7 +32,7 @@ type RefContext struct {
 	IdempotencyKey string
 }
 
-var refPattern = regexp.MustCompile(`^\$(form|steps|rendered|task|config)(\..+)?$`)
+var refPattern = regexp.MustCompile(`^\$(form|steps|rendered|task|config|employee)(\..+)?$`)
 var pathPartPattern = regexp.MustCompile(`^([^\[\]]*)((\[[*0-9]+\])*)$`)
 var bracketPattern = regexp.MustCompile(`\[(\*|[0-9]+)\]`)
 
@@ -123,6 +125,11 @@ func resolveRef(ref string, ctx RefContext) any {
 		return walk(ctx.Form, tokens)
 	case "config":
 		return walk(ctx.QCConfig, tokens)
+	case "employee":
+		if len(tokens) == 1 && !tokens[0].isIndex && tokens[0].name == "dir" {
+			return ctx.EmployeeDir
+		}
+		return nil
 	case "task":
 		if len(tokens) == 0 {
 			return nil

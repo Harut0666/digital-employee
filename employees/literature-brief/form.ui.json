@@ -1,0 +1,16 @@
+{
+  "ui:order": ["direction", "patentList", "remark"],
+  "direction": {
+    "ui:placeholder": "例如 固态电池电解质"
+  },
+  "patentList": {
+    "ui:widget": "file",
+    "ui:options": { "accept": ".csv" },
+    "ui:help": "支持 csv，必须有“专利编号”列。"
+  },
+  "remark": {
+    "ui:widget": "textarea",
+    "ui:options": { "rows": 3 },
+    "ui:placeholder": "选填：对本次简报的补充要求"
+  }
+}

@@ -1,0 +1,50 @@
+# 技术文献研判员工 · 路线词表（docs/design.md §4、§11.3）
+# 有词表的方向：路线按这里分类，程序给“是否相关”“路线”提示，最终由模型逐条判断并写依据，数量由程序数。
+# 没有词表的方向：由模型先提出不超过 5 条路线。
+# ipc：属于这个方向的 IPC 主分类前缀，用来给“是否相关”提示，也用来说明“清单整体更像哪个方向”。
+# keywords：路线关键词；同一件专利按标题里最早出现的关键词归类，标题里没有再看摘要和主权项。
+directions:
+  - name: 固态电池电解质
+    aliases: [固态电解质, 固态电池]
+    ipc: [H01M10/0562, H01M10/0565]
+    routes:
+      - id: sulfide
+        name: 硫化物
+        keywords: [硫化物, 硫银锗矿, LGPS, Li6PS5Cl, Li7P3S11, Li10GeP2S12]
+      - id: oxide
+        name: 氧化物
+        keywords: [氧化物, 石榴石, LLZO, 钙钛矿型, NASICON, LATP, LLTO, 锂镧锆氧, 锂镧钛氧]
+      - id: polymer
+        name: 聚合物及复合
+        keywords: [聚合物, PEO, 凝胶, 聚环氧乙烷, 陶瓷填料, 复合电解质]
+      - id: halide
+        name: 卤化物
+        keywords: [卤化物, 氯化物, Li3YCl6, Li3InCl6, 锆基]
+
+  - name: 钠离子电池正极材料
+    aliases: [钠电正极, 钠离子正极]
+    ipc: [H01M4/58, H01M4/525]
+    routes:
+      - id: polyanion
+        name: 聚阴离子
+        keywords: [聚阴离子, 磷酸钒钠, 氟磷酸, 焦磷酸, NaFePO4, Na3V2]
+      - id: layered
+        name: 层状氧化物
+        keywords: [层状氧化物, 层状, O3, P2]
+      - id: prussian
+        name: 普鲁士蓝类
+        keywords: [普鲁士蓝, 普鲁士白, 亚铁氰化]
+
+  - name: 硅基负极材料
+    aliases: [硅负极, 硅碳负极]
+    ipc: [H01M4/36, H01M4/48, H01M4/62]
+    routes:
+      - id: silicon-carbon
+        name: 硅碳复合
+        keywords: [硅碳, 多孔碳沉积纳米硅, 核壳结构]
+      - id: sio
+        name: 氧化亚硅
+        keywords: [氧化亚硅]
+      - id: binder
+        name: 粘结剂与纳米硅
+        keywords: [粘结剂, 纳米硅/碳纳米管]

@@ -153,6 +153,7 @@ const (
 	PauseMinutesMissing       PauseCode = "minutes_missing"
 	PauseMinutesWeekMismatch  PauseCode = "minutes_week_mismatch"
 	PauseInvalidInput         PauseCode = "invalid_input"
+	PauseMissingList          PauseCode = "missing_list"
 	PauseListDirection        PauseCode = "list_direction_mismatch"
 	PauseInsufficientMaterial PauseCode = "insufficient_material"
 	PauseMaterialIssue        PauseCode = "material_issue"

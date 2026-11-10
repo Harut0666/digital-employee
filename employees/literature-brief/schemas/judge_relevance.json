@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "相关性判断",
+  "description": "对清单核对后的每一项发明，判断是否属于所研判的技术方向，并给出理由。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["items"],
+  "properties": {
+    "items": {
+      "type": "array",
+      "description": "每项发明一条判断，不得遗漏。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "relevant", "reason"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "发明的代表专利编号，原样取自输入。" },
+          "relevant": { "type": "boolean", "description": "属于该技术方向为 true，无关为 false。" },
+          "reason": { "type": "string", "minLength": 1, "description": "一句话写依据：无关的写明它属于什么，相关的写明它解决什么问题、用了什么材料体系。" }
+        }
+      }
+    }
+  }
+}

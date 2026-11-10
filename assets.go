@@ -24,6 +24,12 @@ var Employees embed.FS
 //go:embed all:samples/scenario-a
 var ScenarioA embed.FS
 
+// ScenarioB 场景 B 公开样例的业务方专利清单（相对 samples/scenario-b 的路径，只含 CSV）。
+// 专利库、论文库不在这里：它们是技术文献研判员工自带的资料，放在 employees/literature-brief/library 里。
+//
+//go:embed samples/scenario-b/*.csv
+var ScenarioB embed.FS
+
 // SamplesCases 公开用例与剧本（相对 samples/cases 的路径，含 scripts/）。
 //
 //go:embed all:samples/cases

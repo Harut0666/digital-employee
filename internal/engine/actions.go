@@ -48,6 +48,13 @@ func availableActions(state contract.TaskState, pause *contract.PauseReason) []c
 			actions = append(actions, taskAction(contract.CmdContinueWithoutMinutes, contract.ActionDefault, contract.RoleInitiator))
 		case contract.PausePeriodIncomplete:
 			actions = append(actions, taskAction(contract.CmdContinueWithPartial, contract.ActionDefault, contract.RoleInitiator))
+		case contract.PauseInsufficientMaterial:
+			// 场景 B：纳入 0 件只能补充资料或终止；偏少（1 件起）时可以选按现有资料继续
+			if pause != nil && detailInt(pause.Detail, "included") > 0 {
+				carry := taskAction(contract.CmdContinueWithPartial, contract.ActionDefault, contract.RoleInitiator)
+				carry.Label = "按现有资料继续"
+				actions = append(actions, carry)
+			}
 		}
 		return append(actions, taskAction(contract.CmdTerminate, contract.ActionDanger, contract.RoleInitiator))
 	case contract.StateAwaitingOperator:
@@ -68,6 +75,19 @@ func availableActions(state contract.TaskState, pause *contract.PauseReason) []c
 		}
 	}
 	return []contract.TaskAction{}
+}
+
+// detailInt 暂停详情里的整数（内存里是 int，从事件日志读回来是 float64）。
+func detailInt(detail map[string]any, key string) int {
+	switch value := detail[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	}
+	return 0
 }
 
 func commandsOf(actions []contract.TaskAction) []string {

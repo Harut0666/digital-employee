@@ -4,6 +4,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -275,6 +276,48 @@ func (s *Server) handleDeliverable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可下载的交付物：%s", kind)))
+}
+
+// handleTaskAsset Markdown 交付物旁边 assets 文件夹里的图表（PNG）。图表文件名带内容哈希，同名就是同一张图，
+// 所以任何一版的简报都能用同一个地址取到，浏览器也可以长期缓存。只放行 assets 里的 .png，文件名里不能带路径。
+func (s *Server) handleTaskAsset(w http.ResponseWriter, r *http.Request) {
+	if s.engine() == nil {
+		writeJSON(w, http.StatusInternalServerError, internalError("任务引擎未就绪"))
+		return
+	}
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") || !strings.EqualFold(filepath.Ext(name), ".png") {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "图表文件名不合法"))
+		return
+	}
+	snapshot, found := s.engine().Get(id)
+	if !found {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("任务不存在：%s", id)))
+		return
+	}
+	dirs := map[string]bool{}
+	collect := func(files []contract.DeliverableRef) {
+		for _, ref := range files {
+			if ref.Kind == contract.DeliverableMD && ref.Path != "" {
+				dirs[filepath.Join(filepath.Dir(ref.Path), "assets")] = true
+			}
+		}
+	}
+	collect(snapshot.Deliverables)
+	for _, version := range snapshot.Versions {
+		collect(version.Files)
+	}
+	for dir := range dirs {
+		path := filepath.Join(dir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			w.Header().Set("Content-Type", "image/png")
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			http.ServeFile(w, r, path)
+			return
+		}
+	}
+	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有这张图表：%s", name)))
 }
 
 // versionFiles 按 ?version= 取某一版的文件；不带版本号时取当前交付物。

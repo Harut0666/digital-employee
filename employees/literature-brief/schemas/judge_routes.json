@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "技术路线归类",
+  "description": "把纳入分析的每项发明归入唯一一条技术路线；数量由程序数。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["assignments"],
+  "properties": {
+    "assignments": {
+      "type": "array",
+      "description": "每项发明一条归类，不得遗漏。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "route", "basis"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "description": "发明的代表专利编号，原样取自输入。" },
+          "route": { "type": "string", "minLength": 1, "description": "路线名：词表里有这个方向时取自输入的 routes，否则取自 proposedRoutes。" },
+          "basis": { "type": "string", "minLength": 1, "description": "一句话写归类依据，具体到标题、摘要或主权项里的关键词。" }
+        }
+      }
+    },
+    "proposedRoutes": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "词表里没有这个方向时，先提出的不超过 5 条技术路线；有词表时省略。",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

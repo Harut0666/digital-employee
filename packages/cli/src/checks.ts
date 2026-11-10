@@ -83,6 +83,7 @@ const PAUSE_CODES = [
   "minutes_missing",
   "minutes_week_mismatch",
   "invalid_input",
+  "missing_list",
   "list_direction_mismatch",
   "insufficient_material",
   "tool_failed",

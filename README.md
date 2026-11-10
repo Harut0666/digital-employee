@@ -17,7 +17,8 @@
 
 - **程序编排步骤，模型只做判断**：计算步骤直接调工具，判断步骤（原因匹配、写报告、解读退回意见）才交给模型，模型在轮次与时长上限内运行 —— 见 [ADR-0001](docs/adr/0001-program-orchestrated-steps.md)。
 - **数字和引用只走槽位**：正文里的数字与原文引用由程序从事实和纪要填入，模型写错会被质检抓出 —— 见 [ADR-0002](docs/adr/0002-facts-via-slots.md)。
-- **质检不通过自动修正**：结构、溯源、禁用指标、篇幅、异常覆盖、引用真实、意见响应 7 类检查，按 `fixStep` 重跑对应步骤，次数用尽才转人工。
+- **质检不通过自动修正**：结构、溯源、禁用指标、篇幅、异常覆盖、引用真实、意见响应 7 类检查，按 `fixStep` 重跑对应步骤，次数用尽才转人工。质检按员工配置的**质检档**（`qc.yaml` 的 `profile`）选检查：周报是上面这 7 类，技术文献研判简报是另一套（见场景 B）。
+- **两个业务员工，换配置就换岗位**：场景 A 经营周报员工（Word）和场景 B 技术文献研判员工（Markdown），共用同一个引擎、状态机、工具注册表和质检框架；差别全在员工目录里的配置（流程、提示词、输出 Schema、质检参数、自带资料）。
 - **JSONL 事件日志 + 断点恢复**：每个任务 `events.jsonl` 追加写；重启后重放事件、只重跑未完成步骤；支持命令行回放。
 - **轨迹与步骤行**：对话框顶部固定显示当前任务的执行过程（步骤、工具调用、模型轮次、质检、暂停与重做），折叠成一行摘要，运行中自动展开并跟随最新事件；对话里每个步骤也显示成一行（业务说法、状态、耗时、所用模型），点开定位到轨迹详情。两者都只读，不提供推进操作。
 - **工作区就是目录**：工作区只是名字加一个本机目录，侧栏同时列出所有工作区和它们下面的会话；取消登记只删登记，目录里的文件、会话和任务都保留；设置、员工和知识库存在应用目录，所有工作区共用 —— 见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
@@ -47,10 +48,12 @@ digital-employee/
 ├── packages/{tools,server,cli,app,desktop}/  TypeScript 旧后端（冻结，仅作参考与兜底）
 ├── employees/
 │   ├── weekly-report/      场景 A 员工配置（提示词、输出 Schema、流程与质检配置）
+│   ├── literature-brief/   场景 B 技术文献研判员工（配置 + library/ 专利库与论文库 + routes.yaml 路线词表）
 │   └── knowledge-qa/       知识库问答员工（只有一个判断步骤）
 ├── samples/
 │   ├── scenario-a/         样例数据（销售明细、周会纪要、格式要求）
-│   └── cases/              36 条命令行用例（A / S / T 系列）及其剧本式假模型输出
+│   ├── scenario-b/         场景 B 样例数据（专利库、论文库、三份业务方清单、格式要求、公开样例用例）
+│   └── cases/              43 条命令行用例（A / S / T / B 系列）及其剧本式假模型输出
 ├── scripts/                构建与冒烟：build-exe.ps1、build-go.ps1、smoke-go.ps1、gen-embedded.ts 等
 ├── docs/                   设计文档、架构图、术语表、ADR、工单、界面稿
 └── README.md
@@ -285,7 +288,7 @@ powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
 | `bun test packages/web` | 前端纯函数与视图测试 |
 | `bun run typecheck` | 各前端包 `tsc --noEmit` |
 | `go run ./cmd/digital-employee run-case samples/cases/A-01.json --scripted samples/cases/scripts/A-01.json --out out` | 按用例驱动引擎，结果写到 `out/`（`result.json`、`snapshot.json`、`events.jsonl`） |
-| `go run ./cmd/digital-employee run-cases "samples/cases/*.json" --scripted --out out/cases` | 批量跑用例，**36/36** 为通过 |
+| `go run ./cmd/digital-employee run-cases "samples/cases/*.json" --scripted --out out/cases` | 批量跑用例，**43/43** 为通过 |
 | `go run ./cmd/digital-employee replay <应用目录> <taskId>` | 按时间回放某任务的事件 |
 | `go run ./cmd/digital-employee fixtures` | 从样例销售明细生成变异数据到应用目录的 `samples/fixtures/`（`--out` 可改） |
 
@@ -472,7 +475,7 @@ employees/weekly-report/
 
 - `go test ./...` 覆盖契约、配置、引擎、质检、模型、工具、渲染、服务端、会话与 CLI；端到端用例用剧本式模型，不联网、不需要 Key。
 - `bun test packages/web` 覆盖前端纯函数与视图（步骤行推导、侧栏分组、模型下拉、权限模式菜单与权限确认卡、员工表单卡、多任务会话等）；`bun run typecheck` 检查类型。测试项数以命令输出为准。
-- `samples/cases/` 是 36 条自测用例（6 条公开 A 系列 + 24 条 S 系列 + 6 条 T 系列）的描述；`samples/cases/scripts/` 是对应的剧本式假模型输出。剧本模式 **36/36** 通过，A 系列另做过真实模型验证，结果见 [`docs/results/`](docs/results/)。
+- `samples/cases/` 是 43 条自测用例（6 条公开 A 系列 + 24 条 S 系列 + 6 条 T 系列 + 7 条场景 B 的 B 系列）的描述；`samples/cases/scripts/` 是对应的剧本式假模型输出（B 系列的剧本由 `internal/literature/scriptgen_test.go` 按真实核对与统计结果生成）。剧本模式 **43/43** 通过，A 系列另做过真实模型验证，结果见 [`docs/results/`](docs/results/)。
 - `samples/scenario-a/` 是原始数据：销售明细、W42–W44 周会纪要、格式要求、数据说明。公开样例会释放到**应用目录**的 `samples/`（不在工作区目录里）。
 - A-01 与冻结的 TS 版做了逐事件对拍（`scripts/parity-a01.sh`），归一化后 42 条事件逐字段一致。
 
@@ -496,7 +499,7 @@ employees/weekly-report/
 - Spec 0006 已落地（T36–T44）：工作区即目录（应用目录 + 工作区登记 + 旧数据一次性迁移 + 单目录模式）、设置里拉取模型、侧栏“工作区 | 记录”、会话模型与运行中切换、前台 Agent 流式循环、目录材料、交付物写入工作区、对话里的步骤行；收尾补齐了对拍基准、6 条新用例、目录链接防护、测试提速（server 包约 480s → 约 170s）。
 - Spec 0007 已落地（T45–T49，T50 收尾中）：新对话页能选模型、任何状态都能换模型；设置不再预置厂商（空状态 + 添加连接，去掉 `DEEPSEEK_API_KEY` 覆盖）；会话与任务一对多；三档权限模式（原五档已简化，见 ADR-0007 增补二）与 `write_file` / `edit_file`；员工当工具（`run_employee` + 员工表单卡，取代“确认员工 / 开工清单 / 提交”三张卡，公开样例改为预填表单）。真实模型手动测试按 [docs/manual-test-0007.md](docs/manual-test-0007.md) 由使用者执行。
 - 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 36 条在剧本模式 36/36 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
-- 场景 B（技术文献研判）的设计见[设计文档 §11](docs/design.md)，员工配置尚未落地。
+- **场景 B（技术文献研判员工）已落地**（[Spec 0008](docs/specs/0008-scenario-b-literature-brief.md)）：输入技术方向和业务方的专利清单 → 清单核对（去重、库中查不到、同族合并）→ 模型逐条判断相关性 → 程序定纳入范围（清单与方向不符、资料不足时暂停）→ 路线归类 → 程序统计路线、趋势、申请人和转化线索 → 检索佐证论文 → 写简报 → 渲染 Markdown（图表 PNG 放旁边的 `assets/`）→ 7 项质检（结构、摘要角标、引用真实、数据溯源、禁用词、篇幅、意见响应）。只用本地专利库和论文库，每句话带引用角标，来源清单由程序生成；员工是配置不是代码（`employees/literature-brief/`）。公开样例 B-01 至 B-05 与两条变体（重做、资料偏少）在剧本模式全部通过；**真实模型尚未验证**，手动测试按 [docs/manual-test-b.md](docs/manual-test-b.md) 由使用者执行。
 - 单文件 exe：`scripts/build-exe.ps1` → `dist/digital-employee.exe`（约 27MB，GUI 子系统），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/build-go.ps1` + `scripts/smoke-go.ps1`（控制台版）覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
 - 原生窗口：双击（或不带参数）直接用 MyGo 打开（系统 WebView2），与 `--browser` 方式共用应用目录。
 - 已知限制：

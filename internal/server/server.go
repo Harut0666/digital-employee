@@ -406,6 +406,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/tasks/{id}/events", s.handleEvents)
 	m.HandleFunc("GET /api/tasks/{id}/stream", s.handleStream)
 	m.HandleFunc("GET /api/tasks/{id}/deliverables/{kind}", s.handleDeliverable)
+	// Markdown 交付物（场景 B 的简报）引用的图表 PNG：简报里写的是相对路径 assets/<文件名>，预览时映射到这里
+	m.HandleFunc("GET /api/tasks/{id}/assets/{name}", s.handleTaskAsset)
 
 	// ---- 公开样例 ----
 	m.HandleFunc("GET /api/samples", s.handleListSamples)

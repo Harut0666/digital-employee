@@ -28,6 +28,7 @@ import (
 	"digital-employee/internal/config"
 	"digital-employee/internal/contract"
 	"digital-employee/internal/knowledge"
+	"digital-employee/internal/literature"
 	"digital-employee/internal/qc"
 	"digital-employee/internal/settings"
 )
@@ -981,6 +982,7 @@ func (e *Engine) executeStep(rt *taskRuntime, step contract.StepConfig) (string,
 		TaskDir:     rt.dir,
 		Attachments: attachments,
 		QCConfig:    jsonShape(rt.config.QC),
+		EmployeeDir: rt.config.Dir,
 		StepOutput:  func(id string) any { return e.stepOutput(rt, id) },
 		RenderedOutput: func(id string) any {
 			return e.renderedOutput(rt, id)
@@ -1186,7 +1188,41 @@ func (e *Engine) runCompute(rt *taskRuntime, step contract.StepConfig, args any)
 				"totalSteps":     len(rt.config.Workflow.Steps),
 			})
 	}
-	return outcomeDone, e.completeStep(rt, step, result.Data)
+	if err := e.completeStep(rt, step, result.Data); err != nil {
+		return "", err
+	}
+	// 计算步骤的输出带着 ok:false 和 pause，是在要求暂停（场景 B 的“清单与方向不符”“资料不足”）：
+	// 步骤本身算完成了，任务转待发起人补充；补充或确认继续后从头重跑，入参没变的计算步骤直接复用旧结果
+	if step.ID != rt.config.Workflow.AdmissionStep {
+		if pause := gatePauseOf(result.Data); pause != nil {
+			return outcomePaused, e.transition(rt, contract.TriggerMaterialIssue, contract.RoleSystem, pause)
+		}
+	}
+	return outcomeDone, nil
+}
+
+// gatePauseOf 步骤输出里要求暂停的原因：输出是对象、ok 为 false，并带有 pause{code, message, detail}。
+func gatePauseOf(output any) *contract.PauseReason {
+	var shape struct {
+		OK    *bool `json:"ok"`
+		Pause *struct {
+			Code    string         `json:"code"`
+			Message string         `json:"message"`
+			Detail  map[string]any `json:"detail"`
+		} `json:"pause"`
+	}
+	if err := decodeInto(output, &shape); err != nil || shape.OK == nil || *shape.OK || shape.Pause == nil || shape.Pause.Code == "" {
+		return nil
+	}
+	code := contract.PauseCode(shape.Pause.Code)
+	message := shape.Pause.Message
+	if message == "" {
+		message = "步骤要求暂停。"
+	}
+	return &contract.PauseReason{
+		Code: code, Message: message, Detail: shape.Pause.Detail,
+		Options: commandsOf(availableActions(contract.StateAwaitingInitiator, &contract.PauseReason{Code: code, Detail: shape.Pause.Detail})),
+	}
 }
 
 // judgmentPause 判断失败原因 → 暂停触发器。
@@ -1563,7 +1599,72 @@ func (e *Engine) stepQc(rt *taskRuntime) error {
 		map[string]any{"checks": failed})
 }
 
+// runLiteratureQc 技术文献研判简报的质检（qc.yaml 的 profile: literature，design.md §11.4）。
+// 输入取自 qcSources 指的步骤：简报草稿、统计、清单核对、纳入范围、渲染结果。
+func (e *Engine) runLiteratureQc(rt *taskRuntime) ([]contract.QcCheckResult, error) {
+	sources := rt.config.Workflow.QCSources
+	var draft literature.BriefDraft
+	if err := decodeInto(e.optionalOutput(rt, sources.Draft), &draft); err != nil {
+		return nil, err
+	}
+	var stats literature.Stats
+	if err := decodeInto(e.optionalOutput(rt, sources.Stats), &stats); err != nil {
+		return nil, err
+	}
+	var screen literature.ScreenResult
+	if err := decodeInto(e.optionalOutput(rt, sources.Screen), &screen); err != nil {
+		return nil, err
+	}
+	var scope literature.ScopeResult
+	if err := decodeInto(e.optionalOutput(rt, sources.Scope), &scope); err != nil {
+		return nil, err
+	}
+	var rendered *literature.Rendered
+	if raw, ok := e.optionalOutput(rt, sources.Rendered).(map[string]any); ok && raw["mdPath"] != nil {
+		var value literature.Rendered
+		if err := decodeInto(raw, &value); err == nil {
+			rendered = &value
+		}
+	}
+	lib, err := literature.LoadLibrary(literature.LibraryDir(rt.config.Dir))
+	if err != nil {
+		return nil, err
+	}
+
+	reworkRound := view(rt, func(p *projection) int { return p.ReworkRound })
+	feedback := view(rt, func(p *projection) *contract.Feedback { return p.Feedback })
+	baseline := view(rt, func(p *projection) *Checkpoint { return p.BaselineDraft })
+	var previous *literature.BriefDraft
+	if reworkRound > 0 && baseline != nil {
+		if raw, err := e.readArtifact(rt, *baseline); err == nil {
+			var prior literature.BriefDraft
+			if decodeInto(raw, &prior) == nil {
+				previous = &prior
+			}
+		}
+	}
+	cfg := contract.DefaultLiteratureQC()
+	if rt.config.QC.Literature != nil {
+		cfg = *rt.config.QC.Literature
+	}
+	fixStep := rt.config.Workflow.QCFixSteps.Write
+	if fixStep == "" {
+		fixStep = sources.Draft
+	}
+	input := literature.QcInput{
+		Config: cfg, Draft: draft, Stats: &stats, Scope: &scope, Screen: &screen, Rendered: rendered, Lib: lib,
+		PreviousDraft: previous, FixStep: fixStep,
+	}
+	if reworkRound > 0 {
+		input.Feedback = feedback
+	}
+	return literature.RunQC(input), nil
+}
+
 func (e *Engine) runQcChecks(rt *taskRuntime) ([]contract.QcCheckResult, error) {
+	if rt.config.QC.Profile == contract.QCProfileLiterature {
+		return e.runLiteratureQc(rt)
+	}
 	sources := rt.config.Workflow.QCSources
 	var rendered *contract.RenderedStats
 	if raw, ok := e.optionalOutput(rt, sources.Rendered).(map[string]any); ok {
@@ -1661,6 +1762,7 @@ func (e *Engine) createDeliverables(rt *taskRuntime, checks []contract.QcCheckRe
 
 	kind := contract.DeliverableKind("")
 	sourcePath := ""
+	assetsDir := ""
 	for _, step := range rt.config.Workflow.Steps {
 		output, ok := e.optionalOutput(rt, step.ID).(map[string]any)
 		if !ok {
@@ -1674,6 +1776,13 @@ func (e *Engine) createDeliverables(rt *taskRuntime, checks []contract.QcCheckRe
 		if value, ok := output["mdPath"].(string); ok {
 			kind = contract.DeliverableMD
 			sourcePath = value
+			// Markdown 里的图表是旁边 assets 文件夹里的 PNG，用相对路径引用：一起放进交付物目录
+			assetsDir, _ = output["assetsDir"].(string)
+		}
+	}
+	if kind == contract.DeliverableMD && assetsDir != "" {
+		if err := copyAssets(assetsDir, filepath.Join(dir, "assets")); err != nil {
+			return fmt.Errorf("复制简报图表失败：%w", err)
 		}
 	}
 	if kind != "" {
@@ -1990,7 +2099,12 @@ func (e *Engine) Command(taskID string, command contract.TaskCommand, actor cont
 			return contract.CommandResult{OK: false, Error: contract.ErrInvalidInput, Message: err.Error()}
 		}
 	case contract.CmdContinueWithPartial:
-		merged := mergeForm(rt.proj.Form, map[string]any{"allowPartialPeriod": true})
+		patch := map[string]any{"allowPartialPeriod": true}
+		if rt.proj.Pause != nil && rt.proj.Pause.Code == contract.PauseInsufficientMaterial {
+			// 场景 B：纳入件数偏少时发起人选“按现有资料继续”
+			patch = map[string]any{"allowSmallSample": true}
+		}
+		merged := mergeForm(rt.proj.Form, patch)
 		attachments := append([]contract.AttachmentRef{}, rt.proj.Attachments...)
 		if err := e.appendLocked(rt, contract.TaskEvent{
 			Type: contract.EventFormUpdated, Form: merged, Attachments: attachments, Actor: actor,

@@ -73,7 +73,9 @@ function Pre({ children }: { children?: ReactNode }) {
   return <pre>{children}</pre>;
 }
 
-const COMPONENTS: Components = {
+export const MARKDOWN_PLUGINS = PLUGINS;
+
+export const COMPONENTS: Components = {
   a: Link,
   pre: Pre,
   table: ({ children }) => (

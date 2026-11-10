@@ -1,11 +1,12 @@
 // 右栏：上方交付物预览（单独滚动），下方固定检验记录、修改说明和审核操作。不分标签页。
 import { useEffect, useState } from "react";
 import { Button, message, Modal, Segmented, Tooltip } from "antd";
-import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, FileMarkdownOutlined, InboxOutlined } from "@ant-design/icons";
+import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, InboxOutlined } from "@ant-design/icons";
 import type { TaskSnapshot } from "../api";
 import { deriveReviewPanel } from "../view/review-panel";
 import { actionPlan } from "../view/permissions";
 import { DocxPreview } from "./DocxPreview";
+import { MarkdownPreview } from "./MarkdownPreview";
 import { Handoff, ReturnForm, TaskActionBar, type CardActions } from "./Cards";
 import { useLinkProps } from "./Preferences";
 import { StateBlock } from "./StateBlock";
@@ -61,10 +62,7 @@ export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | un
 
       <div className="review-doc">
         {view.docKind === "md" ? (
-          <div className="review-empty">
-            <FileMarkdownOutlined style={{ fontSize: 40 }} />
-            <div>Markdown 报告，请下载查看</div>
-          </div>
+          <MarkdownPreview key={docUrl ?? "placeholder"} url={docUrl} />
         ) : (
           <DocxPreview key={docUrl ?? "placeholder"} url={docUrl} reflow />
         )}

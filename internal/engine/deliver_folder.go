@@ -54,6 +54,10 @@ func (e *Engine) fileDeliverables(rt *taskRuntime) {
 			continue
 		}
 		path, err := fileDeliverable(target, ref, label, version)
+		if err == nil && ref.Kind == contract.DeliverableMD {
+			// Markdown 引用旁边 assets 文件夹里的图表：一起放进去，简报在“交付”文件夹里单独打开也能看到图
+			err = copyAssets(filepath.Join(filepath.Dir(ref.Path), "assets"), filepath.Join(target, "assets"))
+		}
 		if err != nil {
 			e.appendFiledNotice(rt, contract.TaskEvent{
 				Type:        contract.EventDeliverableFiled,
@@ -68,6 +72,38 @@ func (e *Engine) fileDeliverables(rt *taskRuntime) {
 			FiledReason: "交付物已复制到 " + path,
 		})
 	}
+}
+
+// copyAssets 把图表文件夹里的文件复制到目标文件夹；源文件夹不存在就什么都不做。
+// 图表文件名带内容哈希，同名就是同一张图，已存在的不覆盖。
+func copyAssets(from, to string) error {
+	entries, err := os.ReadDir(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		target := filepath.Join(to, entry.Name())
+		if _, statErr := os.Stat(target); statErr == nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(from, entry.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (e *Engine) appendFiledNotice(rt *taskRuntime, event contract.TaskEvent) {

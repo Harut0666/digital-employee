@@ -1,0 +1,49 @@
+# 技术文献研判员工 · 质检规则（docs/design.md §11.4）
+# profile: literature —— 这个员工用技术文献研判简报的检查，不用周报的 8 类内置检查：
+#   结构完整、摘要角标、引用真实、数据溯源、禁用词、篇幅、意见响应（仅重做时检查）。
+# 每项检查都由程序判定；不通过时指出具体问题，回到写简报这一步修正。
+profile: literature
+
+# 周报的内置检查在这个员工身上不用；留着只是为了配置格式一致
+builtin:
+  structure: { enabled: true, sections: [], summaryMaxSentences: 5, nextWeekMaxItems: 5, minCharts: 1 }
+  traceability: { enabled: false }
+  anomaly_coverage: { enabled: false, threshold: 0.10 }
+  quote_integrity: { enabled: false }
+  contradiction_coverage: { enabled: false }
+  forbidden_terms: { enabled: false, terms: [] }
+  length: { enabled: false, maxPages: 5 }
+  feedback_response: { enabled: false }
+
+contradiction:
+  flatTolerance: 0.05
+  directionMin: 0.02
+  magnitudeTolerance: 0.10
+
+literature:
+  # 简报章节，顺序即简报顺序；“来源清单”由程序生成，不在这里
+  sections:
+    - { id: summary, heading: 结论摘要 }
+    - { id: overview, heading: 资料概况 }
+    - { id: routes, heading: 技术路线分类 }
+    - { id: trend, heading: 申请趋势 }
+    - { id: applicants, heading: 主要申请人 }
+    - { id: leads, heading: 转化线索 }
+    - { id: risks, heading: 风险与不确定性 }
+  # 结论摘要不超过 5 条，每条都要带引用角标
+  summaryMaxItems: 5
+  # 至少 1 张图表（技术路线分布和申请趋势各一张）
+  minCharts: 1
+  # 正文不超过 5 页（按字数估算，留约 10% 余量）
+  maxPages: 5
+  # 纳入分析的发明少于 5 项时暂停：0 项只能补充资料或终止，1–4 项可以选“按现有资料继续”
+  minIncluded: 5
+  # 与方向无关的发明超过有效条数的一半时暂停：清单与方向不符
+  irrelevantMaxShare: 0.5
+  # 数据截止日；截止年份及其前两年（2024–2026）标注“因公开滞后不完整”
+  cutoffDate: "2026-10-15"
+  incompleteYears: 2
+  # 简报里不得出现的词：不做保证性的投资承诺，不用库里没有的指标
+  forbiddenTerms: [保证盈利, 必然成功, 稳赚, 一定会成功, 估值]
+
+custom: []

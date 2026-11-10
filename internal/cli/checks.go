@@ -74,7 +74,7 @@ type RunEvidence struct {
 
 var pauseCodes = []string{
 	"missing_sales", "missing_dimensions", "period_out_of_range", "period_incomplete",
-	"minutes_missing", "minutes_week_mismatch", "invalid_input", "list_direction_mismatch",
+	"minutes_missing", "minutes_week_mismatch", "invalid_input", "missing_list", "list_direction_mismatch",
 	"insufficient_material", "material_issue", "tool_failed", "limit_exceeded", "qc_exhausted",
 	"rework_needs_human", "awaiting_review",
 }
@@ -343,6 +343,19 @@ func ReadRunEvidence(resultDir string) (*RunEvidence, error) {
 		}
 		evidence.Docx = docx
 		break
+	}
+	// 没有 Word 时看 Markdown 简报（场景 B）：同一种证据结构
+	if evidence.Docx == nil {
+		for index := len(result.Deliverables) - 1; index >= 0; index-- {
+			deliverable := result.Deliverables[index]
+			if deliverable.Kind != string(contract.DeliverableMD) || deliverable.Path == "" || !fileExists(deliverable.Path) {
+				continue
+			}
+			if md, err := readMarkdown(deliverable.Path); err == nil {
+				evidence.Docx = md
+				break
+			}
+		}
 	}
 	return evidence, nil
 }

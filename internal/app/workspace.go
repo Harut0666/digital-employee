@@ -350,6 +350,7 @@ func releaseSamples(dir, repoRoot string) (ReleaseOutcome, error) {
 		fsys fs.FS
 	}{
 		{"scenario-a", "samples/scenario-a", assets.ScenarioA},
+		{"scenario-b", "samples/scenario-b", assets.ScenarioB},
 		{"cases", "samples/cases", assets.SamplesCases},
 	}
 	for _, source := range sources {

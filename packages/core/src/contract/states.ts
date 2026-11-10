@@ -101,6 +101,7 @@ export type PauseCode =
   | "minutes_missing"
   | "minutes_week_mismatch"
   | "invalid_input"
+  | "missing_list"
   | "list_direction_mismatch"
   | "insufficient_material"
   // 待人工处理

@@ -1,0 +1,14 @@
+# 开工清单：开工前必须备齐的事项，只有程序能勾选。
+# 清单只判定“文件是否已上传、必填项是否已填写”；清单里的编号对不对、与方向是否相符，
+# 开工后由清单核对步骤检查，必要时暂停并提示补充。
+items:
+  - id: direction
+    label: 技术方向
+    required: true
+    source: field
+    field: direction
+  - id: patent_list
+    label: 专利清单
+    required: true
+    source: upload
+    accept: [".csv"]

@@ -84,6 +84,10 @@ type QCSources struct {
 	Draft    string `json:"draft" yaml:"draft"`
 	Minutes  string `json:"minutes" yaml:"minutes"`
 	Rendered string `json:"rendered" yaml:"rendered"`
+	// Stats、Screen、Scope 只有 literature 质检档用：统计步骤、清单核对步骤、纳入范围步骤
+	Stats  string `json:"stats,omitempty" yaml:"stats,omitempty"`
+	Screen string `json:"screen,omitempty" yaml:"screen,omitempty"`
+	Scope  string `json:"scope,omitempty" yaml:"scope,omitempty"`
 }
 
 // QCFixSteps 质检不通过时按问题类别指定应重跑的步骤。
@@ -169,9 +173,13 @@ type CustomRule struct {
 
 // QCConfig qc.yaml 的结构。
 type QCConfig struct {
+	// Profile 质检档：缺省（空）是周报的 8 类内置检查；literature 是技术文献研判简报的检查（见 Literature）
+	Profile       string                  `json:"profile,omitempty" yaml:"profile,omitempty"`
 	Builtin       BuiltinQC               `json:"builtin" yaml:"builtin"`
 	Contradiction ContradictionThresholds `json:"contradiction" yaml:"contradiction"`
 	Custom        []CustomRule            `json:"custom" yaml:"custom"`
+	// Literature profile 为 literature 时的参数
+	Literature *LiteratureQC `json:"literature,omitempty" yaml:"literature,omitempty"`
 }
 
 // 开工清单的判定来源。

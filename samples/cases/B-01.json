@@ -1,0 +1,41 @@
+{
+  "id": "B-01",
+  "title": "技术研判：固态电池电解质（含脏数据：重复行、查不到的编号、同族专利、无关专利）",
+  "employee": "literature-brief",
+  "form": { "direction": "固态电池电解质" },
+  "attachments": [
+    { "name": "专利清单_固态电池电解质.csv", "path": "../scenario-b/专利清单_固态电池电解质.csv" }
+  ],
+  "steps": [
+    { "actor": "initiator", "command": { "type": "submit" }, "expect": { "state": "awaiting_review", "pauseCode": "awaiting_review" } },
+    { "actor": "reviewer", "command": { "type": "approve" }, "expect": { "state": "delivered", "deliverables": ["md", "qc_record"] } }
+  ],
+  "expect": {
+    "state": "delivered",
+    "checks": {
+      "numbers": [
+        { "path": "table:硫化物/专利数量", "expected": 14, "tolerance": 0.08 },
+        { "path": "table:聚合物及复合/专利数量", "expected": 9, "tolerance": 0.12 },
+        { "path": "table:氧化物/专利数量", "expected": 9, "tolerance": 0.12 },
+        { "path": "table:卤化物/专利数量", "expected": 8, "tolerance": 0.13 },
+        { "path": "table:申请人E10/发明数", "expected": 8 },
+        { "path": "table:申请人E01/发明数", "expected": 6 },
+        { "path": "table:申请人R01/发明数", "expected": 5 },
+        { "path": "table:申请人E02/发明数", "expected": 4 }
+      ],
+      "mustContain": [
+        "最终纳入分析：40 项发明",
+        "ZZ2018338362B", "ZZ2019237653B", "ZZ2024211797A",
+        "ZZ2024999999A",
+        "ZZ2020659978B", "ZZ2020805193B",
+        "ZZ2022537775U", "ZZ2021609431A", "ZZ2020492484B", "ZZ2019161869B",
+        "因公开滞后不完整",
+        "申请人E10",
+        "ZZ2018374236B", "ZZ2021158885B", "ZZ2021383840B", "ZZ2023560167B", "ZZ2023667632B", "ZZ2024545754A", "ZZ2025481709A",
+        "（依据标题和主权项）",
+        "来源清单"
+      ],
+      "mustNotContain": ["保证盈利", "必然成功"]
+    }
+  }
+}
