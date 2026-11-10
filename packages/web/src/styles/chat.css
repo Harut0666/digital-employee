@@ -558,17 +558,6 @@
   align-items: center;
   text-align: center;
 }
-.welcome-mark {
-  width: 56px;
-  height: 56px;
-  margin-bottom: var(--sp-4);
-  border-radius: var(--r-xl);
-  display: grid;
-  place-items: center;
-  font-size: 28px;
-  color: var(--primary);
-  background: var(--primary-soft);
-}
 .welcome-title {
   margin: 0;
   font-size: var(--fs-xl);

@@ -631,9 +631,6 @@ export function NewConversation({
     <>
       <div className="chat-body thread welcome-body">
         <div className="welcome">
-          <div className="welcome-mark" aria-hidden>
-            <RobotOutlined />
-          </div>
           <h1 className="welcome-title">你好，说说要做什么</h1>
           <p className="welcome-desc">用一句话说明工作，我来安排合适的员工接手，再帮你备齐材料。</p>
           <PreflightNotice preflight={preflight} openSettings={openSettings} />

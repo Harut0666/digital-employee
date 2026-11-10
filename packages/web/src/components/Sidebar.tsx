@@ -16,7 +16,6 @@ import {
   PlusOutlined,
   ReloadOutlined,
   RightOutlined,
-  RobotOutlined,
   SearchOutlined,
   SettingOutlined,
   SlidersOutlined,
@@ -298,9 +297,6 @@ export function Sidebar({
   return (
     <aside className="col sidebar" aria-label="导航">
       <div className="side-head">
-        <span className="logo" aria-hidden>
-          <RobotOutlined />
-        </span>
         <span className="brand-name">迷你数字员工</span>
       </div>
       <NewChatButton entry={entry} onStart={onStartChat} onAddWorkspace={guideToAdd} />

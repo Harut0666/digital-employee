@@ -12,7 +12,6 @@ import {
   FolderOpenOutlined,
   InfoCircleOutlined,
   ReloadOutlined,
-  RobotOutlined,
 } from "@ant-design/icons";
 import { LOG_LEVELS, type DiagnosticsInfo, type DiagnosticsExportResult, type LogLevel } from "@de/core/contract";
 import type { SettingsApi } from "../../api/settings";
@@ -136,9 +135,6 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
 
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ width: 40, height: 40, borderRadius: 10, background: "var(--primary-soft)", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>
-            <RobotOutlined />
-          </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 20 }}>{ABOUT.name}</span>
