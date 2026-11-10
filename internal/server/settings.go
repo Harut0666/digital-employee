@@ -256,6 +256,7 @@ type diagnosticsApp struct {
 	SettingsVersion int    `json:"settingsVersion"`
 }
 
+// diagnosticsRuntime 运行环境。字段名 bun 是旧契约遗留，现在装的是 Go 版本号（界面按 go 开头识别）。
 type diagnosticsRuntime struct {
 	Bun      string `json:"bun"`
 	Platform string `json:"platform"`

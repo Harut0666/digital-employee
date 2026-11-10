@@ -3,7 +3,7 @@
 // 诊断接口与诊断包的组合逻辑在 T19 的服务端（GET /api/settings/diagnostics、
 // POST /api/settings/diagnostics/export、POST /api/settings/open-file）；这里只做界面与
 // 剪贴板/文件管理器调用。复制出去的文本永远是脱敏的（view/diagnostics.ts 里统一拼装）。
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { Alert, App as AntApp, Button, Input, Modal, Select, Space, Tag, Typography } from "antd";
 import {
   CopyOutlined,
@@ -12,10 +12,14 @@ import {
   FolderOpenOutlined,
   InfoCircleOutlined,
   ReloadOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { LOG_LEVELS, type DiagnosticsInfo, type DiagnosticsExportResult, type LogLevel } from "@de/core/contract";
 import type { SettingsApi } from "../../api/settings";
 import { formatDiagnosticsText } from "../../view/diagnostics";
+import { ABOUT, runtimeLabel } from "../../view/about";
+import { ApiContext } from "../../hooks/data";
+import type { EmployeeInfo } from "../../api/types";
 
 const { Text } = Typography;
 
@@ -31,19 +35,6 @@ const LEVEL_LABEL: Record<LogLevel, string> = {
   info: "info · 常规（默认）",
   debug: "debug · 调试，输出最多",
 };
-
-function platformLabel(platform: string): string {
-  switch (platform) {
-    case "win32":
-      return "Windows";
-    case "darwin":
-      return "macOS";
-    case "linux":
-      return "Linux";
-    default:
-      return platform;
-  }
-}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -62,6 +53,19 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
   const [exported, setExported] = useState<DiagnosticsExportResult>();
   const [fallbackText, setFallbackText] = useState<string>();
   const [showPreview, setShowPreview] = useState(false);
+  // 关于里列出内置员工；设置页单独渲染（没有 ApiContext）时不列
+  const webApi = useContext(ApiContext);
+  const [employees, setEmployees] = useState<EmployeeInfo[]>([]);
+  useEffect(() => {
+    let alive = true;
+    webApi?.listEmployees().then(
+      (list) => alive && setEmployees(list),
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [webApi]);
 
   const load = () => {
     api.getDiagnostics().then(setInfo, (e) => message.error(e instanceof Error ? e.message : "读取诊断信息失败"));
@@ -122,7 +126,7 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
         <div style={{ flex: 1 }}>
           <h2 style={{ margin: 0, fontSize: 24 }}>诊断与关于</h2>
           <div style={{ color: "var(--muted)", marginTop: 4 }}>
-            出问题时先看版本与运行时，再把诊断信息或诊断包发给开发者；这里的所有导出都不含明文 API Key。
+            了解产品的工作方式与当前运行环境。遇到问题时，可复制诊断信息或导出诊断包交给开发者；所有导出都不含明文 API Key。
           </div>
         </div>
         <Button icon={<ReloadOutlined />} onClick={load}>
@@ -131,25 +135,61 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
       </div>
 
       <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <InfoCircleOutlined style={{ color: "var(--primary)" }} />
-          <span style={{ fontWeight: 600, fontSize: 16 }}>关于</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ width: 40, height: 40, borderRadius: 10, background: "var(--primary-soft)", color: "var(--primary)", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>
+            <RobotOutlined />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontWeight: 700, fontSize: 20 }}>{ABOUT.name}</span>
+              <Tag style={{ margin: 0 }}>v{info.app.version}</Tag>
+            </div>
+            <div style={{ color: "var(--muted)" }}>{ABOUT.tagline}</div>
+          </div>
         </div>
+        <p style={{ margin: "14px 0 0", lineHeight: 1.8 }}>{ABOUT.summary}</p>
+
+        <div className="about-principles">
+          {ABOUT.principles.map((item) => (
+            <div key={item.title} className="about-principle">
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{item.title}</div>
+              <div style={{ color: "var(--text-2)", fontSize: 13, lineHeight: 1.7 }}>{item.text}</div>
+            </div>
+          ))}
+        </div>
+
+        {employees.length > 0 && (
+          <>
+            <div style={{ fontWeight: 600, margin: "16px 0 4px" }}>内置员工</div>
+            {employees.map((employee) => (
+              <InfoRow key={employee.id} label={employee.name} value={<span style={{ color: "var(--text-2)" }}>{employee.description}</span>} />
+            ))}
+          </>
+        )}
+
+        <div style={{ fontWeight: 600, margin: "16px 0 4px" }}>运行环境</div>
         <InfoRow label="应用版本" value={`${info.app.version}（设置文档 v${info.app.settingsVersion}）`} />
-        <InfoRow label="运行时" value={`Bun ${info.runtime.bun} · ${platformLabel(info.runtime.platform)} · ${info.runtime.arch}`} />
-        <InfoRow label="桌面壳" value="Electrobun 未启用（源码 / exe 模式）" />
-        <InfoRow label="工作区路径" value={<span style={mono}>{info.workspace.workspaceDir}</span>} />
+        <InfoRow label="运行环境" value={runtimeLabel(info.runtime)} />
+        <InfoRow label="应用数据目录" value={<span style={mono}>{info.workspace.workspaceDir}</span>} />
+        <InfoRow label="员工配置目录" value={<span style={mono}>{info.workspace.employeesDir}</span>} />
         <InfoRow
           label="设置文件"
           value={
             <span style={mono}>
               {info.workspace.settingsFile}
-              {info.workspace.settingsFileExists ? "（存在）" : "（未创建）"}
+              {info.workspace.settingsFileExists ? "（已创建）" : "（尚未创建）"}
             </span>
           }
         />
-      </div>
 
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 14, color: "var(--muted)", fontSize: 13, lineHeight: 1.7 }}>
+          <InfoCircleOutlined style={{ color: "var(--primary)", marginTop: 4 }} />
+          <div>
+            <div>{ABOUT.privacy}</div>
+            <div>{ABOUT.docs}</div>
+          </div>
+        </div>
+      </div>
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <FileTextOutlined style={{ color: "var(--info)" }} />
@@ -167,8 +207,7 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
           />
         </div>
         <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
-          切换后服务端立即按新级别过滤控制台输出，重启后仍按 settings.json 里的值生效；
-          debug 会额外打印启动细节、设置保存等行。
+          切换后立即按新级别过滤控制台输出，重启后仍按设置文件里的值生效；debug 会额外输出启动细节和设置保存记录。
         </div>
       </div>
 
@@ -202,8 +241,8 @@ export function DiagnosticsSection({ api }: { api: SettingsApi }) {
           </Button>
         </Space>
         <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
-          复制的内容：版本、运行时、工作区路径与脱敏设置快照；诊断包额外包含最近几个任务各自的最后几条事件摘要
-          （落在工作区 diagnostics/ 目录）。设置文件是 JSON 原文本，适合改表单没覆盖的高级字段。
+          复制的内容包括版本、运行环境、数据目录和脱敏后的设置快照；诊断包还附带最近几个任务的最后几条事件摘要，保存在应用数据目录的 diagnostics/ 下。
+          设置文件是 JSON 原文，适合修改界面没有覆盖的高级字段。
         </div>
 
         {exported && (

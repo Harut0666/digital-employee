@@ -98,7 +98,7 @@ export function DemoDebug({ api }: { api: SettingsApi }) {
     <div>
       <h2 style={{ margin: 0, fontSize: 24 }}>演示与调试</h2>
       <div style={{ color: "var(--muted)", margin: "4px 0 16px" }}>
-        故障注入只影响演示，不会写进交付物；开关保存在工作区 settings.json，重启后仍保留。
+        故障注入只用于演示，不会写进交付物；开关保存在应用数据目录的设置文件里，重启后仍保留。
       </div>
 
       <div style={card}>

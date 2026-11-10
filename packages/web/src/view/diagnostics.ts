@@ -4,6 +4,7 @@
 // 脱敏是最后一层保险：设置快照本来就只有 apiKeyLast4，但即使上游漏出明文 Key，
 // 复制/导出的文本里也不能出现它（Spec 0004「密钥不落响应」）。
 import type { AppSettingsView, DiagnosticsInfo } from "@de/core/contract";
+import { runtimeLabel } from "./about";
 
 /** JSON 里的 apiKey 字段值 → “已脱敏”。`"apiKeyLast4"` 因为多一个字符不会被命中。 */
 const API_KEY_FIELD = /("apiKey"\s*:\s*)"[^"]*"/g;
@@ -46,8 +47,8 @@ export function formatDiagnosticsText(info: DiagnosticsInfo): string {
     "digital-employee 诊断信息",
     `生成时间：${info.generatedAt}`,
     `应用版本：${app.version}（设置文档 v${app.settingsVersion}）`,
-    `运行时：Bun ${runtime.bun} · ${runtime.platform} · ${runtime.arch}`,
-    `工作区：${workspace.workspaceDir}`,
+    `运行环境：${runtimeLabel(runtime)}`,
+    `应用数据目录：${workspace.workspaceDir}`,
     `员工目录：${workspace.employeesDir}`,
     `设置文件：${workspace.settingsFile}（${workspace.settingsFileExists ? "存在" : "未创建"}）`,
     connectionSummary(settings),

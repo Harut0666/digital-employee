@@ -38,8 +38,8 @@ describe("formatDiagnosticsText", () => {
     const text = formatDiagnosticsText(diagnosticsInfo());
 
     expect(text).toContain("应用版本：0.2.1（设置文档 v2）");
-    expect(text).toContain("运行时：Bun 1.4.2 · win32 · x64");
-    expect(text).toContain(`工作区：${WORKSPACE}`);
+    expect(text).toContain("运行环境：Bun 1.4.2 · Windows · x64");
+    expect(text).toContain(`应用数据目录：${WORKSPACE}`);
     expect(text).toContain(`${WORKSPACE}\\settings.json（存在）`);
     expect(text).toContain("日志级别：info");
     expect(text).toContain("执行与预算：步骤超时 120000 ms");
