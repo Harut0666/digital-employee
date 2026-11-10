@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { App as AntApp, Button, Dropdown, Input, Modal, Select, Skeleton, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Dropdown, Input, Modal, Segmented, Select, Skeleton, Tag, Tooltip } from "antd";
 import type { InputRef } from "antd";
 import {
   BookOutlined,
@@ -306,17 +306,18 @@ export function Sidebar({
       <NewChatButton entry={entry} onStart={onStartChat} onAddWorkspace={guideToAdd} />
       <div className={`side-bar ${searching ? "searching" : ""}`}>
         <div className="side-bar-main" inert={searching}>
-          <div className="side-bar-tabs" role="tablist" aria-label="侧栏视图">
-            {(
-              [
+          <div className="side-bar-tabs">
+            {/* 按钮式切换：工作区 | 记录 */}
+            <Segmented<SidebarTab>
+              size="small"
+              value={tab}
+              aria-label="侧栏视图"
+              options={[
                 { value: "workspaces", label: "工作区" },
                 { value: "records", label: "记录" },
-              ] as const
-            ).map((t) => (
-              <button key={t.value} type="button" role="tab" aria-selected={tab === t.value} className={`side-tab ${tab === t.value ? "active" : ""}`} onClick={() => onTab(t.value)}>
-                {t.label}
-              </button>
-            ))}
+              ]}
+              onChange={onTab}
+            />
           </div>
           {tab === "workspaces" && (
             <div className="side-bar-actions">

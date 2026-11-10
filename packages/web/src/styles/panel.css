@@ -651,3 +651,33 @@
     flex: none;
   }
 }
+
+/* ---------- 层次：对话和右栏是浮在底色上的一整块，输入框、卡片、文档再浮起一层 ---------- */
+.col.chat.surface {
+  box-shadow: var(--shadow-panel);
+}
+/* 对话和右栏贴在一起：各自的阴影只留在外侧，中间那条缝里不出阴影 */
+.shell:not(.no-panel):not(.narrow) > .col.chat {
+  clip-path: inset(-24px 0 -24px -24px);
+}
+.shell > .col.panel.panel-tabs:not(.drawer-panel) {
+  box-shadow: var(--shadow-panel);
+  clip-path: inset(-24px -24px -24px 0);
+}
+.drawer-panel.panel-tabs {
+  box-shadow: var(--shadow-panel);
+}
+.composer .ant-sender.ant-sender-main {
+  box-shadow: var(--shadow-panel);
+}
+.col.chat .card,
+.panel-card,
+.starter {
+  box-shadow: var(--shadow-sm);
+}
+.rp-tab.active {
+  box-shadow: var(--shadow-sm);
+}
+.md-preview {
+  box-shadow: var(--shadow-sm);
+}

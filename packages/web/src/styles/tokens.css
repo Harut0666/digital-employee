@@ -72,6 +72,8 @@
   --shadow: rgba(15, 23, 42, 0.07);
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-md: 0 2px 8px rgba(15, 23, 42, 0.08);
+  /* 浮在底色上的大块面板（对话、右栏、输入框） */
+  --shadow-panel: 0 4px 18px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.08);
   --shadow-pop: 0 8px 24px rgba(15, 23, 42, 0.14), 0 0 0 1px rgba(15, 23, 42, 0.04);
   --focus-shadow: rgba(26, 127, 103, 0.14);
 
@@ -169,6 +171,7 @@
   --shadow: rgba(0, 0, 0, 0.4);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06);
   --focus-shadow: rgba(63, 181, 150, 0.22);
 }
