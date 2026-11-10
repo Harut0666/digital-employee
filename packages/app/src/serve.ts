@@ -16,7 +16,11 @@ const PORT_ATTEMPTS = 20;
 export interface ServeOptions {
   /** 资源来源（归档或目录）；不传时用 bundles */
   source?: AppResourceSource;
-  /** 嵌入资源归档（exe）；等价于 archive source */
+  /**
+   * 兼容旧调用：等价于 `{ kind: "archive", bundles }`。
+   * 生产入口都走 `source`（exe 的 main.ts 传 `source: { kind: "archive", bundles }`，桌面传 `{ kind: "directory" }`），
+   * 这里保留只是给旧调用与测试用，别在新代码里传它。
+   */
   bundles?: EmbeddedBundlePaths;
   /** 工作区根目录，缺省 resolveWorkspace()（DE_WORKSPACE 可覆盖） */
   workspaceDir?: string;

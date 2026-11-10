@@ -1,17 +1,22 @@
 // 构建桌面安装包：
-//   检查 Hutch → 构建前端 → 拷贝 resvg wasm → hutch electrobun build --env=stable
-//   → 解压出可运行的绿色目录 dist/desktop/DigitalEmployee → 打便携 zip → 打印体积
+//   检查 Hutch → 准备前端产物与 resvg wasm → hutch electrobun build --env=stable
+//   → 解压出可运行的绿色目录 dist/desktop/DigitalEmployee → 打便携 zip → 校验产物 → 打印体积
 //   bun run build:desktop
+// 资源准备（前端 + wasm）与 dev 模式共用 desktop-resources.ts，保证 clean checkout 两条路都可用。
 // Hutch 是构建期工具（机器级安装），不进 package.json；中文用户名下需把 HUTCH_HOME 指到 ASCII 路径。
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { REPO_ROOT } from "./gen-embedded";
+import { prepareDesktopResources, hutchMissingMessage, runStep } from "./desktop-resources";
 
-// 资源映射与 electrobun.config.ts 共用（见 desktop-resources.ts），这里 re-export 便于单测。
+// 资源映射与资源准备与 electrobun.config.ts / dev-desktop.ts 共用（见 desktop-resources.ts），这里 re-export 便于单测。
 export {
   FIXED_DESKTOP_COPY,
   desktopCopyMapping,
+  desktopWasmTarget,
   employeeResourceDirs,
+  hutchMissingMessage,
+  resolveResvgWasmSource,
 } from "./desktop-resources";
 
 /** 桌面安装包产物目录（与 electrobun.config.ts 的 artifactFolder 一致）。 */
@@ -45,6 +50,51 @@ export function portableAppDir(artifactFolder = desktopArtifactFolder()): string
 /** 免安装便携包（整个绿色目录压成一个 zip）。 */
 export function portableZipPath(artifactFolder = desktopArtifactFolder()): string {
   return join(artifactFolder, `win-x64-${DESKTOP_APP_NAME}-portable.zip`);
+}
+
+/** 本次构建应交付的产物路径（校验用）。 */
+export interface DesktopArtifactPaths {
+  /** 安装包（artifactFolder 下的 *-Setup.zip） */
+  setupZips: string[];
+  /** staging 的 Resources/*.tar.zst（绿色目录的来源） */
+  resourcesTar?: string;
+  /** 绿色目录（应含 bin/launcher.exe） */
+  portableAppDir: string;
+  /** 便携 zip */
+  portableZip: string;
+}
+
+/**
+ * 校验产物齐全：README/设计承诺安装包 + 绿色目录 + 便携 zip，缺任何一项都不算构建成功。
+ * 返回每个缺项的“缺什么 + 下一步怎么办”；空数组表示齐全。
+ * 不接受“只打个警告然后输出 ✅ 退出 0”——那样冒烟脚本默认指向的绿色目录可能根本不存在。
+ */
+export function desktopArtifactProblems(
+  paths: DesktopArtifactPaths,
+  exists: (path: string) => boolean = existsSync,
+): string[] {
+  const problems: string[] = [];
+  if (paths.setupZips.length === 0) {
+    problems.push(
+      "缺少安装包（*-Setup.zip）：重跑 bun run build:desktop；仍缺就检查 hutch electrobun build 的输出与 Hutch 版本（hutch --version）",
+    );
+  }
+  if (!paths.resourcesTar) {
+    problems.push(
+      `缺少 staging 的 Resources/*.tar.zst（${desktopStagingAppDir()}）：重跑 bun run build:desktop；仍缺就确认 Hutch 版本与 build/stable-win-x64 目录是否生成`,
+    );
+  }
+  if (!exists(join(paths.portableAppDir, "bin", "launcher.exe"))) {
+    problems.push(
+      `缺少可运行的绿色目录（${paths.portableAppDir} 下没有 bin/launcher.exe）：重跑 bun run build:desktop，并检查上面的解压日志`,
+    );
+  }
+  if (!exists(paths.portableZip)) {
+    problems.push(
+      `缺少便携 zip（${paths.portableZip}）：重跑 bun run build:desktop；若 PowerShell 打包失败，看上面的输出定位原因`,
+    );
+  }
+  return problems;
 }
 
 /** 目录下所有文件的字节数（解压后/安装后的真实体积）。 */
@@ -114,33 +164,8 @@ export async function createPortableZip(appDir: string, zipFile: string): Promis
   if (code !== 0) throw new Error(`打便携 zip 失败（PowerShell 退出码 ${code}）：${zipFile}`);
 }
 
-/** 构建期拷贝到仓库里的 resvg wasm 目标路径。 */
-export function desktopWasmTarget(repoRoot = REPO_ROOT): string {
-  return join(repoRoot, "packages", "desktop", "assets", "resvg.wasm");
-}
-
-/** 从 @de/tools 的依赖里定位 resvg wasm 源文件。 */
-export function resolveResvgWasmSource(repoRoot = REPO_ROOT): string {
-  const pkg = Bun.resolveSync("@resvg/resvg-wasm/package.json", join(repoRoot, "packages", "tools"));
-  return join(dirname(pkg), "index_bg.wasm");
-}
-
 export function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
-
-/** 找不到 Hutch 时的可执行提示（含安装命令与中文用户名下的 HUTCH_HOME 坑）。 */
-export function hutchMissingMessage(env: Record<string, string | undefined> = process.env): string {
-  const home = env.USERPROFILE ?? env.HOME ?? "";
-  const nonAscii = /[^\x00-\x7F]/.test(home);
-  return [
-    "缺少 Hutch：桌面构建需要 Hutch（构建期工具，不写进 package.json）。",
-    '安装（PowerShell）：powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://hutch.blackboard.sh/hutch/install.ps1)))"',
-    "安装后把 %USERPROFILE%\\.hutch\\bin 加进 PATH，或直接执行 ~/.hutch/bin/hutch。",
-    nonAscii
-      ? `当前用户目录含非 ASCII 字符（${home}）：请先设置 HUTCH_HOME 到纯 ASCII 路径（例如 D:\\hutch-home），否则会报 AccessDenied。`
-      : "若安装后仍找不到，可设置 HUTCH_HOME 到纯 ASCII 路径（例如 D:\\hutch-home）。",
-  ].join("\n");
 }
 
 /** 产物目录里的 Setup.zip（按名字排序，便于稳定输出）。 */
@@ -152,61 +177,44 @@ export function findSetupArtifacts(dir: string): string[] {
     .sort();
 }
 
-async function run(label: string, cmd: string[], cwd = REPO_ROOT): Promise<void> {
-  console.log(`\n▶ ${label}`);
-  const started = performance.now();
-  const proc = Bun.spawn({ cmd, cwd, stdout: "inherit", stderr: "inherit" });
-  const code = await proc.exited;
-  if (code !== 0) throw new Error(`${label} 失败（退出码 ${code}）`);
-  console.log(`  完成，用时 ${((performance.now() - started) / 1000).toFixed(1)}s`);
-}
-
 async function main(): Promise<void> {
   const started = performance.now();
   const hutch = Bun.which("hutch");
   if (!hutch) throw new Error(hutchMissingMessage());
 
-  // 1. 前端构建产物：桌面窗口里就是这份
-  await run("构建前端（@de/web）", [process.execPath, "run", "--filter", "@de/web", "build"]);
+  // 1. 前端产物与 resvg wasm（与 dev 共用同一份准备逻辑）
+  await prepareDesktopResources();
 
-  // 2. resvg wasm：桌面主进程不能依赖 `with { type: "file" }`，随包拷一份
-  console.log("\n▶ 拷贝 resvg wasm");
-  const wasmSource = resolveResvgWasmSource();
-  if (!existsSync(wasmSource)) throw new Error(`找不到 resvg wasm：${wasmSource}；先跑 bun install`);
-  const wasmTarget = desktopWasmTarget();
-  mkdirSync(dirname(wasmTarget), { recursive: true });
-  cpSync(wasmSource, wasmTarget);
-  console.log(`  ${wasmSource} → ${wasmTarget}（${(statSync(wasmTarget).size / 1024).toFixed(0)}KB）`);
+  // 2. Hutch 打包（首次会拉取 Electrobun devkit / Bun 运行时，需要网络）
+  await runStep("打包桌面应用（Hutch + Electrobun）", [hutch, "electrobun", "build", "--env=stable"]);
 
-  // 3. Hutch 打包（首次会拉取 Electrobun devkit / Bun 运行时，需要网络）
-  await run("打包桌面应用（Hutch + Electrobun）", [hutch, "electrobun", "build", "--env=stable"]);
+  const artifactFolder = desktopArtifactFolder();
+  const artifacts = findSetupArtifacts(artifactFolder);
 
-  const artifacts = findSetupArtifacts(desktopArtifactFolder());
-  if (artifacts.length === 0) {
-    throw new Error(`没有生成 Setup.zip：${desktopArtifactFolder()}（检查 hutch electrobun build 的输出）`);
-  }
-
-  // 绿色目录：staging 的 Resources/*.tar.zst 正是安装器解压到安装目录的内容
-  const installedDir = portableAppDir(desktopArtifactFolder());
-  let portableZip: string | undefined;
+  // 3. 绿色目录：staging 的 Resources/*.tar.zst 正是安装器解压到安装目录的内容
   const resourcesTar = findResourcesTar(desktopStagingAppDir());
+  const appDir = portableAppDir(artifactFolder);
+  const portableZip = portableZipPath(artifactFolder);
   if (resourcesTar) {
     console.log("\n▶ 解压可运行的绿色目录");
-    const appDir = await extractPortableApp(resourcesTar, desktopArtifactFolder());
-    console.log(`  ${appDir}（${formatSize(dirSize(appDir))}，${dirSize(appDir)} 字节）`);
+    const extracted = await extractPortableApp(resourcesTar, artifactFolder);
+    console.log(`  ${extracted}（${formatSize(dirSize(extracted))}，${dirSize(extracted)} 字节）`);
 
     console.log("\n▶ 打便携 zip（免安装）");
-    portableZip = portableZipPath(desktopArtifactFolder());
-    await createPortableZip(appDir, portableZip);
+    await createPortableZip(extracted, portableZip);
     console.log(`  ${portableZip}（${formatSize(statSync(portableZip).size)}，${statSync(portableZip).size} 字节）`);
-  } else {
-    console.log(`\n⚠ ${desktopStagingAppDir()} 下没有 Resources/*.tar.zst，跳过绿色目录与便携 zip（只交付安装包）`);
+  }
+
+  // 4. 产物必须齐全：缺绿色目录或便携 zip 时按失败退出，不静默降级
+  const problems = desktopArtifactProblems({ setupZips: artifacts, resourcesTar, portableAppDir: appDir, portableZip });
+  if (problems.length > 0) {
+    throw new Error(["桌面产物不完整（构建按失败处理）：", ...problems.map((line) => `  - ${line}`)].join("\n"));
   }
 
   console.log("\n✅ 桌面产物：");
   for (const file of artifacts) console.log(`   安装包 ${file}（${formatSize(statSync(file).size)}，${statSync(file).size} 字节）`);
-  if (portableZip) console.log(`   便携包 ${portableZip}（${formatSize(statSync(portableZip).size)}，${statSync(portableZip).size} 字节）`);
-  if (existsSync(installedDir)) console.log(`   绿色目录 ${installedDir}（${formatSize(dirSize(installedDir))}，${dirSize(installedDir)} 字节）`);
+  console.log(`   便携包 ${portableZip}（${formatSize(statSync(portableZip).size)}，${statSync(portableZip).size} 字节）`);
+  console.log(`   绿色目录 ${appDir}（${formatSize(dirSize(appDir))}，${dirSize(appDir)} 字节）`);
   console.log(`   整体用时 ${((performance.now() - started) / 1000).toFixed(1)}s`);
 }
 

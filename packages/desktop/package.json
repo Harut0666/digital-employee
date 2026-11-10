@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "hutch electrobun dev --env=stable",
+    "dev": "bun ../../scripts/dev-desktop.ts",
     "build": "bun ../../scripts/build-desktop.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p ."

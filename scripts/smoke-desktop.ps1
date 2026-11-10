@@ -4,7 +4,9 @@
     2) 轮询 /api/employees 直到就绪（默认 60 秒，超时失败）
     3) 校验首页 200、前端脚本可访问、员工列表里有 weekly-report
     4) 通过 HTTP 载入公开样例 A-01 → submit → approve，轮询到 delivered，断言 docx 交付物存在且可下载
-    5) 结束应用进程树（launcher.exe 与子进程 bun.exe）、清理临时目录；失败时打印应用最后一段日志
+    5) 优雅关窗：PostMessage(WM_CLOSE) 关掉“迷你数字员工”窗口，轮询最多 15 秒断言
+       端口不再监听、launcher/bun 子进程全部退出（验证 before-quit 收尾；超时则 taskkill 兜底并失败）
+    6) 清理临时目录；失败时打印应用最后一段日志
   用法：
     powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
     powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1 -AppPath "D:\somewhere\DigitalEmployee" -Port 8899
@@ -16,6 +18,7 @@ param(
   [int]$Port = 8899,
   [int]$TimeoutSec = 60,
   [int]$TaskTimeoutSec = 120,
+  [int]$CloseTimeoutSec = 15,
   [switch]$KeepTemp
 )
 
@@ -53,6 +56,32 @@ function Resolve-Launcher([string]$path) {
   return $item.FullName
 }
 
+# ---- 小工具：端口是否在监听；本脚本启动的、位于绿色目录下的进程 ----
+function Test-PortListening([int]$targetPort) {
+  $client = $null
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $client.Connect("127.0.0.1", $targetPort)
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($client) { try { $client.Close() } catch {} }
+  }
+}
+
+function Get-AppProcesses {
+  # 只算“本脚本启动之后、路径在这个绿色目录下”的进程，不误杀用户自己的实例
+  try {
+    return @(Get-Process | Where-Object {
+        $_.Path -and $_.Path.StartsWith($appDir, [System.StringComparison]::OrdinalIgnoreCase) -and
+        $_.StartTime -ge $started.AddSeconds(-5)
+      })
+  } catch {
+    return @()
+  }
+}
+
 $launcher = Resolve-Launcher $AppPath
 $appDir = Split-Path (Split-Path $launcher -Parent) -Parent
 $scripted = Join-Path $appDir "Resources\app\samples\cases\scripts\A-01.json"
@@ -64,14 +93,7 @@ if (-not (Test-Path $scripted)) {
 }
 
 # ---- 端口必须空闲：桌面版遇到占用会往后换端口，固定端口轮询会假失败 ----
-$portBusy = $false
-try {
-  $client = New-Object System.Net.Sockets.TcpClient
-  $client.Connect("127.0.0.1", $Port)
-  $client.Close()
-  $portBusy = $true
-} catch { $portBusy = $false }
-if ($portBusy) { throw "端口 $Port 已被占用：先关掉占用它的程序，或用 -Port 换一个端口" }
+if (Test-PortListening $Port) { throw "端口 $Port 已被占用：先关掉占用它的程序，或用 -Port 换一个端口" }
 
 # ---- 临时工作区（绝不碰真实的 %APPDATA%\digital-employee）----
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("de-smoke-desktop-" + [Guid]::NewGuid().ToString("N").Substring(0, 8))
@@ -144,7 +166,7 @@ function Wait-State([string]$id, [string[]]$states) {
 
 try {
   $step = "启动桌面应用"
-  Write-Host "[1/4] 启动 $launcher"
+  Write-Host "[1/6] 启动 $launcher"
   Write-Host "      临时工作区 $workspace，端口 $Port"
   $proc = Start-Process -FilePath $launcher -WorkingDirectory (Split-Path $launcher -Parent) -PassThru -NoNewWindow `
     -RedirectStandardOutput $log -RedirectStandardError $errLog
@@ -156,9 +178,10 @@ try {
     throw "应用 $TimeoutSec 秒内没有就绪（$base/api/employees 不可用）"
   }
   $readySeconds = [math]::Round(((Get-Date) - $started).TotalSeconds, 2)
-  Write-Host "[2/4] 接口就绪，用时 ${readySeconds}s"
+  Write-Host "[2/6] 接口就绪，用时 ${readySeconds}s"
 
   $step = "校验界面与员工"
+  Write-Host "[3/6] 校验首页、前端脚本与员工列表"
   $employees = @(Invoke-RestMethod -Uri "$base/api/employees" -TimeoutSec 15)
   if (-not ($employees | Where-Object { $_.id -eq "weekly-report" })) {
     throw "员工列表里没有 weekly-report（实际 $($employees.Count) 个）"
@@ -207,7 +230,61 @@ try {
   if ($downloadSize -ne $docxSize) { throw "HTTP 下载的 docx 大小与交付物不一致（$downloadSize / $docxSize）" }
   $taskWatch.Stop()
   $taskSeconds = [math]::Round($taskWatch.Elapsed.TotalSeconds, 1)
-  Write-Host "[3/4] A-01 跑到 delivered，用时 ${taskSeconds}s：docx $([math]::Round($docxSize / 1KB, 1))KB，HTTP 下载一致"
+  Write-Host "[4/6] A-01 跑到 delivered，用时 ${taskSeconds}s：docx $([math]::Round($docxSize / 1KB, 1))KB，HTTP 下载一致"
+
+  # ---- 优雅关窗：验证 before-quit 收尾。taskkill 只能证明进程被杀，发现不了收尾回归 ----
+  $step = "优雅关窗"
+  if (-not ("DeDesktopWindow" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class DeDesktopWindow {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+}
+"@
+  }
+  $windowTitle = "迷你数字员工"
+  $hwnd = [IntPtr]::Zero
+  $findDeadline = (Get-Date).AddSeconds($CloseTimeoutSec)
+  while ((Get-Date) -lt $findDeadline -and $hwnd -eq [IntPtr]::Zero) {
+    # 第一个参数必须是真正的 NULL：PowerShell 会把 $null 转成空字符串（空类名永远匹配不到），
+    # 所以显式传 [NullString]::Value，等价于 C# 里的 FindWindow(null, "迷你数字员工")。
+    $hwnd = [DeDesktopWindow]::FindWindow([NullString]::Value, $windowTitle)
+    if ($hwnd -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 250 }
+  }
+  if ($hwnd -eq [IntPtr]::Zero) {
+    throw "找不到标题为【$windowTitle】的窗口，无法验证优雅关窗（窗口是否已提前退出？看应用日志）"
+  }
+  Write-Host "[5/6] 关窗：向【$windowTitle】发送 WM_CLOSE，轮询端口 $Port 释放与子进程退出（最多 ${CloseTimeoutSec}s）"
+  $WM_CLOSE = 0x0010
+  [void][DeDesktopWindow]::PostMessage($hwnd, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+
+  $closeWatch = [System.Diagnostics.Stopwatch]::StartNew()
+  $closeDeadline = (Get-Date).AddSeconds($CloseTimeoutSec)
+  $portFree = $false
+  $launcherExited = $false
+  $leftover = @()
+  while ((Get-Date) -lt $closeDeadline) {
+    $proc.Refresh()
+    $portFree = -not (Test-PortListening $Port)
+    $launcherExited = $proc.HasExited
+    $leftover = @(Get-AppProcesses)
+    if ($portFree -and $launcherExited -and $leftover.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not ($portFree -and $launcherExited -and $leftover.Count -eq 0)) {
+    $reason = @()
+    if (-not $portFree) { $reason += "端口 $Port 仍在监听" }
+    if (-not $launcherExited) { $reason += "launcher.exe 没有退出" }
+    if ($leftover.Count -gt 0) { $reason += "残留进程 $((($leftover | ForEach-Object { $_.ProcessName }) -join ', '))" }
+    Show-AppLog
+    throw "关窗后 ${CloseTimeoutSec} 秒内没有完成收尾（$($reason -join '；')）；已用 taskkill 兜底清理"
+  }
+  $closeSeconds = [math]::Round($closeWatch.Elapsed.TotalSeconds, 2)
+  Write-Host "[5/6] 关窗后 ${closeSeconds}s 收尾完成：端口 $Port 释放、launcher 与 bun 子进程全部退出"
 }
 catch {
   Write-Host "[失败] $step：$($_.Exception.Message)" -ForegroundColor Red
@@ -243,5 +320,5 @@ finally {
   }
 }
 
-Write-Host "[4/4] 冒烟通过：桌面版可启动、接口与界面可用、A-01 剧本跑到 delivered 且 docx 可下载"
+Write-Host "[6/6] 冒烟通过：桌面版可启动、接口与界面可用、A-01 剧本跑到 delivered 且 docx 可下载、关窗后端口与子进程释放"
 exit 0

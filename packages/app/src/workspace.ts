@@ -37,7 +37,7 @@ export interface PrepareWorkspaceOptions {
   workspaceDir: string;
   /** 资源来源（归档 / 目录） */
   source?: AppResourceSource;
-  /** 兼容旧调用：等价于 { kind: "archive", bundles } */
+  /** 兼容旧调用：等价于 `{ kind: "archive", bundles }`；生产入口（exe 与桌面）都传 `source` */
   bundles?: EmbeddedBundlePaths;
 }
 
