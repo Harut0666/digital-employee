@@ -40,3 +40,6 @@ out-go*/
 .case-ws/
 .allcase-ws/
 .parity-ws/
+
+# Office 打开文件时产生的锁文件
+~$*
