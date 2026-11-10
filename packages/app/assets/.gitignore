@@ -1,3 +1,0 @@
-// 构建期产物：*.bundle 由 scripts/gen-embedded.ts 生成，不入库（体积大且可由仓库内容重建）。
-// 只保留同名的 *.bundle.d.ts 让 tsc 在未构建时也能解析这些导入。
-*.bundle

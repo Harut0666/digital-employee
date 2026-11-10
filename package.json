@@ -2,22 +2,17 @@
   "name": "digital-employee",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "employees"],
+  "workspaces": ["packages/*"],
   "scripts": {
-    "test": "bun test",
+    "test": "bun test packages/web",
     "typecheck": "bun run --filter '*' typecheck",
-    "dev:server": "bun run --filter @de/server dev",
     "dev:web": "bun run --filter @de/web dev",
-    "gen:assets": "bun scripts/gen-embedded.ts",
-    "build:exe": "bun scripts/build-exe.ts",
-    "build:desktop": "bun scripts/build-desktop.ts",
-    "dev:desktop": "bun scripts/dev-desktop.ts",
-    "smoke:exe": "powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1",
-    "smoke:desktop": "powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1"
+    "build:web": "bun run --filter @de/web build",
+    "build:exe": "powershell -ExecutionPolicy Bypass -File scripts/build-exe.ps1",
+    "smoke:exe": "powershell -ExecutionPolicy Bypass -File scripts/smoke-exe.ps1"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "ajv": "^8.20.0",
     "typescript": "^5.9.0"
   }
 }

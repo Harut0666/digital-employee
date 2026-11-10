@@ -1,11 +1,10 @@
-// 真实数据层：Eden treaty 对接 T3 的 Elysia 服务，SSE 订阅任务事件。
+// 真实数据层：Eden treaty 对接本机 Go 服务（internal/server），SSE 订阅任务事件。
 //
-// treaty<App> 的路由类型很深（multipart 联合体、带 `{ id }` 的动态路由），这里先把 client 收窄成下面的
-// ApiShape，路由和请求体按 packages/server/src/index.ts 的实际路由书写；返回值仍然由 Eden 解包。
+// 后端是 Go，没有可导入的路由类型，所以 treaty 不带类型参数，client 直接收窄成下面的 ApiShape，
+// 路由和请求体按 internal/server 的实际路由书写；返回值仍然由 Eden 解包。
 
 import { treaty } from "@elysiajs/eden";
 import type { TaskEvent, TaskEventType } from "@de/core/contract";
-import type { App } from "@de/server";
 import { createConfigApi } from "./config";
 import { createKnowledgeApi } from "./knowledge";
 import { createSessionApi } from "./sessions";
@@ -62,7 +61,7 @@ function unwrap<T>(res: Awaited<Reply<T>>): T {
 }
 
 export function createEdenApi(getRole: () => UiRole, origin: string = window.location.origin): WebApi {
-  const client = treaty<App>(origin, { headers: () => ({ "x-role": getRole() }) }) as unknown as ApiShape;
+  const client = treaty<any>(origin, { headers: () => ({ "x-role": getRole() }) }) as unknown as ApiShape;
   const task = (id: string) => client.api.tasks({ id });
   const configApi = createConfigApi(origin);
 

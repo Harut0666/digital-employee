@@ -1,7 +1,6 @@
 // 设置页的数据层：真实实现走 Eden，VITE_MOCK=1 时用内存模拟。
 // 页面只依赖这里的接口；共享的 WebApi 不动，避免 T10/T11/T12 并行改同一个类型文件。
 import { treaty } from "@elysiajs/eden";
-import type { App } from "@de/server";
 import {
   DEFAULT_DIAGNOSTICS_SETTINGS,
   DEFAULT_EXECUTION_SETTINGS,
@@ -149,7 +148,7 @@ interface ConnectionRoute {
   models: { post(body: unknown): Reply<FetchModelsResult> };
 }
 
-/** Eden 的路由类型很深，这里按 packages/server/src/routes/settings.ts 的实际路由收窄。 */
+/** Eden 的路由类型很深，这里按 internal/server 的设置路由收窄。 */
 interface SettingsShape {
   api: {
     settings: {
@@ -206,7 +205,7 @@ function unwrap<T>(res: Awaited<Reply<T>>): T {
 
 function createEdenSettingsApi(origin: string, getRole?: () => DefaultRole): SettingsApi {
   // 设置请求带上当前界面角色：服务端审计要记录“谁”做的危险操作（缺省时回落到默认角色）
-  const client = treaty<App>(origin, {
+  const client = treaty<any>(origin, {
     headers: getRole ? () => ({ "x-role": getRole() }) : {},
   }) as unknown as SettingsShape;
   const settings = client.api.settings;

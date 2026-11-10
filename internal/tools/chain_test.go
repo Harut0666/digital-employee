@@ -3,7 +3,7 @@ package tools
 // 链式单测：用 samples/scenario-a 真实数据跑 validate → load_sales → compute_metrics
 // → parse_minutes → detect_contradictions，并与 TS 版产出的 golden（testdata/）逐字段对拍。
 //
-// 金额单位：分；比例：小数（0.123 = 12.3%）。golden 由 feat/electrobun-shell 上的
+// 金额单位：分；比例：小数（0.123 = 12.3%）。golden 由 git 标签 legacy-ts-stack 里的
 // TypeScript 版在同一样例数据上跑出，是「数据一致性」的基准。
 
 import (

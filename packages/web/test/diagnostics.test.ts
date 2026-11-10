@@ -2,15 +2,36 @@
 // 断言外部可观察行为：复制出去的文本必须带版本/运行时/工作区路径与脱敏快照，
 // 且任何情况下都不出现明文 API Key（Spec 0004「密钥不落响应」）。
 import { describe, expect, test } from "bun:test";
-import { normalizeSettingsDocument, settingsDocumentView, type AppSettingsView, type DiagnosticsInfo } from "@de/core";
+import {
+  DEFAULT_DIAGNOSTICS_SETTINGS,
+  DEFAULT_EXECUTION_SETTINGS,
+  DEFAULT_PERMISSION_SETTINGS,
+  DEFAULT_UI_SETTINGS,
+  SETTINGS_VERSION,
+  type AppSettingsView,
+  type DiagnosticsInfo,
+} from "@de/core/contract";
 import { formatDiagnosticsText, redactSecrets } from "../src/view/diagnostics";
 
 const WORKSPACE = "C:\\Users\\demo\\AppData\\Roaming\\digital-employee";
 
+/** 服务端返回的脱敏视图：连接只带末 4 位，不含明文（后端已不在前端包里，这里按契约直接构造）。 */
 function settingsView(extra: Record<string, unknown> = {}): AppSettingsView {
-  const view = settingsDocumentView(normalizeSettingsDocument({ connections: [
-    { name: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "sk-file-secret-1234", models: ["deepseek-chat"] },
-  ] }), {});
+  const view: AppSettingsView = {
+    ok: true,
+    version: SETTINGS_VERSION,
+    revision: 1,
+    ui: { ...DEFAULT_UI_SETTINGS },
+    execution: { ...DEFAULT_EXECUTION_SETTINGS },
+    diagnostics: { ...DEFAULT_DIAGNOSTICS_SETTINGS },
+    permissions: { ...DEFAULT_PERMISSION_SETTINGS },
+    connections: [
+      { name: "deepseek", baseUrl: "https://api.deepseek.com", models: ["deepseek-chat"], apiKeyLast4: "1234", hasKey: true, source: "file", isDefault: true },
+    ],
+    lastModel: null,
+    demo: { toolFaults: {}, corruptTraceability: false, crashOnNextStep: false },
+    extra: {},
+  };
   return { ...view, ...extra };
 }
 

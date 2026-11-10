@@ -1,6 +1,6 @@
 # A-01 golden（TS 版对拍基准）
 
-这份基准由 TypeScript 版（`feat/electrobun-shell`）跑 A-01 生成，Go 版必须与它对齐，
+这份基准由 TypeScript 版（git 标签 `legacy-ts-stack`）跑 A-01 生成，Go 版必须与它对齐，
 验收脚本是 `scripts/parity-a01.sh`：事件流先经 `scripts/normalize-events.py` 归一化，再逐字段 diff。
 
 ## configHash 变更记录

@@ -1,5 +1,5 @@
-// 工具契约（docs/design.md §7）。工具服务器（@de/tools）实现，任务引擎（@de/core）通过 ToolClient 调用。
-// 所有工具的结构化结果放在 MCP 的 structuredContent 中；失败时 isError=true，content[0].text 为中文错误说明。
+// 工具契约（docs/design.md §7）。Go 后端的工具注册表（internal/tools）实现，任务引擎（internal/engine）通过 ToolClient 调用。
+// 所有工具的结构化结果放在 structuredContent 中；失败时 isError=true，content[0].text 为中文错误说明。
 
 import type { IsoWeek, WeeklyFacts } from "./facts";
 import type { PauseReason } from "./states";

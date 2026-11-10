@@ -11,12 +11,6 @@ out/
 .scratch/
 .playwright-cli/
 .worktrees/
-# 桌面构建（Hutch / Electrobun）：状态目录、构建目录、产物与构建期拷贝的 wasm 都不入库
-.hutch/
-.cottontail-tmp/
-build/
-artifacts/
-packages/desktop/assets/resvg.wasm
 
 # 本机工具缓存（go build cache、临时目录）与权限修复留下的恢复记录
 .gocache/

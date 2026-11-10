@@ -44,8 +44,7 @@ digital-employee/
 │   ├── server/  session/    REST + SSE、角色权限、会话与前台 Agent
 │   ├── app/  desktop/  cli/ 应用目录与工作区准备、原生窗口、命令行
 ├── packages/web/           React 前端（会话、步骤行与轨迹、发起、审核、配置、设置）
-├── packages/core/          前端契约类型（src/contract，与 internal/contract 逐字段一致）；其余是旧版 TS 引擎
-├── packages/{tools,server,cli,app,desktop}/  TypeScript 旧后端（冻结，仅作参考与兜底）
+├── packages/core/          前端契约类型（src/contract，与 internal/contract 逐字段一致）
 ├── employees/
 │   ├── weekly-report/      场景 A 员工配置（提示词、输出 Schema、流程与质检配置）
 │   ├── literature-brief/   场景 B 技术文献研判员工（配置 + library/ 专利库与论文库 + routes.yaml 路线词表）
@@ -256,25 +255,6 @@ $env:VITE_API_TARGET='http://localhost:8787'; bun run dev:web   # http://localho
 
 端口用 `DE_PORT` / `PORT`；不自动开浏览器用 `DE_NO_OPEN=1`。
 
-### 6. 旧版桌面壳（TypeScript，已冻结，仅比赛兜底）
-
-这是 Spec 0003 的 **Electrobun + Hutch** 方案，Go 主线已用它取代（[ADR-0004](docs/adr/0004-go-mainline.md)）：
-
-- **状态**：冻结，只保留作比赛交付兜底；**不包含** Spec 0005/0006/0007 的功能（会话与侧栏、会话模型、目录材料、交付物写目录、步骤行、权限模式、`run_employee`、一个会话多个任务等），不要用它验收。旧 TypeScript 包里还保留着 DeepSeek 默认连接和 `DEEPSEEK_API_KEY` 覆盖，Go 主线已经去掉。
-- **构建**（仅构建机，使用者不需要）：需要 Hutch，首次构建要联网拉 Electrobun / Bun 运行时：
-
-```powershell
-# 一次性安装 Hutch（PowerShell）
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm https://hutch.blackboard.sh/hutch/install.ps1)))"
-$env:HUTCH_HOME = "D:\hutch-home"   # 中文用户名/非 ASCII 用户目录必须设置，否则报 AccessDenied
-$env:PATH = "$env:USERPROFILE\.hutch\bin;$env:PATH"
-bun run build:desktop
-powershell -ExecutionPolicy Bypass -File scripts/smoke-desktop.ps1
-```
-
-- **产物**：`dist/desktop/` 下的安装包 `win-x64-DigitalEmployee-Setup.zip`、便携包 `win-x64-DigitalEmployee-portable.zip` 与绿色目录 `DigitalEmployee/`。
-- **实测**（Windows 11 x64，2026-11-05）：安装包 51.1MB、便携包 62.3MB、安装后 142.5MB；冷启动到 `/api/employees` 约 0.61–1.08 秒；剧本模式 A-01 约 3.3 秒。详见[桌面版结果文档](docs/results/electrobun-desktop.md)。
-
 ## 常用命令
 
 | 命令 | 说明 |
@@ -477,7 +457,7 @@ employees/weekly-report/
 - `bun test packages/web` 覆盖前端纯函数与视图（步骤行推导、侧栏分组、模型下拉、权限模式菜单与权限确认卡、员工表单卡、多任务会话等）；`bun run typecheck` 检查类型。测试项数以命令输出为准。
 - `samples/cases/` 是 43 条自测用例（6 条公开 A 系列 + 24 条 S 系列 + 6 条 T 系列 + 7 条场景 B 的 B 系列）的描述；`samples/cases/scripts/` 是对应的剧本式假模型输出（B 系列的剧本由 `internal/literature/scriptgen_test.go` 按真实核对与统计结果生成）。剧本模式 **43/43** 通过，A 系列另做过真实模型验证，结果见 [`docs/results/`](docs/results/)。
 - `samples/scenario-a/` 是原始数据：销售明细、W42–W44 周会纪要、格式要求、数据说明。公开样例会释放到**应用目录**的 `samples/`（不在工作区目录里）。
-- A-01 与冻结的 TS 版做了逐事件对拍（`scripts/parity-a01.sh`），归一化后 42 条事件逐字段一致。
+- A-01 当年与 TypeScript 版做过逐事件对拍（`scripts/parity-a01.sh`，基准在 `golden-a01/`），归一化后 42 条事件逐字段一致；TS 版已移除，保留在 git 标签 `legacy-ts-stack`。
 
 ## 文档
 
@@ -490,7 +470,7 @@ employees/weekly-report/
 - [规格 0007 通用对话 Agent、权限模式、员工当工具](docs/specs/0007-general-agent-employees-as-tools.md)、[真实模型手动测试指南（0007）](docs/manual-test-0007.md)
 - [规格 0006 工作区、会话模型、前台 Agent 循环](docs/specs/0006-workspace-folder-and-agent-loop.md)（部分已被 0007 取代）、[0006 手动测试指南](docs/manual-test-0006.md)（历史记录，其中的“确认员工”流程和预置 DeepSeek 连接已过时）
 - [Go 迁移验收（架构、对拍、体积）](docs/go-migration/architecture-and-parity.md)、[Go 版使用说明](docs/go-migration/README.md)
-- [规格 0001](docs/specs/0001-skeleton.md)、[规格 0003 桌面壳](docs/specs/0003-electrobun-desktop-shell.md) 与 [tickets](docs/specs/tickets)
+- 历史规格：[规格 0001](docs/specs/0001-skeleton.md) 与 [tickets](docs/specs/tickets)
 - [用例文件格式](samples/cases/README.md)
 
 ## 现状
@@ -510,7 +490,7 @@ employees/weekly-report/
   - 旧数据迁移只做一次（标记文件 `<应用目录>/migrated.json`，可重复运行、结果不变）：原默认工作区 `%APPDATA%\digital-employee` 的设置、员工、知识库，以及原工作区的任务和会话会复制进应用目录并归到“我的工作区”；**原目录只读不删**。
   - 单目录模式（`DE_WORKSPACE` 或命令行用例）布局和旧版一致：这个目录同时是应用目录和唯一工作区，不读写 `workspaces.json`。
   - 真实供应商的流式增量（文字增量、工具调用参数分片、`[DONE]`）只用本地假模型服务覆盖过，没有对所有 OpenAI 兼容服务逐一验证；接新供应商时先按手动测试指南跑一遍。
-  - 旧 TypeScript 包（`packages/{core,server,app,…}`，已冻结）里还保留着 DeepSeek 默认值和 `DEEPSEEK_API_KEY` 覆盖；Go 主线已去掉，TS 包不再同步。
+  - 旧 TypeScript 后端和 Electrobun 桌面壳已从仓库移除（保留在 git 标签 `legacy-ts-stack`）；那一版里的 DeepSeek 默认值和 `DEEPSEEK_API_KEY` 覆盖，Go 主线早已去掉。
   - 权限模式、`run_employee`、员工表单卡的真实模型行为（Agent 是否总能正确预填字段、推断统计周期）只用剧本模型和假模型服务覆盖过，真实模型要按 [0007 手动测试指南](docs/manual-test-0007.md) 跑一遍。
   - exe 未签名，首次运行可能被 SmartScreen 拦一次（点“更多信息 → 仍要运行”）。
   - 原生窗口只在 Windows 11 x64 + 系统 WebView2 上验证过；Windows 10 需要先装 WebView2 Runtime，否则用 `--browser`。GUI 子系统带来的限制：从 cmd / PowerShell 运行子命令时终端不会等它结束（见「启动软件」里的命令行用法与限制）。

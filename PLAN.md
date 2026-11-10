@@ -1,7 +1,7 @@
 # Go 迁移（MyGo）· 工程约定
 
 目标：用 Go 重写后端，外壳换成 MyGo；**HTTP + SSE 契约不变，React 前端零改动**，
-CLI 与自检用例保留。TypeScript 版本在 `feat/electrobun-shell` 上原样保留，作为比赛交付兜底。
+CLI 与自检用例保留。TypeScript 版本已移除，保留在 git 标签 `legacy-ts-stack`。
 
 本工作树：`digital-employee/.worktrees/go`，分支 `feat/go-migration`。
 
@@ -72,5 +72,5 @@ go run ./cmd/digital-employee run-case samples/cases/A-01.json --scripted sample
 ## 不做的事
 
 - 不改前端业务代码与视觉；
-- 不删除 TS 包（作为参照与兜底），直到 Go 版通过全部验收；
+- ~~不删除 TS 包（作为参照与兜底），直到 Go 版通过全部验收~~（已完成：TS 包已移除，保留在 git 标签 `legacy-ts-stack`）；
 - 不引入第二个事件模型：事件仍然是 JSONL + SSE，Go 侧只是生产者。

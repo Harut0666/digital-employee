@@ -107,8 +107,8 @@ export interface ToolClient {
 }
 
 /**
- * 模型提供者。具体形状由 @de/core 内部定义（封装 pi-ai 的 Model 与 pi-agent-core 的 streamFn），
- * 外部只通过工厂创建：createModelProvider(settings) 用真实模型，createScriptedModelProvider(script) 用剧本式假模型。
+ * 模型提供者。具体形状由 Go 后端（internal/agent）内部定义，
+ * 外部只通过工厂创建：真实模型或剧本式假模型（DE_SCRIPTED）。
  */
 export interface ModelProvider {
   readonly kind: "real" | "scripted";
@@ -189,5 +189,5 @@ export interface EngineDeps {
   exitOnCrash?: boolean;
 }
 
-/** @de/core 提供：export function createTaskEngine(deps: EngineDeps): TaskEngine */
+/** Go 后端（internal/engine）提供的任务引擎工厂形状 */
 export type CreateTaskEngine = (deps: EngineDeps) => TaskEngine;

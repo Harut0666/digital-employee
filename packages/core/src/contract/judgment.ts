@@ -1,4 +1,4 @@
-// @de/core 内部的两块拆分接口：编排器（engine）调用判断步骤执行器和质检引擎。
+// 后端引擎内部的两块拆分接口：编排器（engine）调用判断步骤执行器和质检引擎。
 // 二者分属不同 ticket 并行开发，在这里约定边界。
 
 import type { JudgeStepConfig, QcConfig } from "./employee-config";

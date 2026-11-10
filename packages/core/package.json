@@ -3,21 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "description": "前端用的契约类型（与 internal/contract 逐字段一致）。后端是 Go，这里只保留类型与少量校验。",
   "exports": {
-    ".": "./src/index.ts",
     "./contract": "./src/contract/index.ts"
   },
   "scripts": {
-    "test": "bun test",
     "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
-    "@mariozechner/pi-agent-core": "0.73.1",
-    "@mariozechner/pi-ai": "0.73.1",
-    "@modelcontextprotocol/sdk": "^1.32.2",
-    "ajv": "^8.20.0",
-    "typebox": "^1.4.3",
-    "yaml": "^2.9.1",
     "zod": "^4.6.7"
   }
 }
