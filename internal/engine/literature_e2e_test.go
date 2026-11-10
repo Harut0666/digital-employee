@@ -17,6 +17,12 @@ import (
 
 func newLiteratureEngine(t *testing.T, scriptName string) *engine.Engine {
 	t.Helper()
+	eng, _ := newLiteratureEngineWithRegistry(t, scriptName)
+	return eng
+}
+
+func newLiteratureEngineWithRegistry(t *testing.T, scriptName string) (*engine.Engine, *tools.Registry) {
+	t.Helper()
 	root := repoRoot(t)
 	script := agent.ModelScript{}
 	if err := json.Unmarshal(readJSON(t, filepath.Join(root, "samples", "cases", "scripts", scriptName+".json")), &script); err != nil {
@@ -33,7 +39,7 @@ func newLiteratureEngine(t *testing.T, scriptName string) *engine.Engine {
 	if err != nil {
 		t.Fatalf("创建引擎失败：%v", err)
 	}
-	return eng
+	return eng, registry
 }
 
 func createLiteratureTask(t *testing.T, eng *engine.Engine, direction, listFile string) *contract.TaskSnapshot {
@@ -186,4 +192,57 @@ func TestLiteratureSmallSampleContinues(t *testing.T) {
 	if snapshot.Form["allowSmallSample"] != true {
 		t.Errorf("选择继续后表单应带 allowSmallSample：%+v", snapshot.Form)
 	}
+}
+
+// 赛题「场景 2」：执行中检索工具连续失败 → 自动重试后仍失败 → 任务暂停并写明已完成几步 →
+// 发起人排除故障后点重试 → 从失败的步骤继续（之前的步骤不重跑）→ 照常交付。
+func TestLiteratureToolFailurePausesThenRetryResumes(t *testing.T) {
+	eng, registry := newLiteratureEngineWithRegistry(t, "B-01")
+	task := createLiteratureTask(t, eng, "固态电池电解质", "专利清单_固态电池电解质.csv")
+
+	setFault := func(tools map[string]any) {
+		if res, err := registry.Call(contract.ToolAdminSetFaults, map[string]any{"tools": tools}); err != nil || !res.OK {
+			t.Fatalf("设置故障失败：%v %+v", err, res)
+		}
+	}
+	setFault(map[string]any{contract.ToolSearchLibrary: "error"})
+
+	snapshot := command(t, eng, task.ID, contract.TaskCommand{Type: contract.CmdSubmit}, contract.RoleInitiator)
+	if snapshot.State != contract.StateAwaitingOperator || snapshot.Pause == nil || snapshot.Pause.Code != contract.PauseToolFailed {
+		t.Fatalf("检索工具连续失败应暂停为 tool_failed：%s %+v", snapshot.State, snapshot.Pause)
+	}
+	if !strings.Contains(snapshot.Pause.Message, "检索佐证论文") || !strings.Contains(snapshot.Pause.Message, "已完成 6/10 步") {
+		t.Errorf("暂停说明应点出失败的步骤并写明已完成几步：%s", snapshot.Pause.Message)
+	}
+	if len(snapshot.Deliverables) != 0 {
+		t.Errorf("工具故障时不得交付或编造结果：%+v", snapshot.Deliverables)
+	}
+	before, _ := eng.Events(task.ID, 0)
+	screenRuns := countStepStarts(before, "screen_list")
+	if screenRuns != 1 {
+		t.Fatalf("故障前清单核对应只跑一次：%d", screenRuns)
+	}
+
+	setFault(map[string]any{})
+	snapshot = command(t, eng, task.ID, contract.TaskCommand{Type: contract.CmdRetry}, contract.RoleOperator)
+	if snapshot.State != contract.StateAwaitingReview {
+		events, _ := eng.Events(task.ID, 0)
+		t.Fatalf("重试后应到待审核：%s %+v；事件尾部：%s", snapshot.State, snapshot.Pause, tailEventTypes(events, 6))
+	}
+	after, _ := eng.Events(task.ID, 0)
+	for _, id := range []string{"screen_list", "judge_relevance", "compute_stats"} {
+		if n := countStepStarts(after, id); n != 1 {
+			t.Errorf("重试应从失败的步骤继续，已完成的 %s 不得重跑：跑了 %d 次", id, n)
+		}
+	}
+}
+
+func countStepStarts(events []contract.TaskEvent, stepID string) int {
+	n := 0
+	for _, event := range events {
+		if event.Type == contract.EventStepStarted && event.StepID == stepID {
+			n++
+		}
+	}
+	return n
 }
