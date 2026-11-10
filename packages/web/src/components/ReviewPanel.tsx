@@ -7,11 +7,12 @@ import { deriveReviewPanel } from "../view/review-panel";
 import { actionPlan } from "../view/permissions";
 import { DocxPreview } from "./DocxPreview";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { PanelClose } from "./PanelClose";
 import { Handoff, ReturnForm, TaskActionBar, type CardActions } from "./Cards";
 import { useLinkProps } from "./Preferences";
 import { StateBlock } from "./StateBlock";
 
-export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | undefined; actions: CardActions }) {
+export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnapshot | undefined; actions: CardActions; onClose?: () => void }) {
   const [selected, setSelected] = useState<number>();
   const [returning, setReturning] = useState(false);
   const linkProps = useLinkProps();
@@ -29,6 +30,8 @@ export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | un
       <div className="review">
         <div className="review-head">
           <span className="review-label">交付物</span>
+          <span className="review-name" />
+          {onClose && <PanelClose onClose={onClose} />}
         </div>
         <StateBlock icon={<InboxOutlined />} title="还没有交付物" description="员工完成后，交付物、检验记录和审核操作会显示在这里。" />
       </div>
@@ -58,6 +61,7 @@ export function ReviewPanel({ snapshot, actions }: { snapshot: TaskSnapshot | un
         <Tooltip title={docUrl ? "下载" : "模拟模式没有文件"}>
           <Button type="text" icon={<DownloadOutlined />} href={docUrl} disabled={!docUrl} {...linkProps(docUrl)} />
         </Tooltip>
+        {onClose && <PanelClose onClose={onClose} />}
       </div>
 
       <div className="review-doc">

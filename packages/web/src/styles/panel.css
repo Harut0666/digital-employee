@@ -8,8 +8,18 @@
   border: none;
 }
 .panel-title {
-  margin: 0 0 10px;
+  margin: 0;
   font-size: calc(var(--font-size) + 4px);
+}
+.panel-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 10px;
+}
+.panel-close {
+  flex: none;
+  color: var(--muted);
 }
 /* 交付物右栏：本身不滚动，文档区单独滚动，审核区固定在底部 */
 .panel.panel-review {
