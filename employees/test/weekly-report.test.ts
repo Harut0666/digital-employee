@@ -446,9 +446,9 @@ describe("SKILL.md 与提示词", () => {
     }
   });
 
-  test("前台 Agent 人设：不能推进流程，只填表单草稿、回答任务问题", () => {
+  test("前台 Agent 人设：不能推进流程，只准备员工表单、回答任务问题", () => {
     const text = read("frontdesk.md");
-    for (const phrase of ["前台 Agent", "表单草稿", "不能", "流程卡片", "按钮"]) expect(text).toContain(phrase);
+    for (const phrase of ["前台 Agent", "员工表单", "run_employee", "不能", "流程卡片", "按钮"]) expect(text).toContain(phrase);
   });
 
   // 真实模型回归（2026-10-29 冒烟）：模型把华南/深圳门店判成“原因待核实”，

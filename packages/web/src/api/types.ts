@@ -158,6 +158,8 @@ export interface RecordItem {
   statusDot: StatusDot;
   /** 任务所在的会话；直接从任务接口建的任务没有 */
   sessionId?: string;
+  /** 这是会话里的第几次运行（从 1 开始）；同一个会话先后运行的任务各占一行。没有会话的任务没有 */
+  runNumber?: number;
   workspaceId: string;
   workspaceName: string;
   updatedAt: string;
@@ -180,7 +182,64 @@ export interface SessionEmployee {
   description: string;
 }
 
-export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file";
+export type SessionCardType = "employee_confirm" | "form" | "pause" | "qc" | "review" | "knowledge_filing" | "folder_file" | "permission" | "employee_form" | "question";
+
+/** Agent 的待办清单（todo_write）里的一项 */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+export interface TodoItem {
+  content: string;
+  status: TodoStatus;
+}
+
+/** ask_user_question 的一个选项、一道问题、一道问题的答案 */
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+export interface QuestionItem {
+  id: string;
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiSelect?: boolean;
+}
+export interface QuestionAnswer {
+  id: string;
+  selected: string[];
+  custom?: string;
+}
+
+/** 员工表单上 Agent 给的一份材料：会话里已有的、工作区目录里的文件（确认开工时复制）、公开样例文件（确认开工时复制） */
+export interface FormMaterial {
+  name: string;
+  size?: number;
+  source: "attachment" | "folder" | "sample";
+  /** source=folder：目录文件在工作区目录里的相对路径 */
+  path?: string;
+}
+
+/** 开工清单一项的定义（employees/<id>/checklist.yaml），员工表单卡据此在人改字段、补材料时实时判定 */
+export interface ChecklistDef {
+  id: string;
+  label: string;
+  required: boolean;
+  source: "material" | "upload" | "field";
+  accept?: string[];
+  field?: string;
+  skipField?: string;
+  skipLabel?: string;
+}
+
+/** 人在员工表单卡上的答复（POST /employee-forms/{requestId}） */
+export type EmployeeFormAnswer =
+  | { decision: "confirm"; form: Record<string, unknown>; attachments: string[]; skipped: string[] }
+  | { decision: "reject" };
+
+/** 权限模式（ADR-0007 增补二）：仅可查看、仅限工作区（新会话默认）、完全权限。后端也认旧五档的值，但只输出这三个 */
+export type PermissionMode = "read_only" | "workspace" | "full";
+
+/** 人对权限确认卡的答复 */
+export type PermissionDecision = "allow_once" | "always_allow" | "deny";
 
 /** 流程卡片：内容和按钮都由后端填写，字段按 type 取用。 */
 export interface SessionCard {
@@ -215,6 +274,43 @@ export interface SessionCard {
   name?: string;
   size?: number;
   confirmed?: boolean;
+  // permission：答复时用的编号、动作类别（write_file / run_employee / use_folder_file）和说法、Agent 调的工具、
+  // 动作的对象和一句话说明；pending 还在等人答复，之后 decision 是 allow_once / always_allow / deny / cancelled
+  requestId?: string;
+  action?: string;
+  actionLabel?: string;
+  tool?: string;
+  object?: string;
+  detail?: string;
+  pending?: boolean;
+  decision?: string;
+  /** 等答复时的三个按钮（由后端配好）；答复、取消之后没有 */
+  choices?: PermissionChoice[];
+  // employee_form（T49）：employee 是员工 id，draft 是 Agent 预填的字段，prefilled 是其中 Agent 预填的字段名，
+  // materials 是 Agent 给的材料及来源，checklist 是开工清单定义；pending 在等人，之后 decision 是 confirmed / rejected / cancelled；
+  // standalone 是载入公开样例弹出的（不是 Agent 弹的）
+  employeeName?: string;
+  prefilled?: string[];
+  materials?: FormMaterial[];
+  checklist?: ChecklistDef[];
+  /** 弹出卡片时会话里已有的材料：之后新出现的是人在卡片上补传的 */
+  baseline?: string[];
+  standalone?: boolean;
+  // shell 确认卡（permission 卡的变体）：将要运行的命令（原样）、工作目录（真实路径）、醒目的风险提示（尽力而为，不是安全边界）；
+  // 命令的 description 在 detail 里
+  command?: string;
+  workdir?: string;
+  warnings?: string[];
+  // question（ask_user_question）：问题和（答复后的）答案；pending 在等人，decision 是 answered / cancelled
+  questions?: QuestionItem[];
+  answers?: QuestionAnswer[];
+}
+
+/** 权限确认卡上的一个答复按钮：decision 就是答复时提交的决定 */
+export interface PermissionChoice {
+  decision: PermissionDecision;
+  label: string;
+  style: "primary" | "default" | "danger";
 }
 
 /** 工作区目录里的一项（@ 选择和 Agent 的 list_files 用）；路径相对工作区目录，用 / 分隔 */
@@ -231,7 +327,17 @@ export interface FolderListing {
   truncated: boolean;
 }
 
-export type SessionMessageKind = "user" | "assistant" | "notice" | "card" | "tool_called" | "tool_denied" | "model_failed";
+export type SessionMessageKind =
+  | "user"
+  | "assistant"
+  | "notice"
+  | "card"
+  | "tool_called"
+  | "tool_denied"
+  | "model_failed"
+  | "permission_mode_set"
+  | "permission_allowed"
+  | "todo_written";
 
 export interface SessionMessage {
   id: string;
@@ -240,15 +346,21 @@ export interface SessionMessage {
   kind: SessionMessageKind;
   role?: UiRole;
   text?: string;
+  /** 前台 Agent 的一轮编号：这一轮写下的消息都带着它（用户消息、旧任务推导的消息没有） */
+  turn?: number;
   card?: SessionCard;
   tool?: string;
   args?: Record<string, unknown>;
   result?: unknown;
   reason?: string;
-  /** 这条消息是第几轮回复里写下的（用户消息没有）；和会话事件流里的 turn 对得上 */
-  turn?: number;
   /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
   model?: ModelRef;
+  /** permission_mode_set：选的权限模式 */
+  mode?: PermissionMode;
+  /** todo_written：Agent 整表替换后的待办清单 */
+  todos?: TodoItem[];
+  /** tool_denied：为 "deny" 表示是发起人自己拒绝的（权限确认卡上的“拒绝”、员工表单上的“不是这个员工”），不是程序按边界或模式拒绝的 */
+  decision?: string;
 }
 
 /** 开工清单的一项：状态只由后端按上传的文件和表单判定 */
@@ -290,7 +402,10 @@ export interface SessionSummary {
   readOnly: boolean;
   title: string;
   employee?: string;
+  /** 当前任务：会话里最新的一个（状态、状态点都按它算） */
   taskId?: string;
+  /** 会话里按开工顺序运行过的全部任务；旧后端不给时只有 taskId 这一个 */
+  taskIds?: string[];
   draft?: Record<string, unknown>;
   attachments: SessionAttachment[];
   createdAt: string;
@@ -303,6 +418,10 @@ export interface SessionSummary {
   model?: ModelRef;
   /** 会话里明确选过模型 */
   modelSelected?: boolean;
+  /** 权限模式（ADR-0007 增补二）；新会话总是 workspace */
+  permissionMode?: PermissionMode;
+  /** Agent 最新的待办清单（todo_write）；没写过时为空 */
+  todos?: TodoItem[];
   /** 状态点（后端按读的人的角色算）：等你处理 / 运行中 / 已完成未读 / 空闲 */
   statusDot: StatusDot;
   /** 任务交付或终止之后还没打开过 */
@@ -407,7 +526,8 @@ export interface SessionAgentEvent {
   isErr?: boolean;
   error?: string;
   /** message：写进会话的一条消息（卡片随它一起到） */
-  msg?: SessionMessage;
+  /** type 为 message 时：写进会话日志的那条消息（服务端字段名是 message） */
+  message?: SessionMessage;
 }
 
 /** 侧栏在模拟模式下额外要的两项：全部会话和记录（真实模式没有，见 api/index.ts）。 */

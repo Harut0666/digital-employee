@@ -26,5 +26,5 @@ export function isFrontdeskReadonlyTool(value: unknown): value is FrontdeskReado
   return typeof value === "string" && FRONTDESK_READONLY_TOOL_NAMES.includes(value as FrontdeskReadonlyToolName);
 }
 
-/** 前台 Agent 固定具备的草稿类工具，不能通过配置关闭。 */
-export const FRONTDESK_FIXED_TOOLS = ["fill_form_draft", "propose_card"] as const;
+/** 前台 Agent 固定具备的工具（运行员工），不能通过配置关闭。 */
+export const FRONTDESK_FIXED_TOOLS = ["run_employee"] as const;

@@ -22,6 +22,24 @@ const (
 	ToolReadFile = "read_file"
 )
 
+// 前台 Agent 的文件写入工具（T48）：只在会话里开放，不属于员工工作流的工具白名单（不在 ToolNames 里）。
+const (
+	// ToolWriteFile 整文件写入工作区目录：新建或覆盖
+	ToolWriteFile = "write_file"
+	// ToolEditFile 把文件里恰好出现一次的一段原文换成新文本
+	ToolEditFile = "edit_file"
+	// ToolFindFiles 按文件名找工作区目录里的文件（glob）
+	ToolFindFiles = "find_files"
+	// ToolSearchContent 按内容搜工作区目录里的文本文件（正则）
+	ToolSearchContent = "search_content"
+	// ToolTodoWrite 整表替换的待办清单：Agent 自己的计划状态
+	ToolTodoWrite = "todo_write"
+	// ToolAskUserQuestion 向发起人提结构化问题，等人选完再继续
+	ToolAskUserQuestion = "ask_user_question"
+	// ToolShell 命令行工具（Windows 上是 pwsh）：没有沙箱，见 ADR-0007 增补
+	ToolShell = "shell"
+)
+
 // ToolNames 全部工具名。
 var ToolNames = []string{
 	ToolValidateSubmission, ToolLoadSales, ToolComputeMetrics, ToolDetectContradictions,

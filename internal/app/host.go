@@ -22,6 +22,9 @@ import (
 	"digital-employee/internal/settings"
 )
 
+// pickFolderPath 添加工作区的“浏览…”接口，由服务端处理（见 internal/server/pickfolder.go）。
+const pickFolderPath = "/api/workspaces/pick-folder"
+
 // workspaceHost 应用宿主：一个服务端、一份工作区登记。
 type workspaceHost struct {
 	options    Options
@@ -54,7 +57,8 @@ type workspaceRuntime struct {
 // ServeHTTP /api/workspaces 的 POST 和 PATCH、DELETE 由宿主处理（登记），其余（含 GET 工作区列表和会话摘要）转给服务端。
 func (h *workspaceHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimRight(r.URL.Path, "/")
-	if r.Method != http.MethodOptions && r.Method != http.MethodGet && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
+	// 选择文件夹对话框（POST /api/workspaces/pick-folder）不是登记的变更，由服务端弹窗
+	if r.Method != http.MethodOptions && r.Method != http.MethodGet && path != pickFolderPath && (path == "/api/workspaces" || strings.HasPrefix(path, "/api/workspaces/")) {
 		setHostCORS(w)
 		h.route(w, r, path)
 		return
@@ -465,7 +469,7 @@ func (h *workspaceHost) build(layout Layout, prepared *PreparedWorkspace, faults
 		}
 	}
 
-	modelSettings := settings.LoadModelSettings(appDir, settings.Env(env))
+	modelSettings := settings.LoadModelSettings(appDir)
 	var engine contract.Engine
 	if options.EngineFactory != nil {
 		created, err := options.EngineFactory(EngineDeps{

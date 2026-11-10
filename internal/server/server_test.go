@@ -206,6 +206,8 @@ func (s *testServer) request(t *testing.T, method, path string, body string, hea
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	// 像浏览器页面一样带同源标记（改变状态的接口要求它，见 origin.go）
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
@@ -533,7 +535,7 @@ func TestEmployeeConfigFlow(t *testing.T) {
 		t.Fatalf("配置视图不对：%s", body)
 	}
 	// 配置哈希跟着员工配置走（唯一事实来源是 internal/config）；T44 改 interpret_feedback 措辞后已更新
-	const goldenConfigHash = "c46572325f72603eceb2d09a125074a4a1d582d06ebba811f10276ee964b9547"
+	const goldenConfigHash = "3b95fb6248cda4508973337be0cef8b021c0197eb229f72eb515ed0954421512"
 	if config["hash"] != goldenConfigHash {
 		t.Fatalf("配置哈希与 TS 版不一致：%v", config["hash"])
 	}
@@ -711,6 +713,7 @@ func TestMultipartCreateAndSupplement(t *testing.T) {
 	request, _ = http.NewRequest(http.MethodPost, ts.server.URL+"/api/tasks/"+snapshot.ID+"/commands", strings.NewReader(body))
 	request.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 	request.Header.Set("x-role", "initiator")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
 	response, err = http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

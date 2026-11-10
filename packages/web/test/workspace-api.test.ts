@@ -4,11 +4,11 @@ import type { FetchLike } from "../src/api/sessions";
 
 /** 假的 fetch：记下请求，按“方法 路径”回固定响应 */
 function fakeFetch(routes: Record<string, [number, unknown]>) {
-  const calls: { method: string; path: string; body: unknown }[] = [];
+  const calls: { method: string; path: string; body: unknown; headers?: HeadersInit }[] = [];
   const impl: FetchLike = async (url, init) => {
     const method = init?.method ?? "GET";
     const path = new URL(url).pathname;
-    calls.push({ method, path, body: init?.body });
+    calls.push({ method, path, body: init?.body, headers: init?.headers });
     const [status, body] = routes[`${method} ${path}`] ?? [404, { ok: false, error: "not_found", message: "路径不存在" }];
     return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   };
@@ -65,6 +65,24 @@ describe("工作区接口（Spec 0006：没有切换）", () => {
       "POST /api/workspaces/ws-1/open",
       "GET /api/workspaces",
     ]);
+  });
+
+  test("选目录：选中、取消、失败都是结果，不抛错；请求体可空", async () => {
+    const picked = fakeFetch({ "POST /api/workspaces/pick-folder": [200, { ok: true, path: "D:\\de\\华南区" }] });
+    expect(await createWorkspaceApi("http://local", picked.impl).pickFolder()).toEqual({ ok: true, path: "D:\\de\\华南区" });
+    expect(picked.calls[0]).toMatchObject({ method: "POST", path: "/api/workspaces/pick-folder" });
+    // 只有发起人能选目录：请求头带身份
+    expect((picked.calls[0]?.headers as Record<string, string>)["x-role"]).toBe("initiator");
+
+    const cancelled = fakeFetch({ "POST /api/workspaces/pick-folder": [200, { ok: true, cancelled: true }] });
+    expect(await createWorkspaceApi("http://local", cancelled.impl).pickFolder()).toEqual({ ok: true, cancelled: true });
+
+    const failed = fakeFetch({ "POST /api/workspaces/pick-folder": [409, { ok: false, error: "workspace_read_only", message: "工作区由环境变量指定" }] });
+    expect(await createWorkspaceApi("http://local", failed.impl).pickFolder()).toEqual({ ok: false, error: "workspace_read_only", message: "工作区由环境变量指定" });
+
+    const missing = fakeFetch({});
+    const res = await createWorkspaceApi("http://local", missing.impl).pickFolder();
+    expect(res.ok).toBe(false);
   });
 
   test("读取列表失败时抛错；单目录模式带只读原因", async () => {

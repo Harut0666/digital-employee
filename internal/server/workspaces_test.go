@@ -259,10 +259,10 @@ func (h *harness) runningSession(sessionID string, entered <-chan struct{}) (str
 
 func TestStatusDotWaitingForMe(t *testing.T) {
 	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel())
-	// 待确认员工：只有发起人能确认
+	// 只是聊天、没有任务也没有在等人的表单：空闲（员工表单在等发起人确认时才是等你处理，见 employee_tool_test.go）
 	reception := h.createSession()
-	if got := h.sessionSummaryOf(reception.ID, contract.RoleInitiator); got.StatusDot != "waiting" || got.Unread {
-		t.Fatalf("待确认员工的会话状态点应是等你处理：%+v", got)
+	if got := h.sessionSummaryOf(reception.ID, contract.RoleInitiator); got.StatusDot != "idle" || got.Unread {
+		t.Fatalf("还没有任务的会话状态点应是空闲：%+v", got)
 	}
 	// 待补充：只有发起人能补材料
 	supplement, task := h.submittedSession([]upload{sampleFile(t, "销售明细.xlsx")})
@@ -366,8 +366,8 @@ func TestStatusDotRunningWhileFrontdeskReplies(t *testing.T) {
 		t.Fatalf("回复失败：%d", status)
 	}
 	h.waitIdle(created.ID)
-	if got := h.sessionSummaryOf(created.ID, contract.RoleInitiator); got.StatusDot != "waiting" {
-		t.Fatalf("回复结束后待确认员工的会话应回到等你处理：%+v", got)
+	if got := h.sessionSummaryOf(created.ID, contract.RoleInitiator); got.StatusDot != "idle" {
+		t.Fatalf("回复结束后没有任务的会话应回到空闲：%+v", got)
 	}
 }
 

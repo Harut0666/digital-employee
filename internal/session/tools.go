@@ -1,10 +1,11 @@
-// 接手后开放给前台 Agent 的工具。这里的工具只产生草稿和提议，不碰任务状态。
+// 开放给前台 Agent 的只读查询工具（query_task、知识库）和表单字段辅助。这里的工具不碰任务状态；
+// 开工只有 run_employee 一条路（employee_form.go），它经过权限关口和发起人确认。
 package session
 
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
@@ -79,85 +80,27 @@ func (t *turn) queryTaskTool() tool {
 	return tool{
 		spec: agent.ToolSpec{
 			Name:        contract.ToolQueryTask,
-			Description: "只读查询本会话的任务：状态、暂停原因、步骤、检验记录、交付物，以及谁能点哪些按钮。回答任务问题前先调用它。",
-			Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+			Description: "只读查询本会话的任务：状态、暂停原因、步骤、检验记录、交付物，以及谁能点哪些按钮。回答任务问题前先调用它；默认查最新的任务，也可以用 taskId 查本会话里更早的任务。",
+			Parameters: map[string]any{"type": "object", "properties": map[string]any{
+				"taskId": map[string]any{"type": "string", "description": "任务 ID；不填就查会话里最新的任务。会话先后运行过多个任务时，用它查更早的那个"},
+			}},
 		},
 		run: func(arguments map[string]any) (any, error) {
-			if asked, present := arguments["taskId"]; present && asked != t.current.taskID {
-				return nil, denied("只能查询本会话的任务。")
+			// 不指定时查会话的当前任务（最新的一个）；也可以查本会话里更早的任务
+			taskID := t.current.taskID
+			if asked, present := arguments["taskId"]; present {
+				if id, _ := asked.(string); id != taskID {
+					if !slices.Contains(t.current.taskIDs, id) {
+						return nil, denied("只能查询本会话的任务。")
+					}
+					taskID = id
+				}
 			}
-			snapshot, found := t.tasks.Get(t.current.taskID)
+			snapshot, found := t.tasks.Get(taskID)
 			if !found {
-				return nil, fmt.Errorf("任务不存在：%s", t.current.taskID)
+				return nil, fmt.Errorf("任务不存在：%s", taskID)
 			}
 			return taskFacts(snapshot), nil
-		},
-	}
-}
-
-// proposeCardTool 提议一张卡片。Agent 只选类型，卡片内容和按钮都由程序按任务现状填写。
-func (t *turn) proposeCardTool() tool {
-	return tool{
-		spec: agent.ToolSpec{
-			Name:        "propose_card",
-			Description: "把一张流程卡片发给人。按钮由程序决定，你只能选卡片类型。人说要退回时，用 review 卡片带上退回意见草稿，由审核人确认。",
-			Parameters: map[string]any{
-				"type":     "object",
-				"required": []any{"type"},
-				"properties": map[string]any{
-					"type":     map[string]any{"type": "string", "enum": []any{CardForm, CardPause, CardQC, CardReview}},
-					"comment":  map[string]any{"type": "string", "description": "review 卡片的退回意见草稿"},
-					"sections": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "退回意见涉及的章节"},
-				},
-			},
-		},
-		run: func(arguments map[string]any) (any, error) {
-			kind, _ := arguments["type"].(string)
-			if kind == CardForm {
-				if t.current.taskID != "" {
-					return nil, fmt.Errorf("任务已经提交，不能再发表单卡片")
-				}
-				t.drafted = true
-
-				return map[string]any{"sent": kind}, nil
-			}
-			if t.current.taskID == "" {
-				return nil, fmt.Errorf("还没有任务，不能发 %s 卡片", kind)
-			}
-			snapshot, found := t.tasks.Get(t.current.taskID)
-			if !found {
-				return nil, fmt.Errorf("任务不存在：%s", t.current.taskID)
-			}
-			card := Card{Type: kind, TaskID: snapshot.ID, AtSeq: snapshot.LastSeq}
-			switch kind {
-			case CardPause:
-				if snapshot.State != contract.StateAwaitingInitiator && snapshot.State != contract.StateAwaitingOperator {
-					return nil, fmt.Errorf("任务现在没有暂停")
-				}
-				card.Pause = snapshot.Pause
-			case CardQC:
-				if len(snapshot.QC) == 0 {
-					return nil, fmt.Errorf("任务还没有检验记录")
-				}
-				card.Checks = snapshot.QC
-			case CardReview:
-				if snapshot.State != contract.StateAwaitingReview {
-					return nil, fmt.Errorf("任务现在不在待审核")
-				}
-				card.Pause = snapshot.Pause
-				card.Comment, _ = arguments["comment"].(string)
-				if sections, ok := arguments["sections"].([]any); ok {
-					for _, section := range sections {
-						if text, ok := section.(string); ok {
-							card.Sections = append(card.Sections, text)
-						}
-					}
-				}
-			default:
-				return nil, fmt.Errorf("没有这种卡片：%s", kind)
-			}
-			t.cards = append(t.cards, card)
-			return map[string]any{"sent": kind}, nil
 		},
 	}
 }
@@ -194,49 +137,4 @@ func (t *turn) knowledgeTools(ticked map[string]bool) ([]tool, error) {
 		})
 	}
 	return tools, nil
-}
-
-func (t *turn) fillFormDraftTool(config *contract.EmployeeConfig) tool {
-	fields := fillableFields(config)
-	properties := map[string]any{}
-	for name, schema := range fields {
-		properties[name] = schema
-	}
-	return tool{
-		spec: agent.ToolSpec{
-			Name:        "fill_form_draft",
-			Description: "把人说的信息写进表单草稿，只传要改的字段。草稿要由发起人检查，并在表单卡片上点击提交才算数。",
-			Parameters:  map[string]any{"type": "object", "properties": properties},
-		},
-		run: func(arguments map[string]any) (any, error) {
-			names := make([]string, 0, len(arguments))
-			for name := range arguments {
-				names = append(names, name)
-			}
-			sort.Strings(names)
-			next := map[string]any{}
-			for name, value := range t.current.draft {
-				next[name] = value
-			}
-			for _, name := range names {
-				if humanOnlyField(config.FormUI, name) {
-					return nil, denied("字段 %s 只能由人操作，不能写进草稿。", name)
-				}
-				schema, ok := fields[name]
-				if !ok {
-					return nil, fmt.Errorf("表单里没有字段 %s", name)
-				}
-				if errs := agent.NewValidator(schema).Validate(arguments[name]); len(errs) > 0 {
-					return nil, fmt.Errorf("字段 %s 不合法：%s", name, agent.ErrorText(errs))
-				}
-				next[name] = arguments[name]
-			}
-			if err := t.write(Message{Kind: kindDraftSet, Draft: next}); err != nil {
-				return nil, err
-			}
-			t.drafted = true
-
-			return map[string]any{"draft": next}, nil
-		},
-	}
 }

@@ -11,6 +11,7 @@
 package server
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -65,6 +66,10 @@ type Options struct {
 	ModelListTimeout time.Duration
 	// OpenFolder 打开文件夹；缺省按平台调用 explorer/open/xdg-open。
 	OpenFolder func(dir string) error
+	// PickFolder 在本机弹出系统的“选择文件夹”对话框（添加工作区的“浏览…”）并阻塞到用户操作完；
+	// 返回 (目录, true, nil) 选中，("", false, nil) 用户取消，error 为失败。ctx 取消（请求断开）时应关掉对话框。
+	// 缺省按平台调用系统对话框（见 pickfolder_windows.go；非 Windows 或 de_stub 构建返回“不支持”）。
+	PickFolder func(ctx context.Context) (string, bool, error)
 	// OpenFile 用系统编辑器打开文件；缺省按平台调用 notepad/open/xdg-open。
 	OpenFile func(path string) error
 	// Env 读取环境变量；nil 时读进程环境。
@@ -104,6 +109,11 @@ type Server struct {
 	// 每次登记变化后由宿主调 SetWorkspaces 更新，写操作回摘要时用它取工作区名。
 	workspaceMu sync.RWMutex
 	workspaces  workspaceRegistry
+	// pickMu 同一时刻只开一个“选择文件夹”对话框
+	pickMu sync.Mutex
+	// hosts 收到过的请求的 Host（含端口）
+	hostMu sync.Mutex
+	hosts  map[string]bool
 }
 
 // New 组装服务端（不监听；由调用方用 Handler 起 http.Server）。
@@ -131,6 +141,7 @@ func New(opts Options) *Server {
 // Handler 返回带 CORS 与 SPA fallback 的 http.Handler。
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.noteHost(r.Host)
 		setCORS(w)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -194,6 +205,9 @@ func (s *Server) resolveDefaults() {
 	}
 	if s.opts.OpenFile == nil {
 		s.opts.OpenFile = openFileWithSystem
+	}
+	if s.opts.PickFolder == nil {
+		s.opts.PickFolder = pickFolderWithSystem
 	}
 	s.log = s.opts.Logger
 	if s.log == nil {
@@ -403,11 +417,16 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions/{id}", s.sessionRoute(s.handleGetSession))
 	m.HandleFunc("PATCH /api/sessions/{id}", s.sessionRoute(s.handlePatchSession))
 	m.HandleFunc("PUT /api/sessions/{id}/model", s.sessionRoute(s.handleSelectSessionModel))
+	m.HandleFunc("PUT /api/sessions/{id}/permission-mode", s.sessionRoute(s.handleSetPermissionMode))
+	m.HandleFunc("POST /api/sessions/{id}/permissions/{requestId}", s.sessionRoute(s.handleDecidePermission))
+	m.HandleFunc("POST /api/sessions/{id}/questions/{requestId}", s.sessionRoute(s.handleAnswerQuestion))
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.sessionRoute(s.handleSendMessage))
 	m.HandleFunc("GET /api/sessions/{id}/stream", s.sessionRoute(s.handleSessionStream))
 	m.HandleFunc("GET /api/sessions/{id}/activity", s.sessionRoute(s.handleSessionActivity))
 	m.HandleFunc("POST /api/sessions/{id}/stop", s.sessionRoute(s.handleStopTurn))
 	m.HandleFunc("POST /api/sessions/{id}/employee", s.sessionRoute(s.handleConfirmEmployee))
+	m.HandleFunc("POST /api/sessions/{id}/employee-forms/{requestId}", s.sessionRoute(s.handleAnswerEmployeeForm))
+	m.HandleFunc("POST /api/sessions/{id}/sample", s.sessionRoute(s.handleLoadSample))
 	m.HandleFunc("POST /api/sessions/{id}/attachments", s.sessionRoute(s.handleSessionAttachments))
 	m.HandleFunc("GET /api/sessions/{id}/folder-files", s.sessionRoute(s.handleListFolderFiles))
 	m.HandleFunc("POST /api/sessions/{id}/folder-files", s.sessionRoute(s.handleUseFolderFiles))
@@ -418,6 +437,7 @@ func (s *Server) routes() {
 	// ---- 工作区与记录（T38；新建、重命名、取消登记由宿主处理） ----
 	m.HandleFunc("GET /api/workspaces", s.handleListWorkspaces)
 	m.HandleFunc("POST /api/workspaces/{id}/open", s.handleOpenWorkspaceFolder)
+	m.HandleFunc("POST /api/workspaces/pick-folder", s.handlePickFolder)
 	m.HandleFunc("GET /api/records", s.handleRecords)
 
 	// ---- 知识库 ----
@@ -495,3 +515,31 @@ func (s *Server) logf(level string, format string, args ...any) {
 }
 
 var _ = log.Println
+
+// noteHost 记下请求的 Host（含端口）：shell 命令里出现本服务地址时要加警告。
+func (s *Server) noteHost(host string) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return
+	}
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+	if s.hosts == nil {
+		s.hosts = map[string]bool{}
+	}
+	if len(s.hosts) < 32 {
+		s.hosts[host] = true
+	}
+}
+
+// localAddrs 本服务被访问过的地址（Host:Port）。
+func (s *Server) localAddrs() []string {
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+	out := make([]string, 0, len(s.hosts))
+	for host := range s.hosts {
+		out = append(out, host)
+	}
+	sort.Strings(out)
+	return out
+}

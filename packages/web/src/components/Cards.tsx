@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Checkbox, Input, message } from "antd";
+import { Button, Checkbox, Collapse, Input, message } from "antd";
 import {
   CheckCircleFilled,
   CheckOutlined,
@@ -7,6 +7,8 @@ import {
   DownloadOutlined,
   ExclamationCircleFilled,
   EyeOutlined,
+  EditOutlined,
+  SafetyCertificateOutlined,
   FileTextOutlined,
   FileWordOutlined,
   ReloadOutlined,
@@ -18,12 +20,17 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeInfo, KnowledgeFiling, PauseView, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, QuestionAnswer, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
+import { EmployeeFormCard } from "./EmployeeFormCard";
 import { FilingCard } from "./FilingCard";
+import { TodoCard } from "./TodoCard";
+import { QuestionCard } from "./QuestionCard";
+import { ShellCommandBlock } from "./ShellCommand";
+import { StepList } from "./StepList";
 
 export interface CardActions {
   role: UiRole;
@@ -42,22 +49,29 @@ export interface CardActions {
   openPanel: () => void;
   /** 可勾选的退回章节（取自员工配置 qc.yaml）；退回命令里带的是 id，界面显示 heading */
   sections: { id: string; heading: string }[];
-  downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number) => string | undefined;
+  /** forTask：下载哪个任务的交付物；不给就是会话的当前任务（会话里有多个任务时，早先交付的任务带着自己的任务号） */
+  downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number, forTask?: string) => string | undefined;
 }
 
-/** 会话层的操作：确认员工、上传材料、提交表单。都只有发起人能做，后端仍会校验。 */
+/** 会话层的操作：上传材料、答复员工表单。都只有发起人能做，后端仍会校验。 */
 export interface SessionActions {
   employees: EmployeeInfo[];
-  confirmEmployee: (employee: string) => Promise<void>;
+  /** 会话里现在的材料（员工表单卡据此认出人补传的） */
+  attachments: SessionAttachment[];
+  /** 员工表单卡上的答复（T49）：确认开工，或“不是这个员工” */
+  answerForm: (requestId: string, answer: EmployeeFormAnswer) => Promise<SessionResult>;
   upload: (files: File[]) => Promise<void>;
   /** 确认（或 @ 选择）目录里的文件作为材料：复制进会话，与上传等效 */
   useFolderFiles: (paths: string[]) => Promise<void>;
-  submit: (form: Record<string, unknown>) => Promise<SessionResult>;
   /** 入库卡片：请模型起草描述 */
-  draftFiling: () => Promise<void>;
+  draftFiling: (taskId?: string) => Promise<void>;
   /** 入库卡片：人确认后放进知识库 */
   fileKnowledge: (filing: KnowledgeFiling) => Promise<void>;
   openKnowledge: () => void;
+  /** 权限确认卡上的答复（T48）：允许一次、本会话总是允许这一类、拒绝 */
+  decidePermission: (requestId: string, decision: PermissionDecision) => Promise<void>;
+  /** 提问卡上的答复（ask_user_question）；失败交给卡片显示 */
+  answerQuestion: (requestId: string, answers: QuestionAnswer[]) => Promise<SessionResult>;
 }
 
 const clock = (ts: string) => new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -124,56 +138,12 @@ export function TaskActionBar({
   );
 }
 
-function EmployeeConfirmCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "employee_confirm" }>; actions: CardActions; session: SessionActions }) {
-  const [busy, setBusy] = useState<string>();
+/** 旧会话里已发出的“确认员工”卡（T49 之前）：只读显示一行，不再有按钮。现在员工由 Agent 调 run_employee 带上，人在员工表单卡上确认。 */
+function EmployeeConfirmCard({ item }: { item: Extract<ChatItem, { kind: "employee_confirm" }> }) {
   const nameOf = (id: string) => item.candidates.find((c) => c.id === id)?.name ?? id;
-  const confirm = async (id: string) => {
-    setBusy(id);
-    try {
-      await session.confirmEmployee(id);
-    } finally {
-      setBusy(undefined);
-    }
-  };
-  if (!item.active) {
-    return (
-      <div className="card muted">
-        <TeamOutlined /> {item.proposed ? `提议由${nameOf(item.proposed)}接手` : "请选择员工"}（已处理）
-      </div>
-    );
-  }
-  const initiator = actions.role === "initiator";
-  const others = item.candidates.filter((c) => c.id !== item.proposed);
-  const intro =
-    item.source === "default" ? "按设置里的默认员工，由下面的员工接手：" : item.source === "model" ? "建议由下面的员工接手：" : "我判断不出该由谁接手，请选择一位员工：";
   return (
-    <div className="card">
-      <div className="card-title">
-        <TeamOutlined style={{ color: "var(--primary)" }} /> 确认由谁接手
-      </div>
-      <div className="card-body">{intro}</div>
-      {item.proposed && (
-        <div className="card-body">
-          <b>{nameOf(item.proposed)}</b>
-          {item.reason && <span className="chat-sub">　{item.reason}</span>}
-        </div>
-      )}
-      {initiator ? (
-        <div className="card-actions">
-          {item.proposed && (
-            <Button type="primary" loading={busy === item.proposed} disabled={busy !== undefined} onClick={() => confirm(item.proposed!)}>
-              确认由{nameOf(item.proposed)}接手
-            </Button>
-          )}
-          {others.map((c) => (
-            <Button key={c.id} loading={busy === c.id} disabled={busy !== undefined} title={c.description} onClick={() => confirm(c.id)}>
-              {item.proposed ? `改由${c.name}` : c.name}
-            </Button>
-          ))}
-        </div>
-      ) : (
-        <Handoff handoff={{ text: "等待发起人确认员工", switchTo: ["initiator"] }} onRole={actions.onRole} />
-      )}
+    <div className="card muted">
+      <TeamOutlined /> {item.proposed ? `提议由${nameOf(item.proposed)}接手` : "请选择员工"}（旧版确认卡，已不再使用）
     </div>
   );
 }
@@ -193,8 +163,9 @@ export function PauseCard({ item, actions }: { item: Extract<ChatItem, { kind: "
   const operator = !item.actions.some((a) => a.roles.includes("initiator")) && actions.waitingFor.includes("operator");
   return (
     <div className={`card ${operator ? "danger" : "warn"}`}>
-      <div className="card-title" style={{ color: operator ? "var(--danger)" : "var(--warn)" }}>
+      <div className="card-title">
         <ExclamationCircleFilled /> {title}
+        <span className="pill" data-tone={operator ? "error" : "waiting"}>{operator ? "需要操作员" : "等你处理"}</span>
       </div>
       <div className="card-body">{pause?.message}</div>
       {pause?.resolution && <div className="card-body">{pause.resolution}</div>}
@@ -214,7 +185,7 @@ export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
   const bad = item.checks.filter((c) => !c.passed);
   return (
     <div className={`card ${item.passed ? "ok" : "danger"}`}>
-      <div className="card-title" style={{ color: item.passed ? "var(--primary)" : "var(--danger)" }}>
+      <div className="card-title">
         {item.passed ? <CheckCircleFilled /> : <CloseCircleFilled />}
         {item.passed ? "质检通过" : "质检未通过"}
       </div>
@@ -233,8 +204,8 @@ export function ReviewNoticeCard({ item, actions }: { item: Extract<ChatItem, { 
   const reviewer = actions.waitingFor.includes(actions.role);
   return (
     <div className={`card ${outOfScope ? "warn" : ""}`}>
-      <div className="card-title" style={outOfScope ? { color: "var(--warn)" } : undefined}>
-        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined style={{ color: "var(--info)" }} />}
+      <div className="card-title">
+        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined />}
         {outOfScope ? pause.title : "交付物写好了，请在右侧审核"}
       </div>
       {outOfScope && <div className="card-body">{pause.message}</div>}
@@ -263,7 +234,7 @@ export function ReturnConfirmCard({ item, actions }: { item: Extract<ChatItem, {
   return (
     <div className="card">
       <div className="card-title">
-        <RollbackOutlined style={{ color: "var(--warn)" }} /> 确认退回意见
+        <RollbackOutlined /> 确认退回意见
         <span className="chat-sub" style={{ fontWeight: 400, marginLeft: "auto" }}>{clock(item.ts)}</span>
       </div>
       {mine ? (
@@ -324,16 +295,25 @@ export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kin
   const linkProps = useLinkProps();
   return (
     <div className="card ok">
-      <div className="card-title" style={{ color: "var(--primary)" }}>
-        <CheckCircleFilled /> 已交付
+      <div className="card-title">
+        <CheckCircleFilled /> 已交付{item.run ? `（第 ${item.run} 次运行）` : ""}
       </div>
       <div className="card-actions">
         {item.deliverables.map((d) => (
-          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind)} disabled={!actions.downloadUrl(d.kind)} {...linkProps(actions.downloadUrl(d.kind))}>
+          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind, undefined, item.taskId)} disabled={!actions.downloadUrl(d.kind, undefined, item.taskId)} {...linkProps(actions.downloadUrl(d.kind, undefined, item.taskId))}>
             {names[d.kind] ?? d.kind}
           </Button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** 早先任务的步骤行：留在这个任务开工的位置，只读（轨迹详情只看当前任务）。 */
+export function PastRunSteps({ item }: { item: Extract<ChatItem, { kind: "past_steps" }> }) {
+  return (
+    <div className="past-run">
+      <StepList rows={item.rows} onOpen={() => {}} title={`第 ${item.run} 次运行的步骤`} defaultOpen={false} />
     </div>
   );
 }
@@ -360,7 +340,7 @@ export function UseFileCard({ item, actions, session }: { item: Extract<ChatItem
   return (
     <div className="card">
       <div className="card-title">
-        <FileTextOutlined style={{ color: "var(--primary)" }} /> 使用目录文件
+        <FileTextOutlined /> 使用目录文件
       </div>
       <div className="card-body">
         <b>{item.name}</b>
@@ -384,6 +364,95 @@ export function UseFileCard({ item, actions, session }: { item: Extract<ChatItem
   );
 }
 
+/** 权限确认（T48）：Agent 想做什么、对谁做；发起人点三个按钮之一，答复后只剩一行结果。 */
+export function PermissionCard({ item, actions, session }: { item: Extract<ChatItem, { kind: "permission" }>; actions: CardActions; session: SessionActions }) {
+  const [busy, setBusy] = useState<string>();
+  if (item.state !== "pending") {
+    return (
+      <div className={`card muted permission-done ${item.state}`}>
+        <SafetyCertificateOutlined /> {item.actionLabel}
+        {item.object ? `：${item.object}` : ""} · {item.stateText}
+      </div>
+    );
+  }
+  const answer = async (decision: PermissionDecision) => {
+    setBusy(decision);
+    try {
+      await session.decidePermission(item.requestId, decision);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  return (
+    <div className="card warn permission-card">
+      <div className="card-title">
+        <SafetyCertificateOutlined /> 权限确认：{item.actionLabel}
+        <span className="pill" data-tone="waiting">{item.canAnswer ? "等你决定" : "等待发起人"}</span>
+      </div>
+      <div className="card-body">
+        Agent 想{item.actionLabel}
+        {item.object && (
+          <>
+            ：<b>{item.object}</b>
+          </>
+        )}
+      </div>
+      {item.shell ? (
+        <ShellCommandBlock {...item.shell} description={item.detail} />
+      ) : (
+        item.detail && <div className="card-body chat-sub">{item.detail}</div>
+      )}
+      {item.canAnswer ? (
+        <div className="card-actions">
+          {item.buttons.map((button) => (
+            <Button
+              key={button.decision}
+              type={button.style === "primary" ? "primary" : "default"}
+              danger={button.style === "danger"}
+              loading={busy === button.decision}
+              disabled={busy !== undefined}
+              onClick={() => void answer(button.decision)}
+            >
+              {button.label}
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <Handoff handoff={{ text: item.stateText, switchTo: actions.role === "initiator" ? [] : ["initiator"] }} onRole={actions.onRole} />
+      )}
+    </div>
+  );
+}
+
+/** Agent 写的文件：对话里一行，点开看改了什么（edit_file 是差异，write_file 是写进去的文本）。 */
+export function FileChangeRow({ item }: { item: Extract<ChatItem, { kind: "file_change" }> }) {
+  const head = (
+    <span className={`file-change-head ${item.ok ? "" : "bad"}`}>
+      {item.ok ? <EditOutlined /> : <CloseCircleFilled />} {item.summary}
+    </span>
+  );
+  if (!item.body) return <div className="file-change">{head}</div>;
+  return (
+    <Collapse
+      className="file-change"
+      size="small"
+      bordered={false}
+      items={[
+        {
+          key: "body",
+          label: head,
+          children: <pre className={`file-change-body ${item.bodyKind ?? ""}`}>{item.body}</pre>,
+        },
+      ]}
+    />
+  );
+}
+
+/** 自动放行、被拒绝的留痕：一行小字。 */
+export function PermissionTraceRow({ item }: { item: Extract<ChatItem, { kind: "trace" }> }) {
+  return <div className={`notice permission-trace ${item.tone}`}>{item.text}</div>;
+}
+
 function formatBytes(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${Math.round(size / 1024)} KB`;
@@ -399,9 +468,11 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
         </div>
       );
     case "employee_confirm":
-      return <EmployeeConfirmCard key={item.key} item={item} actions={actions} session={session} />;
+      return <EmployeeConfirmCard key={item.key} item={item} />;
     case "form":
-      return <FormCard key={`${item.key}-${JSON.stringify(item.draft)}`} item={item} actions={actions} session={session} />;
+      return <FormCard key={item.key} item={item} session={session} />;
+    case "employee_form":
+      return <EmployeeFormCard key={`${item.key}-${item.card.pending}-${item.card.decision ?? ""}`} item={item} actions={actions} session={session} />;
     case "pause":
       return <PauseCard key={item.key} item={item} actions={actions} />;
     case "qc":
@@ -412,9 +483,21 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <ReturnConfirmCard key={item.key} item={item} actions={actions} />;
     case "delivered":
       return <DeliveredCard key={item.key} item={item} actions={actions} />;
+    case "past_steps":
+      return <PastRunSteps key={item.key} item={item} />;
     case "filing":
       return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
     case "use_file":
       return <UseFileCard key={`${item.key}-${item.confirmed}`} item={item} actions={actions} session={session} />;
+    case "permission":
+      return <PermissionCard key={`${item.key}-${item.state}`} item={item} actions={actions} session={session} />;
+    case "todo":
+      return <TodoCard key={`${item.key}-${item.latest}`} item={item} />;
+    case "question":
+      return <QuestionCard key={`${item.key}-${item.view.state}`} item={item} actions={actions} session={session} />;
+    case "file_change":
+      return <FileChangeRow key={item.key} item={item} />;
+    case "trace":
+      return <PermissionTraceRow key={item.key} item={item} />;
   }
 }

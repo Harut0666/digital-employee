@@ -30,9 +30,9 @@ type preflightResult struct {
 	Settings *settingsEntry `json:"settings,omitempty"`
 }
 
-// effectiveModels 设置页与提交前检查看到的同一份模型设置：DEEPSEEK_API_KEY 优先于文件里的 Key。
+// effectiveModels 设置页与提交前检查看到的同一份模型设置：连接与 Key 都来自设置文件（Spec 0007）。
 func (s *Server) effectiveModels() contract.ModelSettings {
-	return settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())
+	return settings.LoadModelSettings(s.opts.AppDir)
 }
 
 // sessionModelReady 会话模型能不能用：连接在、连接有 Key、模型在连接的模型列表里（没配模型列表时只看 Key）。
@@ -65,10 +65,11 @@ func checkModel(models contract.ModelSettings, ref contract.ModelRef) preflightR
 	return preflightResult{OK: true}
 }
 
-// checkFirstConnection 还没选过模型、也没有有 Key 的连接：指出第一个连接缺 Key。
+// checkFirstConnection 还没选过模型、也没有有 Key 的连接：没有任何连接时提示去添加，
+// 有连接但都不可用时指出第一个连接缺 Key。
 func checkFirstConnection(models contract.ModelSettings) preflightResult {
 	if len(models.Connections) == 0 {
-		return modelNotReady("还没有可用的模型：设置里还没有任何模型连接。请先到设置里添加连接、填写 Key 并选择模型。")
+		return modelNotReady("还没有配置模型连接。任务需要模型来写判断步骤，请先到设置里添加一个连接、填写 Key 并选择模型。")
 	}
 	return modelNotReady(fmt.Sprintf("模型连接「%s」还没有配置 Key，任务无法运行。请先到设置里填写 Key。", models.Connections[0].Name))
 }
@@ -99,7 +100,7 @@ func (s *Server) taskModel(taskID string) (contract.ModelRef, bool) {
 
 // preflight 检查会话模型：taskID 非空时用任务的会话模型，否则用设置里最近选的模型。
 // 模型为空时按第一个有 Key 的连接检查（新会话也沿用它）；连接没配模型列表时只看连接有没有 Key。
-// 每次都读设置文件，保存 Key 后立即生效。
+// 每次都读设置文件，保存 Key 后立即生效。演示模式（剧本模型）不连真实接口，视为通过。
 func (s *Server) preflight(taskID string) preflightResult {
 	if s.opts.Scripted {
 		return preflightResult{OK: true}
@@ -117,12 +118,13 @@ func (s *Server) preflight(taskID string) preflightResult {
 }
 
 // checkSessionModel 提交前的会话模型检查（新会话提交时）：会话模型所在的连接有 Key、模型在列表里。
-// 会话里没选过模型时只要求有一个有 Key 的连接（新会话沿用它）；选过的模型不可用（设置页保存后
-// 连接被删、模型被去掉）时拦下，带上设置入口，让人在输入框右下角换一个模型。
+// 会话里没选过模型时：没有任何连接就提示去添加连接；有连接但都不可用就指出缺 Key 的连接
+// （新会话沿用它）；选过的模型不可用（设置页保存后连接被删、模型被去掉）时拦下，带上设置入口，
+// 让人在输入框右下角换一个模型。
 func (s *Server) checkSessionModel(ref contract.ModelRef) error {
 	models := s.effectiveModels()
 	if ref.Connection == "" {
-		if len(models.Connections) == 0 || models.Default.Connection != "" {
+		if models.Default.Connection != "" && models.Default.Model != "" {
 			return nil
 		}
 		result := checkFirstConnection(models)
@@ -154,10 +156,18 @@ func (s *Server) sessionPreflight() preflightResult {
 	if err := s.checkSessionModel(s.effectiveModels().Default); err != nil {
 		var typed *session.Error
 		if errors.As(err, &typed) {
-			return preflightResult{Error: typed.Code, Message: typed.Message, Settings: &modelSettingsEntry}
+			return preflightResult{Error: typed.Code, Message: typed.Message, Settings: settingsEntryOfSession(typed.Settings)}
 		}
 	}
 	return preflightResult{OK: true}
+}
+
+// settingsEntryOfSession 会话模块给出的设置入口 → 提交前检查响应里的设置入口。
+func settingsEntryOfSession(entry *session.SettingsEntry) *settingsEntry {
+	if entry == nil {
+		return nil
+	}
+	return &settingsEntry{Section: entry.Section, Label: entry.Label}
 }
 
 // submitWouldProceed 这条提交命令引擎会不会接受。不合法的提交交给引擎拒绝并留痕，

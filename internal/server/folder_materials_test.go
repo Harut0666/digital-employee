@@ -244,7 +244,7 @@ func TestReadFileUsesExistingParsers(t *testing.T) {
 		fields, _ := result.(map[string]any)
 		texts = append(texts, fmt.Sprint(fields["text"]))
 	}
-	for index, want := range []string{"记录ID", "第 44 周", "# 说明\n\n这是目录里的说明。"} {
+	for index, want := range []string{"记录ID", "第 44 周", "1: # 说明\n2: \n3: 这是目录里的说明。"} {
 		if !strings.Contains(texts[index], want) {
 			t.Fatalf("第 %d 次读到的正文里没有 %q：%.200s", index+1, want, texts[index])
 		}
@@ -262,11 +262,13 @@ func TestReadFileTruncatesLongText(t *testing.T) {
 	h.say(created.ID, contract.RoleInitiator, "读长文")
 
 	result, _ := toolResults(t, h.readSession(created.ID), "read_file")[0].(map[string]any)
-	if runes := []rune(fmt.Sprint(result["text"])); len(runes) != 20000 {
-		t.Fatalf("超过 2 万字应截断到 20000 字，实际 %d", len(runes))
+	text := fmt.Sprint(result["text"])
+	// 一行最多 2000 个字符，超出的截断并标注
+	if !strings.HasPrefix(text, "1: "+strings.Repeat("字", 2000)+"…（该行已截断") || strings.Contains(text, strings.Repeat("字", 2001)) {
+		t.Fatalf("长行应截断到 2000 字并标注：%.80s", text)
 	}
-	if result["truncated"] != true {
-		t.Fatalf("截断时应标明 truncated：%+v", result)
+	if result["totalLines"] != float64(1) {
+		t.Fatalf("总行数 = %v", result["totalLines"])
 	}
 }
 

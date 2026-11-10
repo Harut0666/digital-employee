@@ -64,6 +64,10 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 	if id == "" {
 		return StatusDotIdle
 	}
+	if role == contract.RoleInitiator && m.pendingPermission(id) {
+		// 权限确认在等发起人答复
+		return StatusDotWaiting
+	}
 	if m.runningOf(id) {
 		// 前台 Agent 正在回复
 		return StatusDotRunning
@@ -76,6 +80,19 @@ func (m *Manager) DotFor(id string, role contract.Role) string {
 	return dot
 }
 
+// DotForTask 记录里某个任务的状态点：会话的最新任务就是会话的状态点；
+// 更早的任务已经结束，不再提示（“已完成未读”只属于最新的任务）。
+func (m *Manager) DotForTask(sessionID, taskID string, role contract.Role) string {
+	if sessionID == "" {
+		return StatusDotIdle
+	}
+	current, err := m.load(sessionID)
+	if err != nil || (taskID != "" && current.taskID != taskID) {
+		return StatusDotIdle
+	}
+	return m.DotFor(sessionID, role)
+}
+
 // SummaryOf 一个会话的摘要（按读的人的角色算状态点）；写操作之后回给它，界面不用再读一次列表。
 func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 	if strings.HasPrefix(id, legacyPrefix) {
@@ -83,7 +100,7 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Summary{View: detail.View, StatusDot: StatusDotIdle}, nil
+		return &Summary{View: detail.View, StatusDot: StatusDotIdle, Archived: detail.View.Archived}, nil
 	}
 	current, err := m.load(id)
 	if err != nil {
@@ -93,7 +110,7 @@ func (m *Manager) SummaryOf(id string, role contract.Role) (*Summary, error) {
 	return &summary, nil
 }
 
-// Record 记录 tab 里的一条：所有工作区里已开工的任务。
+// Record 记录 tab 里的一条：所有工作区里已开工的任务，每个任务一行（同一个会话的多次运行各占一行）。
 type Record struct {
 	TaskID     string             `json:"taskId"`
 	Group      string             `json:"group"`
@@ -104,6 +121,8 @@ type Record struct {
 	StatusDot  string             `json:"statusDot"`
 	// SessionID 任务所在的会话；直接从任务接口建的任务没有会话
 	SessionID string `json:"sessionId,omitempty"`
+	// RunNumber 这是会话里的第几次运行（从 1 开始）；没有会话的任务为 0
+	RunNumber int `json:"runNumber,omitempty"`
 	// WorkspaceID、WorkspaceName 任务属于哪个工作区
 	WorkspaceID   string `json:"workspaceId"`
 	WorkspaceName string `json:"workspaceName"`
@@ -111,7 +130,7 @@ type Record struct {
 }
 
 // StatusDot 状态点。role 是读列表的人当前的角色（按它算“等你处理”）：
-//  1. 等你处理：待确认员工、待填表提交、待补充、待审核或已退回，并且这个角色能处理；
+//  1. 等你处理：权限确认或员工表单在等发起人答复、待补充、待审核或已退回，并且这个角色能处理；
 //  2. 运行中：前台 Agent 正在回复，或任务处于准入校验、执行中、质检中；
 //  3. 已完成未读：任务交付或终止之后还没打开过；
 //  4. 空闲。
@@ -119,15 +138,13 @@ type Record struct {
 // 待人工处理不是发起人、审核人能推进的状态（只有工具故障、模型不可用时发起人能重试），
 // 不点亮“等你处理”，由操作员看记录 tab。
 func (m *Manager) StatusDot(id string, view *View, role contract.Role) (string, bool) {
+	if role == contract.RoleInitiator && m.pendingPermission(id) {
+		return StatusDotWaiting, false
+	}
 	if m.busy(id) {
 		return StatusDotRunning, false
 	}
 	switch view.Status {
-	case StatusReception, StatusDrafting:
-		// 确认员工、填表提交都只接受发起人
-		if role == contract.RoleInitiator {
-			return StatusDotWaiting, false
-		}
 	case StatusTask:
 		switch view.TaskState {
 		case contract.StateAwaitingInitiator:
@@ -172,7 +189,9 @@ func (m *Manager) Summarize(role contract.Role, workspaceName func(id string) st
 	}
 	bound := map[string]bool{}
 	for _, state := range current {
-		bound[state.current.taskID] = true
+		for _, taskID := range state.current.taskIDs {
+			bound[taskID] = true
+		}
 		if state.current.archived && !includeArchived {
 			continue
 		}
@@ -183,7 +202,11 @@ func (m *Manager) Summarize(role contract.Role, workspaceName func(id string) st
 		if bound[summary.ID] {
 			continue
 		}
-		out = append(out, m.summaryOf(sessionState{view: m.legacyStatus(summary)}, role, workspaceName))
+		view := m.legacyStatus(summary)
+		if view.Archived && !includeArchived {
+			continue
+		}
+		out = append(out, m.summaryOf(sessionState{view: view}, role, workspaceName))
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil
@@ -256,6 +279,9 @@ func (m *Manager) summaryOf(state sessionState, role contract.Role, workspaceNam
 	out := Summary{View: view, StatusDot: dot, Unread: unread}
 	if state.current != nil {
 		out.Archived = state.current.archived
+	} else {
+		// 旧任务推导出的会话没有会话日志，归档状态在投影里
+		out.Archived = view.Archived
 	}
 	if workspaceName != nil && view.WorkspaceID != "" {
 		out.WorkspaceName = workspaceName(view.WorkspaceID)
@@ -286,12 +312,23 @@ func (m *Manager) visibleIDs() []string {
 	return sortedKeys(m.seen)
 }
 
-// cachedView 会话的投影：消息条数没变就沿用上一次的（侧栏每一两秒读一次全部会话，不必每次回放日志）。
+// taskStamp 会话当前任务的指纹：任务推进（状态变了、多了事件）时会话日志不一定有新行，
+// 缓存的投影要靠它判断是否过期。
+func (m *Manager) taskStamp(current *record) string {
+	snapshot, ok := m.recordOf(current.taskID)
+	if !ok {
+		return current.taskID
+	}
+	return fmt.Sprintf("%s/%s/%d", current.taskID, snapshot.State, snapshot.LastSeq)
+}
+
+// cachedView 会话的投影：消息条数和当前任务都没变就沿用上一次的（侧栏每一两秒读一次全部会话，不必每次回放日志）。
 func (m *Manager) cachedView(current *record) *View {
+	stamp := m.taskStamp(current)
 	m.mu.Lock()
 	cached, seen := m.views[current.id]
 	m.mu.Unlock()
-	if seen && cached.at == len(current.messages) && cached.updatedAt == current.updatedAt {
+	if seen && cached.at == len(current.messages) && cached.updatedAt == current.updatedAt && cached.task == stamp {
 		return &cached.view
 	}
 	view := m.view(current)
@@ -300,7 +337,7 @@ func (m *Manager) cachedView(current *record) *View {
 		m.views = map[string]cachedView{}
 	}
 	// 列表里只留最近的这一份：消息条数决定它还能不能用，不必都留着
-	m.views[current.id] = cachedView{at: len(current.messages), updatedAt: current.updatedAt, view: *view}
+	m.views[current.id] = cachedView{at: len(current.messages), updatedAt: current.updatedAt, task: stamp, view: *view}
 	m.mu.Unlock()
 	return view
 }
@@ -382,6 +419,9 @@ func (m *Manager) Rename(id string, role contract.Role, title string) (*Summary,
 
 // Archive 人归档或取消归档会话。归档不改任务，只让会话默认不出现在列表里。
 func (m *Manager) Archive(id string, role contract.Role, archived bool) (*Summary, error) {
+	if strings.HasPrefix(id, legacyPrefix) {
+		return m.archiveLegacy(id, role, archived)
+	}
 	t, done, err := m.begin(id, role)
 	if err != nil {
 		return nil, err
@@ -396,6 +436,26 @@ func (m *Manager) Archive(id string, role contract.Role, archived bool) (*Summar
 	}
 	summary := m.summaryOf(sessionState{current: current, view: m.view(current)}, role, nil)
 	return &summary, nil
+}
+
+// archiveLegacy 归档或取消归档旧任务推导出的只读会话：它没有会话日志，归档状态单独存文件。
+// 这是它唯一允许的写操作，发消息、重命名、选模型等仍然由 load 拒绝为只读。
+func (m *Manager) archiveLegacy(id string, role contract.Role, archived bool) (*Summary, error) {
+	if !idPattern.MatchString(id) {
+		return nil, notFound(id)
+	}
+	for _, summary := range m.deps.Engine.List() {
+		if legacyPrefix+summary.ID != id {
+			continue
+		}
+		if err := m.legacyArchived.set(id, archived); err != nil {
+			return nil, err
+		}
+		view := m.legacyStatus(summary)
+		out := m.summaryOf(sessionState{view: view}, role, nil)
+		return &out, nil
+	}
+	return nil, notFound(id)
 }
 
 // Records 记录 tab：所有工作区里已开工的任务（任务、状态、所在会话；状态点按读的人的角色由 DotFor 现算）。
@@ -414,7 +474,7 @@ func (m *Manager) Records() []Record {
 		records = append(records, Record{
 			TaskID: summary.ID, Group: recordGroupOf(summary.State), Title: summary.Title, Employee: summary.Employee,
 			State: summary.State, StatusText: summary.StatusText,
-			SessionID: bound[summary.ID].id, WorkspaceID: summary.WorkspaceID, UpdatedAt: summary.UpdatedAt,
+			SessionID: bound[summary.ID].id, RunNumber: bound[summary.ID].run, WorkspaceID: summary.WorkspaceID, UpdatedAt: summary.UpdatedAt,
 		})
 	}
 	sort.SliceStable(records, func(i, j int) bool {
@@ -434,12 +494,12 @@ func recordsStamp(summaries []contract.TaskSummary, bound map[string]boundSessio
 	parts := make([]string, 0, len(summaries))
 	for _, summary := range summaries {
 		// 没有会话的任务（直接从任务接口建的）用空串
-		sessionID, sessionUpdated := "", ""
+		sessionID, sessionUpdated, run := "", "", 0
 		if boundTo, ok := bound[summary.ID]; ok && boundTo.record != nil {
-			sessionID, sessionUpdated = boundTo.id, boundTo.record.updatedAt
+			sessionID, sessionUpdated, run = boundTo.id, boundTo.record.updatedAt, boundTo.run
 		}
-		hash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s",
-			summary.ID, summary.State, summary.Title, summary.UpdatedAt, summary.WorkspaceID, sessionID, sessionUpdated)))
+		hash := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d",
+			summary.ID, summary.State, summary.Title, summary.UpdatedAt, summary.WorkspaceID, sessionID, sessionUpdated, run)))
 		parts = append(parts, hex.EncodeToString(hash[:]))
 	}
 	sort.Strings(parts)
@@ -462,10 +522,11 @@ func recordGroupOf(state contract.TaskState) string {
 	}
 }
 
-// boundSession 任务所在的会话。
+// boundSession 任务所在的会话，以及它是会话里的第几次运行。
 type boundSession struct {
 	id     string
 	record *record
+	run    int
 }
 
 // sessionsByTask 任务 → 绑定了它的会话；同一任务绑在多个会话上时取最新的会话。
@@ -473,13 +534,15 @@ func (m *Manager) sessionsByTask() map[string]boundSession {
 	out := map[string]boundSession{}
 	for _, id := range m.visibleIDs() {
 		current, err := m.store.read(id)
-		if err != nil || current == nil || current.taskID == "" {
+		if err != nil || current == nil {
 			continue
 		}
-		if existing, ok := out[current.taskID]; ok && parseTime(existing.record.updatedAt).After(parseTime(current.updatedAt)) {
-			continue
+		for _, taskID := range current.taskIDs {
+			if existing, ok := out[taskID]; ok && parseTime(existing.record.updatedAt).After(parseTime(current.updatedAt)) {
+				continue
+			}
+			out[taskID] = boundSession{id: id, record: current, run: runNumberOf(current, taskID)}
 		}
-		out[current.taskID] = boundSession{id: id, record: current}
 	}
 	return out
 }

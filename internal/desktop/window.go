@@ -22,15 +22,19 @@ type Options struct {
 	Width, Height int
 	// Debug 打开开发者工具（仅开发构建）
 	Debug bool
+	// AppDir 应用目录：窗口状态（window-state.json）存在这里；为空则不记忆窗口状态
+	AppDir string
+	// Instance 单实例句柄：窗口建好后把窗口句柄登记给它，让后启动的实例能把窗口带到前台
+	Instance *Instance
 }
 
 // DefaultOptions 默认窗口尺寸与标题。
 func DefaultOptions(url string) Options {
 	return Options{
 		URL:    url,
-		Title:  "迷你数字员工",
-		Width:  1280,
-		Height: 860,
+		Title:  WindowTitle,
+		Width:  DefaultWidth,
+		Height: DefaultHeight,
 	}
 }
 
@@ -40,27 +44,40 @@ func Run(opts Options) error {
 		return fmt.Errorf("desktop: URL 不能为空")
 	}
 	if opts.Title == "" {
-		opts.Title = "迷你数字员工"
+		opts.Title = WindowTitle
 	}
 	if opts.Width <= 0 {
-		opts.Width = 1280
+		opts.Width = DefaultWidth
 	}
 	if opts.Height <= 0 {
-		opts.Height = 860
+		opts.Height = DefaultHeight
 	}
 
 	mygo.App.SetName("迷你数字员工")
 	mygo.App.SetVersion(appVersion())
+	installStateStore(opts)
 
+	// 创建窗口时 MyGo 遇到问题（没有 WebView2 等）会 panic：接住，让 Run 返回错误由调用方弹框
+	var windowErr error
 	mygo.App.WhenReady(func() {
-		win := mygo.NewWindow(mygo.WindowOptions{
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				windowErr = fmt.Errorf("desktop: 创建窗口失败: %v", recovered)
+				mygo.App.Quit()
+			}
+		}()
+		windowOptions := mygo.WindowOptions{
 			Title:     opts.Title,
 			URL:       opts.URL,
 			Width:     opts.Width,
 			Height:    opts.Height,
-			MinWidth:  960,
-			MinHeight: 640,
-		})
+			MinWidth:  MinWidth,
+			MinHeight: MinHeight,
+			Page:      pageOptions(),
+		}
+		applyShell(&windowOptions, opts)
+		win := mygo.NewWindow(windowOptions)
+		attachShell(win, opts)
 		if opts.Debug {
 			win.Page().OpenDevTools()
 		}
@@ -69,8 +86,25 @@ func Run(opts Options) error {
 	if err := mygo.App.Run(); err != nil {
 		return fmt.Errorf("desktop: 启动窗口失败: %w", err)
 	}
+	if windowErr != nil {
+		return windowErr
+	}
 	log.Println("desktop: 窗口已关闭")
 	return nil
+}
+
+// pageOptions 页面选项：这是桌面工作台，不是网页，页面不能被缩放。
+//
+// MyGo v0.7.4 只给了触控屏捏合缩放（PinchZoom）的开关，这里显式关掉，并把页面缩放固定为 100%、关掉滑动前进后退。
+// WebView2 的 IsZoomControlEnabled（Ctrl+滚轮）被 MyGo 固定为开、没有选项也拿不到 ICoreWebView2Settings，
+// 浏览器快捷键（Ctrl+加减号）只随开发者工具一起开关（关掉就没有 F12），所以这两条由前端兜底：
+// packages/web/src/view/zoom-guard.ts 拦 wheel、keydown 和手势事件。
+func pageOptions() mygo.PageOptions {
+	return mygo.PageOptions{
+		ZoomFactor:      1,
+		PinchZoom:       false,
+		SwipeNavigation: false,
+	}
 }
 
 // appVersion 由构建期 -ldflags 注入；默认开发版本。

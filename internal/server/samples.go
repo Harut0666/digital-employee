@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"digital-employee/internal/contract"
+	"digital-employee/internal/session"
 )
 
 // PublicSampleID 公开样例 id。
@@ -91,6 +92,20 @@ func readPublicSample(workspaceDir string) *publicSample {
 		return nil
 	}
 	return sample
+}
+
+// sessionSample 会话里“载入公开样例”用的样例：员工、预填的表单字段、应用目录里的样例文件。
+func (s *Server) sessionSample() *session.Sample {
+	// 样例材料从应用目录取（单目录模式下应用目录就是工作区目录）；不看人的工作目录
+	sample := readPublicSample(s.opts.AppDir)
+	if sample == nil {
+		return nil
+	}
+	out := &session.Sample{ID: sample.ID, Title: sample.Title, Employee: sample.Employee, Form: sample.Form}
+	for index, attachment := range sample.attachments {
+		out.Files = append(out.Files, session.SampleFile{Name: attachment.Name, Path: attachment.SourcePath, Size: sample.Files[index].Size})
+	}
+	return out
 }
 
 func (s *Server) handleListSamples(w http.ResponseWriter, r *http.Request) {

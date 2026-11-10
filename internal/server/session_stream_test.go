@@ -310,7 +310,7 @@ func cancelledTools(messages []session.Message) []string {
 func TestMessageIsAcceptedThenStreamed(t *testing.T) {
 	answer := "这项工作适合经营周报员工，请确认。"
 	h := newHarness(t, frontdeskScript(
-		agent.ScriptedTurn{ToolCalls: []agent.ScriptedToolCall{{Name: "propose_employee", Arguments: map[string]any{"employee": harnessEmployee}}}},
+		agent.ScriptedTurn{ToolCalls: []agent.ScriptedToolCall{{Name: "list_files", Arguments: map[string]any{}}}},
 		agent.ScriptedTurn{Text: &answer, ChunkSize: 4},
 	))
 	created := h.createSession()
@@ -323,7 +323,7 @@ func TestMessageIsAcceptedThenStreamed(t *testing.T) {
 		t.Fatal("看不到这一轮的事件")
 	}
 
-	// 顺序：工具开始 → 工具结束 → 卡片 → 文字增量…… → 一轮结束
+	// 顺序：工具开始 → 工具结束 → 文字增量…… → 一轮结束
 	types := eventTypes(events)
 	if first, last := types[:strings.Index(types, " ")], types[strings.LastIndex(types, " ")+1:]; first != "turn_start" || last != "turn_end" || !strings.HasPrefix(types, "turn_start tool_start") || !strings.Contains(types, "tool_end") || strings.Count(types, "turn_start") != 1 {
 		t.Fatalf("事件顺序 = %s", types)
@@ -341,17 +341,8 @@ func TestMessageIsAcceptedThenStreamed(t *testing.T) {
 		return out
 	}
 	started, ended := of(session.EventToolStart), of(session.EventToolEnd)
-	if len(started) != 1 || len(ended) != 1 || started[0].Tool != "propose_employee" || ended[0].Tool != "propose_employee" || ended[0].IsErr || started[0].ID != ended[0].ID {
+	if len(started) != 1 || len(ended) != 1 || started[0].Tool != "list_files" || ended[0].Tool != "list_files" || ended[0].IsErr || started[0].ID != ended[0].ID {
 		t.Fatalf("工具事件 = %+v / %+v", started, ended)
-	}
-	cards := []*session.Card{}
-	for _, event := range of(session.EventMessage) {
-		if event.Msg != nil && event.Msg.Card != nil {
-			cards = append(cards, event.Msg.Card)
-		}
-	}
-	if len(cards) != 1 || cards[0].Type != session.CardEmployeeConfirm || cards[0].Proposed != harnessEmployee {
-		t.Fatalf("流程卡片 = %+v", cards)
 	}
 	if got := textsOf(events); strings.TrimSpace(got) != answer {
 		t.Fatalf("文字增量 = %q", got)
@@ -365,7 +356,7 @@ func TestMessageIsAcceptedThenStreamed(t *testing.T) {
 	if text := lastAssistant(detail.Messages); text != answer {
 		t.Fatalf("一轮结束时写入的完整消息 = %q", text)
 	}
-	if calls := toolNamesOf(detail.Messages, session.KindToolCalled); fmt.Sprint(calls) != "[propose_employee]" {
+	if calls := toolNamesOf(detail.Messages, session.KindToolCalled); fmt.Sprint(calls) != "[list_files]" {
 		t.Fatalf("工具留痕 = %v", calls)
 	}
 }
@@ -445,7 +436,7 @@ func TestStopKeepsWhatWasSaidAndCancelsTheRest(t *testing.T) {
 			Text: stringPointer("接下来我再看看卡片，"),
 			ToolCalls: []agent.ScriptedToolCall{
 				{Name: contract.ToolQueryTask, Arguments: map[string]any{}},
-				{Name: "propose_card", Arguments: map[string]any{"type": session.CardPause}},
+				{Name: "list_files", Arguments: map[string]any{}},
 			},
 		},
 	), withModel(func(inner agent.ModelProvider) agent.ModelProvider {

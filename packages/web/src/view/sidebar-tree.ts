@@ -5,6 +5,16 @@
 // 分组也只照后端给的 workspaceId / group，前端不自己判断会话归哪个工作区、任务归哪组。
 
 import type { RecordGroup, RecordItem, SessionSummary, WorkspaceInfo } from "../api/types";
+import type { WorkspaceList } from "../api/workspaces";
+import { workspaceNameOf, type SessionFilter, type SessionSort } from "./workspace-view";
+
+/** 工作区列表 → 全部会话：各工作区自带的加上末尾的未归属。 */
+export function flattenSessions(list: WorkspaceList | undefined): SessionSummary[] {
+  if (!list) return [];
+  const known = new Set(list.workspaces.map((w) => w.id));
+  const owned = list.workspaces.flatMap((w) => w.sessions ?? []);
+  return [...owned, ...(list.unassigned ?? []).filter((s) => !known.has(s.workspaceId))];
+}
 
 export interface DotView {
   dot: "warning" | "processing" | "success" | "default";
@@ -35,28 +45,57 @@ export interface WorkspaceGroup {
   label: string;
   /** 未归属分组没有工作区 */
   workspace?: WorkspaceInfo;
-  /** 组里的会话总数（折叠时也照常显示） */
+  /** 组里的会话总数（折叠、只显示最近几条时也照常显示） */
   count: number;
   expanded: boolean;
   /** 当前打开的会话在这个组里（组标题描一下） */
   hasCurrent: boolean;
-  /** 折叠时为空 */
+  /** 显示出来的会话；整组折叠时为空，只显示最近几条时是那几条加抬高的 */
   sessions: SessionSummary[];
+  /** 被折起来的旧会话数（“展开 N 条”） */
+  hidden: number;
+  /** 已经点过“展开”：显示了全部，可以再“收起” */
+  showingAll: boolean;
 }
 
 export interface WorkspaceTreeOptions {
-  /** 显示已归档的会话 */
-  includeArchived: boolean;
+  /** 筛选会话；默认隐藏已归档 */
+  filter?: SessionFilter;
+  /** 排序；默认最近更新 */
+  sort?: SessionSort;
   /** 当前打开的会话 */
   currentId?: string;
+  /** 每个工作区默认显示几条；默认 5 */
+  limit?: number;
+  /** 已点过“展开”的组键（显示这些组的全部会话） */
+  showAll?: readonly string[];
 }
 
 const UNGROUPED = "ungrouped";
+/** 每个工作区默认显示的会话数 */
+export const DEFAULT_SESSION_LIMIT = 5;
 
 const newestFirst = (a: { updatedAt: string }, b: { updatedAt: string }) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+const byName = (a: { title: string }, b: { title: string }) => a.title.localeCompare(b.title, "zh-Hans-CN", { numeric: true, sensitivity: "base" });
+
+function applyFilter(sessions: readonly SessionSummary[], filter: SessionFilter): SessionSummary[] {
+  if (filter === "all") return [...sessions];
+  return sessions.filter((s) => (filter === "archived" ? s.archived === true : s.archived !== true));
+}
+
+function applySort(sessions: SessionSummary[], sort: SessionSort): SessionSummary[] {
+  // 名称相同的按最近更新在前，排序结果稳定
+  return sessions.sort(sort === "name" ? (a, b) => byName(a, b) || newestFirst(a, b) : newestFirst);
+}
+
+/** 即使是旧会话也要看得见：运行中、等你处理、已完成未读、当前打开的。 */
+function isLifted(session: SessionSummary, currentId: string | undefined): boolean {
+  return session.id === currentId || session.archived !== true && (session.statusDot === "running" || session.statusDot === "waiting" || unreadOf(session));
+}
 
 /**
- * 工作区 tab：每个工作区一组，组内按更新时间倒序；所属工作区已取消登记的会话放在最后的“未归属”。
+ * 工作区 tab：每个工作区一组，所属工作区已取消登记的会话放在最后的“未归属”。
+ * 每组默认只显示最近（按当前排序的前 limit 条）的会话，运行中 / 等你处理 / 未读 / 当前打开的会抬进显示范围，其余折成“展开 N 条”。
  * @param workspaces 后端登记的工作区（顺序即显示顺序）
  * @param sessions 后端给的全部会话摘要
  * @param collapsed 收起的工作区 ID（没收起过的默认展开）
@@ -65,16 +104,21 @@ export function groupSessionsByWorkspace(
   workspaces: readonly WorkspaceInfo[],
   sessions: readonly SessionSummary[],
   collapsed: readonly string[],
-  options: WorkspaceTreeOptions,
+  options: WorkspaceTreeOptions = {},
 ): WorkspaceGroup[] {
-  const visible = sessions.filter((s) => options.includeArchived || !s.archived);
+  const visible = applyFilter(sessions, options.filter ?? "active");
+  const sort = options.sort ?? "recent";
+  const limit = options.limit ?? DEFAULT_SESSION_LIMIT;
   const known = new Set(workspaces.map((w) => w.id));
   const folded = new Set(collapsed);
+  const expandedAll = new Set(options.showAll ?? []);
   const group = (key: string, label: string, workspace: WorkspaceInfo | undefined, members: readonly SessionSummary[]): WorkspaceGroup => {
-    const sorted = [...members].sort(newestFirst);
+    const sorted = applySort([...members], sort);
     const hasCurrent = options.currentId !== undefined && sorted.some((s) => s.id === options.currentId);
     const expanded = !folded.has(key);
-    return { key, label, workspace, count: sorted.length, expanded, hasCurrent, sessions: expanded ? sorted : [] };
+    const showingAll = expandedAll.has(key) && sorted.length > limit;
+    const shown = showingAll ? sorted : sorted.filter((s, index) => index < limit || isLifted(s, options.currentId));
+    return { key, label, workspace, count: sorted.length, expanded, hasCurrent, sessions: expanded ? shown : [], hidden: sorted.length - shown.length, showingAll };
   };
   const groups = workspaces.map((workspace) =>
     group(
@@ -89,6 +133,17 @@ export function groupSessionsByWorkspace(
   return groups;
 }
 
+/** 单列表模式的一行：会话加上所属工作区名。 */
+export interface FlatRow {
+  session: SessionSummary;
+  workspaceName: string;
+}
+
+/** 单列表：全部工作区的会话合成一个列表（按筛选和排序），每行带工作区名。 */
+export function flatSessionList(workspaces: readonly WorkspaceInfo[], sessions: readonly SessionSummary[], options: Pick<WorkspaceTreeOptions, "filter" | "sort"> = {}): FlatRow[] {
+  const sorted = applySort(applyFilter(sessions, options.filter ?? "active"), options.sort ?? "recent");
+  return sorted.map((session) => ({ session, workspaceName: workspaceNameOf(session, workspaces) }));
+}
 export interface RecordGroupView {
   key: RecordGroup;
   label: string;
@@ -112,6 +167,13 @@ export function groupRecords(records: readonly RecordItem[]): RecordGroupView[] 
     label,
     items: records.filter((r) => r.group === key),
   }));
+}
+
+/** 记录里的“第几次运行”：同一个会话先后运行了多个任务时每行标出；只运行过一次的不标。 */
+export function runLabel(item: Pick<RecordItem, "sessionId" | "runNumber">, records: readonly Pick<RecordItem, "sessionId">[]): string {
+  if (!item.sessionId || !item.runNumber) return "";
+  const sameSession = records.filter((record) => record.sessionId === item.sessionId).length;
+  return sameSession > 1 || item.runNumber > 1 ? `第 ${item.runNumber} 次运行` : "";
 }
 
 /** 记录里的一条：副标题（员工 · 工作区）。 */

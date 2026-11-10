@@ -152,69 +152,6 @@ func textOf(t *testing.T, messages []session.Message, kind string) string {
 	return ""
 }
 
-func TestOneSentenceGetsAnEmployeeProposal(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee, "reason": "要出经营周报"}),
-		modelSays("这项工作适合经营周报员工，请确认。"),
-	), withScriptedModel())
-	created := h.createSession()
-
-	h.sayTurn(created.ID, contract.RoleInitiator, "帮我出第 44 周的周报")
-	reply := h.saidAfter(created.ID)
-
-	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "这项工作适合经营周报员工，请确认。" {
-		t.Fatalf("回复 = %q", got)
-	}
-	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
-	if card.Proposed != harnessEmployee || card.Source != session.SourceModel || card.Reason != "要出经营周报" {
-		t.Fatalf("员工确认卡片 = %+v", card)
-	}
-	if len(card.Candidates) != 1 || card.Candidates[0].Name != "经营周报员工" {
-		t.Fatalf("候选员工 = %+v", card.Candidates)
-	}
-
-	// 提议不等于接手：人确认之前会话里没有员工
-	got := h.readSession(created.ID)
-	if got.Employee != "" || got.Status != session.StatusReception {
-		t.Fatalf("会话 = %+v", got)
-	}
-	if textOf(t, got.Messages, session.KindUser) != "帮我出第 44 周的周报" {
-		t.Fatalf("历史里没有用户的话：%+v", got.Messages)
-	}
-	if got.Title != "帮我出第 44 周的周报" {
-		t.Fatalf("标题 = %q", got.Title)
-	}
-
-	// 模型按员工名称和描述判断，所以这些要出现在它收到的提示词里
-	requests := h.provider.Requests()
-	if len(requests) != 2 {
-		t.Fatalf("模型调用次数 = %d", len(requests))
-	}
-	first := requests[0].Request
-	if first.Messages[0].Role != "system" || !strings.Contains(first.Messages[0].Content[0].Text, "经营周报员工") {
-		t.Fatalf("模型收到的系统提示词：%+v", first.Messages[0])
-	}
-	if len(first.Tools) != 1 || first.Tools[0].Name != "propose_employee" {
-		t.Fatalf("接待阶段开放的工具：%+v", first.Tools)
-	}
-}
-
-func TestProposingAnUnknownEmployeeFallsBackToManualPick(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_employee", map[string]any{"employee": "no-such-employee"}),
-		modelSays("抱歉，我判断不出。"),
-	), withScriptedModel())
-	created := h.createSession()
-
-	h.sayTurn(created.ID, contract.RoleInitiator, "随便干点什么")
-	reply := h.saidAfter(created.ID)
-
-	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
-	if card.Proposed != "" || card.Source != session.SourceManual || len(card.Candidates) != 1 {
-		t.Fatalf("模型提议不存在的员工时应列出员工手选：%+v", card)
-	}
-}
-
 // confirm 人在卡片上确认员工。
 func (h *harness) confirm(sessionID string, role contract.Role, employee string) session.Reply {
 	h.t.Helper()
@@ -243,99 +180,7 @@ func toolNames(specs []agent.ToolSpec) []string {
 	return names
 }
 
-func TestConfirmingAnEmployeeFillsTheFormDraft(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee}),
-		modelSays("请确认由经营周报员工接手。"),
-		modelCalls("fill_form_draft", map[string]any{
-			"period": map[string]any{"year": 2026, "week": 44},
-			"remark": "摘要先写区域情况",
-		}),
-		modelSays("已经填好统计周期，请检查后提交。"),
-	), withScriptedModel())
-	created := h.createSession()
-	h.say(created.ID, contract.RoleInitiator, "出第 44 周周报，摘要先写区域情况")
-
-	reply := h.confirmed(created.ID, harnessEmployee)
-
-	card := cardOf(t, messagesOf(reply), session.CardForm)
-	if card.Employee != harnessEmployee || weekOf(t, card.Draft) != 44 || card.Draft["remark"] != "摘要先写区域情况" {
-		t.Fatalf("表单卡片 = %+v", card)
-	}
-	if got := textOf(t, messagesOf(reply), session.KindAssistant); got != "已经填好统计周期，请检查后提交。" {
-		t.Fatalf("回复 = %q", got)
-	}
-	got := h.readSession(created.ID)
-	if got.Status != session.StatusDrafting || got.Employee != harnessEmployee || weekOf(t, got.Draft) != 44 {
-		t.Fatalf("会话 = %+v", got)
-	}
-
-	// 接手后换成员工的 frontdesk.md，并能看到此前的对话
-	requests := h.provider.Requests()
-	handover := requests[2].Request
-	system := handover.Messages[0].Content[0].Text
-	if !strings.Contains(system, "经营周报员工会话里的前台 Agent") {
-		t.Fatalf("接手后的系统提示词：%s", system)
-	}
-	if !strings.Contains(fmt.Sprint(handover.Messages), "出第 44 周周报") {
-		t.Fatalf("模型没看到此前的对话：%+v", handover.Messages)
-	}
-	if !strings.Contains(fmt.Sprint(toolNames(handover.Tools)), "fill_form_draft") {
-		t.Fatalf("接手后开放的工具：%v", toolNames(handover.Tools))
-	}
-}
-
-func TestModelUnavailableStillLetsThePersonPickAnEmployee(t *testing.T) {
-	cases := map[string]agent.ModelScript{
-		"模型报错": frontdeskScript(agent.ScriptedTurn{Error: stringPointer("模型接口返回 401：invalid key")}),
-		"没有剧本": nil,
-	}
-	for name, script := range cases {
-		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, script, withScriptedModel())
-			created := h.createSession()
-
-			h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
-			reply := h.saidAfter(created.ID)
-
-			if got := textOf(t, messagesOf(reply), session.KindNotice); !strings.Contains(got, "模型暂时不可用") {
-				t.Fatalf("说明 = %q", got)
-			}
-			card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
-			if card.Proposed != "" || card.Source != session.SourceManual || len(card.Candidates) != 1 {
-				t.Fatalf("手选卡片 = %+v", card)
-			}
-
-			h.confirmed(created.ID, card.Candidates[0].ID)
-
-			// 人还没说话时没有填表那一轮：空白表单由界面照着会话现状给出，不另写一条
-			got := h.readSession(created.ID)
-			form := session.Card{Type: session.CardForm, Employee: got.Employee, Draft: got.Draft}
-			if form.Employee != harnessEmployee || len(form.Draft) != 0 {
-				t.Fatalf("手选后应给出空白表单：%+v", form)
-			}
-			if got.Employee != harnessEmployee {
-				t.Fatalf("会话 = %+v", got)
-			}
-		})
-	}
-}
-
 func stringPointer(text string) *string { return &text }
-
-func TestEmployeeCanBePickedBeforeSayingAnything(t *testing.T) {
-	h := newHarness(t, nil, withScriptedModel())
-	created := h.createSession()
-
-	reply := h.confirmed(created.ID, harnessEmployee)
-
-	if form := cardOf(t, messagesOf(reply), session.CardForm); form.Employee != harnessEmployee {
-		t.Fatalf("表单卡片 = %+v", form)
-	}
-	if calls := len(h.provider.Requests()); calls != 0 {
-		t.Fatalf("没人说话时不该调模型，调了 %d 次", calls)
-	}
-}
 
 func TestOnlyTheInitiatorConfirmsAnEmployeeAndOnlyOnce(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
@@ -371,29 +216,6 @@ func (h *harness) setDefaultEmployee(employee string) (int, []byte) {
 	return h.send(http.MethodPatch, "/api/settings/app", contract.RoleInitiator, "application/json", bytes.NewReader(raw))
 }
 
-func TestDefaultEmployeeIsProposedWithoutAskingTheModel(t *testing.T) {
-	h := newHarness(t, nil, withScriptedModel())
-	if status, data := h.setDefaultEmployee(harnessEmployee); status != http.StatusOK {
-		t.Fatalf("设置默认员工失败：%d %s", status, data)
-	}
-	created := h.createSession()
-
-	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
-	reply := h.saidAfter(created.ID)
-
-	card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm)
-	if card.Proposed != harnessEmployee || card.Source != session.SourceDefault {
-		t.Fatalf("员工确认卡片 = %+v", card)
-	}
-	if calls := len(h.provider.Requests()); calls != 0 {
-		t.Fatalf("有默认员工时不该调模型，调了 %d 次", calls)
-	}
-	// 仍由人确认
-	if got := h.readSession(created.ID); got.Employee != "" {
-		t.Fatalf("默认员工也要人确认：%+v", got)
-	}
-}
-
 func TestDefaultEmployeeMustExist(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
 
@@ -409,45 +231,6 @@ func TestDefaultEmployeeMustExist(t *testing.T) {
 	}
 	if status, data := h.setDefaultEmployee(""); status != http.StatusOK {
 		t.Fatalf("清除默认员工失败：%d %s", status, data)
-	}
-}
-
-func TestDeletedDefaultEmployeeFallsThroughToTheModel(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee}),
-		modelSays("请确认。"),
-	), withScriptedModel())
-	if status, data := h.setDefaultEmployee(harnessEmployee); status != http.StatusOK {
-		t.Fatalf("设置默认员工失败：%d %s", status, data)
-	}
-	// 手改设置文件留下一个已不存在的员工
-	path := filepath.Join(h.workspace, "settings.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, bytes.ReplaceAll(raw, []byte(`"defaultEmployee": "`+harnessEmployee+`"`), []byte(`"defaultEmployee": "gone"`)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	created := h.createSession()
-
-	// 用事件流收：回复返回时这一轮可能刚开出来，还没结束（不能靠取消流来退出）
-	stream := h.openStream(created.ID)
-	defer stream.close()
-	turn := h.sayAsync(created.ID, contract.RoleInitiator, "出周报")
-
-	events := h.waitTurn(stream, turn)
-	if events == nil {
-		t.Fatal("看不到这一轮的事件")
-	}
-	var proposed []string
-	for _, event := range events {
-		if event.Type == session.EventMessage && event.Msg != nil && event.Msg.Card != nil {
-			proposed = append(proposed, event.Msg.Card.Source)
-		}
-	}
-	if fmt.Sprint(proposed) != "[model]" {
-		t.Fatalf("默认员工已不存在时应走模型提议：%v", proposed)
 	}
 }
 
@@ -527,40 +310,6 @@ func TestSubmittingCreatesTheTaskWithTheUploadedMaterials(t *testing.T) {
 	got := h.readSession(created.ID)
 	if got.TaskID != taskID || fmt.Sprint(got.WaitingFor) != fmt.Sprint([]contract.Role{contract.RoleInitiator}) || got.StatusText == "" {
 		t.Fatalf("提交后读到的会话：%+v", got)
-	}
-}
-
-func TestSubmitUsesTheDraftWhenTheCardSendsNoForm(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
-		modelSays("已填好。"),
-	), withScriptedModel())
-	created := h.createSession()
-	h.confirmed(created.ID, harnessEmployee)
-	h.say(created.ID, contract.RoleInitiator, "第 44 周")
-	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
-
-	reply := h.submit(created.ID, nil)
-
-	if week := weekOf(t, h.settled(reply.Session.TaskID).Form); week != 44 {
-		t.Fatalf("任务的统计周期 = %v", week)
-	}
-}
-
-func TestSubmitFormFromTheCardWinsOverTheDraft(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 43}}),
-		modelSays("已填好。"),
-	), withScriptedModel())
-	created := h.createSession()
-	h.confirmed(created.ID, harnessEmployee)
-	h.say(created.ID, contract.RoleInitiator, "第 43 周")
-	uploadOK(h, created.ID, sampleFile(t, "销售明细.xlsx"))
-
-	reply := h.submit(created.ID, week44Form)
-
-	if week := weekOf(t, h.settled(reply.Session.TaskID).Form); week != 44 {
-		t.Fatalf("人在卡片上改的内容才算数，任务的统计周期 = %v", week)
 	}
 }
 
@@ -732,7 +481,7 @@ func TestWhyPausedIsAnsweredFromTheRealSnapshot(t *testing.T) {
 	if strings.Contains(toolResult.Content[0].Text, h.workspace) {
 		t.Fatalf("工具结果泄露了本地路径：%s", toolResult.Content[0].Text)
 	}
-	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task propose_card list_files read_file use_folder_file]" {
+	if names := fmt.Sprint(toolNames(requests[0].Request.Tools)); names != "[query_task run_employee todo_write ask_user_question list_files read_file use_folder_file find_files search_content write_file edit_file shell]" {
 		t.Fatalf("任务开始后开放的工具：%s", names)
 	}
 }
@@ -753,7 +502,7 @@ func TestModelDownStillTellsTheTaskStatus(t *testing.T) {
 func TestAgentCannotPushTheTask(t *testing.T) {
 	forbidden := []string{
 		"submit", "supplement", "retry", "terminate", "approve", "return", "continue_without_minutes",
-		contract.ToolLoadSales, contract.ToolRenderReportDocx, contract.ToolAdminSetFaults, "fill_form_draft", "propose_employee",
+		contract.ToolLoadSales, contract.ToolRenderReportDocx, contract.ToolAdminSetFaults, "fill_form_draft", "propose_employee", "propose_card",
 	}
 	for _, name := range forbidden {
 		t.Run(name, func(t *testing.T) {
@@ -800,54 +549,6 @@ func TestAgentCannotPeekAtAnotherTask(t *testing.T) {
 	refused := entriesOf(h.readSession(opened.ID).Messages, session.KindToolDenied)
 	if len(refused) != 1 || refused[0].Tool != "query_task" {
 		t.Fatalf("查别的任务应被拒绝并留痕：%+v", refused)
-	}
-}
-
-func TestAgentCannotChooseForThePersonInTheDraft(t *testing.T) {
-	for _, field := range []string{"allowMissingMinutes", "allowPartialPeriod", "salesFile"} {
-		t.Run(field, func(t *testing.T) {
-			h := newHarness(t, frontdeskScript(
-				modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}, field: true}),
-				modelSays("这一项要你自己决定。"),
-			), withScriptedModel())
-			created := h.createSession()
-			h.confirmed(created.ID, harnessEmployee)
-
-			h.sayTurn(created.ID, contract.RoleInitiator, "没有纪要也继续")
-			reply := h.saidAfter(created.ID)
-
-			got := h.readSession(created.ID)
-			if len(got.Draft) != 0 {
-				t.Fatalf("越权的草稿不该写入：%+v", got.Draft)
-			}
-			if refused := entriesOf(got.Messages, session.KindToolDenied); len(refused) != 1 {
-				t.Fatalf("越权字段应被拒绝并留痕：%+v", got.Messages)
-			}
-			for _, message := range messagesOf(reply) {
-				if message.Card != nil && message.Card.Type == session.CardForm && len(message.Card.Draft) != 0 {
-					t.Fatalf("被拒绝的草稿不该进表单卡片：%+v", message.Card)
-				}
-			}
-		})
-	}
-}
-
-func TestInvalidDraftValueIsReturnedToTheModel(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 99}}),
-		modelSays("第 99 周不存在，请确认是哪一周。"),
-	), withScriptedModel())
-	created := h.createSession()
-	h.confirmed(created.ID, harnessEmployee)
-
-	h.say(created.ID, contract.RoleInitiator, "第 99 周")
-
-	got := h.readSession(created.ID)
-	if len(got.Draft) != 0 {
-		t.Fatalf("不合法的值不该进草稿：%+v", got.Draft)
-	}
-	if refused := entriesOf(got.Messages, session.KindToolDenied); len(refused) != 0 {
-		t.Fatalf("填错不算越权：%+v", refused)
 	}
 }
 
@@ -913,51 +614,6 @@ func TestPauseShowsUpAsACardWithLiveActions(t *testing.T) {
 	}
 	if len(cards[0].Actions) != 0 || len(cards[1].Actions) == 0 {
 		t.Fatalf("旧卡片应失效，新卡片应可用：%+v", cards)
-	}
-}
-
-func TestProposedCardActionsComeFromTheProgram(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_card", map[string]any{
-			"type":    session.CardPause,
-			"actions": []any{map[string]any{"command": "approve", "label": "直接通过", "roles": []any{"initiator"}}},
-		}),
-		modelSays("请看卡片。"),
-	), withScriptedModel())
-	opened, snapshot := pausedSession(h)
-
-	h.sayTurn(opened.ID, contract.RoleInitiator, "我现在该做什么")
-	reply := h.saidAfter(opened.ID)
-
-	proposed := cardOf(t, messagesOf(reply), session.CardPause)
-	if proposed.TaskID != snapshot.ID || fmt.Sprint(proposed.Actions) != fmt.Sprint(snapshot.Actions) {
-		t.Fatalf("回复里的卡片 = %+v", proposed)
-	}
-	card := cardOf(t, h.readSession(opened.ID).Messages, session.CardPause)
-	if fmt.Sprint(card.Actions) != fmt.Sprint(snapshot.Actions) {
-		t.Fatalf("卡片上的操作只能来自快照：%+v", card.Actions)
-	}
-}
-
-func TestProposedCardMustMatchTheTask(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("propose_card", map[string]any{"type": session.CardReview, "comment": "直接退回"}),
-		modelCalls("propose_card", map[string]any{"type": "transfer_money"}),
-		modelSays("现在不是审核阶段。"),
-	), withScriptedModel())
-	opened, _ := pausedSession(h)
-
-	h.sayTurn(opened.ID, contract.RoleInitiator, "退回")
-	reply := h.saidAfter(opened.ID)
-
-	// 卡片都由程序按任务快照给出：模型点名不符的类型要不到（回复里不带任务卡片；表单卡片照常按任务现状给）
-	for _, message := range messagesOf(reply) {
-		if message.Card == nil {
-			continue
-		}
-		if message.Card.Type == session.CardReview || message.Card.Type == "transfer_money" || message.Card.Comment != "" {
-			t.Fatalf("和任务状态不符的卡片不该发出：%+v", message.Card)
-		}
 	}
 }
 
@@ -1033,10 +689,7 @@ func TestSessionListHasNewestFirstAndEachTaskOnce(t *testing.T) {
 }
 
 func TestSessionSurvivesARestart(t *testing.T) {
-	h := newHarness(t, frontdeskScript(
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
-		modelSays("已填好。"),
-	), withScriptedModel())
+	h := newHarness(t, frontdeskScript(modelSays("好的。")), withScriptedModel())
 	created := h.createSession()
 	h.confirmed(created.ID, harnessEmployee)
 	h.say(created.ID, contract.RoleInitiator, "第 44 周")
@@ -1047,13 +700,13 @@ func TestSessionSurvivesARestart(t *testing.T) {
 	h.baseURL = h.serve()
 
 	got := h.readSession(created.ID)
-	if got.Employee != harnessEmployee || weekOf(t, got.Draft) != 44 || len(got.Attachments) != 1 {
+	if got.Employee != harnessEmployee || len(got.Attachments) != 1 {
 		t.Fatalf("重启后的会话 = %+v", got)
 	}
 	if textOf(t, got.Messages, session.KindUser) != "第 44 周" {
 		t.Fatalf("重启后的历史 = %+v", got.Messages)
 	}
-	reply := h.submit(created.ID, nil)
+	reply := h.submit(created.ID, week44Form)
 	if reply.Session.TaskID == "" {
 		t.Fatalf("重启后不能提交：%+v", reply)
 	}
@@ -1116,7 +769,8 @@ func TestMessageWhileReplyingIsDeliveredBeforeTheNextStep(t *testing.T) {
 	if detail := h.readSession(created.ID); lastAssistant(detail.Messages) != "好的。" {
 		t.Fatalf("回复 = %q", lastAssistant(detail.Messages))
 	}
-	requests := frontdeskRequests(h)
+	// 新一轮在上一轮结束后才开始（要先读员工配置）：等第二次模型调用出现
+	requests := h.waitRequests(2)
 	if len(requests) != 2 {
 		t.Fatalf("模型调用次数 = %d", len(requests))
 	}
@@ -1255,8 +909,8 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
 	reply := h.saidAfter(created.ID)
 
-	if card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm); card.Source != session.SourceManual {
-		t.Fatalf("模型失败时应手选：%+v", card)
+	if len(reply.Messages) == 0 {
+		t.Fatal("模型失败后会话里应有留痕")
 	}
 	_, data := h.send(http.MethodGet, "/api/sessions/"+created.ID, "", "", nil)
 	if strings.Contains(string(data), "local-test-key") {
@@ -1267,83 +921,8 @@ func TestModelFailureNeverLeaksTheKey(t *testing.T) {
 	}
 }
 
-func TestNoKeyMeansManualPickWithoutCallingTheModel(t *testing.T) {
-	fake, received := chatServer(t)
-	h := newHarness(t, nil, withScriptedModel(), withRealFrontdeskRoute(fake.URL, ""))
-	created := h.createSession()
-
-	h.sayTurn(created.ID, contract.RoleInitiator, "出周报")
-	reply := h.saidAfter(created.ID)
-
-	if card := cardOf(t, messagesOf(reply), session.CardEmployeeConfirm); card.Source != session.SourceManual {
-		t.Fatalf("没有 Key 时应手选：%+v", card)
-	}
-	if len(*received) != 0 {
-		t.Fatalf("没有 Key 不该发请求，发了 %d 次", len(*received))
-	}
-}
-
 // returnComment A-01-rework 剧本对应的退回意见。
 const returnComment = "摘要请再精简，突出本周最重要的两个异常。"
-
-func TestConversationFromOneSentenceToDelivery(t *testing.T) {
-	script := caseScript(t, "A-01-rework")
-	script[agent.FrontdeskStepID] = []agent.ScriptedTurn{
-		modelCalls("propose_employee", map[string]any{"employee": harnessEmployee, "reason": "要出经营周报"}),
-		modelSays("请确认由经营周报员工接手。"),
-		modelCalls("fill_form_draft", map[string]any{"period": map[string]any{"year": 2026, "week": 44}}),
-		modelSays("已填好第 44 周，请上传材料后提交。"),
-		modelCalls("propose_card", map[string]any{"type": session.CardReview, "comment": returnComment, "sections": []any{"summary"}}),
-		modelSays("退回意见已写好，请在卡片上确认。"),
-	}
-	h := newHarness(t, script, withScriptedModel())
-	created := h.createSession()
-	h.say(created.ID, initiator, "出第 44 周周报")
-	h.confirmed(created.ID, harnessEmployee)
-	if status, data := h.uploadTo(created.ID, a01Files(t)); status != http.StatusOK {
-		t.Fatalf("上传失败：%d %s", status, data)
-	}
-
-	taskID := h.submit(created.ID, nil).Session.TaskID
-	snapshot := h.settled(taskID)
-	expectState(t, snapshot, contract.StateAwaitingReview)
-
-	// 审核人在对话里说，只得到一张草稿卡片，任务不动
-	h.sayTurn(created.ID, reviewer, "摘要太长了，退回吧")
-	reply := h.saidAfter(created.ID)
-	card := cardOf(t, messagesOf(reply), session.CardReview)
-	if card.Comment != returnComment || fmt.Sprint(card.Sections) != "[summary]" || len(card.Actions) == 0 {
-		t.Fatalf("审核卡片 = %+v", card)
-	}
-	if after := h.snapshot(taskID); after.State != contract.StateAwaitingReview || after.LastSeq != snapshot.LastSeq {
-		t.Fatalf("对话不能推进任务：%s", after.State)
-	}
-	requests := frontdeskRequests(h)
-	if system := requests[len(requests)-1].Request.Messages[0].Content[0].Text; !strings.Contains(system, "审核人") {
-		t.Fatalf("模型不知道在和谁说话：%s", system)
-	}
-
-	// 人点了卡片才退回
-	expectState(t, h.command(taskID, reviewer, map[string]any{"type": contract.CmdReturn, "comment": card.Comment, "sections": card.Sections}), contract.StateAwaitingReview)
-	expectState(t, h.command(taskID, reviewer, cmd(contract.CmdApprove)), contract.StateDelivered)
-
-	got := h.readSession(created.ID)
-	if got.Status != session.StatusClosed || got.TaskState != contract.StateDelivered {
-		t.Fatalf("交付后的会话 = %+v", got)
-	}
-	if text := textOf(t, got.Messages, session.KindNotice); text != "任务已交付。" {
-		t.Fatalf("最后的说明 = %q", text)
-	}
-	if qc := cardOf(t, got.Messages, session.CardQC); qc.Passed == nil || !*qc.Passed {
-		t.Fatalf("质检卡片 = %+v", qc)
-	}
-	if review := cardOf(t, got.Messages, session.CardReview); len(review.Actions) != 0 {
-		t.Fatalf("交付后审核卡片不该有按钮：%+v", review.Actions)
-	}
-	if status, data := h.trySubmit(created.ID, initiator, week44Form); status != http.StatusConflict {
-		t.Fatalf("交付后再提交：%d %s", status, data)
-	}
-}
 
 func TestNewSessionHasEmptyHistoryAndNoTask(t *testing.T) {
 	h := newHarness(t, nil, withScriptedModel())
@@ -1370,5 +949,51 @@ func TestUnknownSessionIsNotFound(t *testing.T) {
 		if status != http.StatusNotFound {
 			t.Fatalf("%s：%d %s", id, status, data)
 		}
+	}
+}
+
+func TestConversationFromOneSentenceToDelivery(t *testing.T) {
+	script := runScript(t,
+		runEmployeeCall(period44, folderSales, folderMinutes),
+		modelSays("表单已发给你，请核对后确认开工。"),
+		modelSays("周报在待审核，审核人在右侧审核。"),
+	)
+	h := newHarness(t, script, withScriptedModel())
+	h.putFolderMaterials(t)
+	created := h.createSession()
+	stream := h.openStream(created.ID)
+	defer stream.close()
+	turn := h.sayAsync(created.ID, initiator, "出第 44 周周报")
+	card := h.waitForm(created.ID)
+	h.mustConfirmForm(created.ID, card, nil)
+	h.waitTurn(stream, turn)
+	detail := h.readSession(created.ID)
+	taskID := startedTask(t, detail)
+	snapshot := h.settled(taskID)
+	expectState(t, snapshot, contract.StateAwaitingReview)
+
+	// 审核人在对话里说话，Agent 只能回答，任务不动
+	h.sayTurn(created.ID, reviewer, "现在到哪了")
+	if after := h.snapshot(taskID); after.State != contract.StateAwaitingReview || after.LastSeq != snapshot.LastSeq {
+		t.Fatalf("对话不能推进任务：%s", after.State)
+	}
+	requests := frontdeskRequests(h)
+	if system := requests[len(requests)-1].Request.Messages[0].Content[0].Text; !strings.Contains(system, "审核人") {
+		t.Fatalf("模型不知道在和谁说话：%s", system)
+	}
+
+	expectState(t, h.command(taskID, reviewer, cmd(contract.CmdApprove)), contract.StateDelivered)
+	got := h.readSession(created.ID)
+	if got.Status != session.StatusClosed || got.TaskState != contract.StateDelivered {
+		t.Fatalf("交付后的会话 = %+v", got)
+	}
+	if text := textOf(t, got.Messages, session.KindNotice); text != "任务已交付。" {
+		t.Fatalf("最后的说明 = %q", text)
+	}
+	if qc := cardOf(t, got.Messages, session.CardQC); qc.Passed == nil || !*qc.Passed {
+		t.Fatalf("质检卡片 = %+v", qc)
+	}
+	if review := cardOf(t, got.Messages, session.CardReview); len(review.Actions) != 0 {
+		t.Fatalf("交付后审核卡片不该有按钮：%+v", review.Actions)
 	}
 }

@@ -1,0 +1,343 @@
+/*
+ * 对话里的流程卡片（员工表单、权限确认、暂停、质检、送审、交付、入库、使用目录文件…）：
+ * 统一的卡片风格——左侧细色条 + 标题行（图标、标题、右侧状态胶囊）+ 内容 + 操作区。
+ * 色条与图标的颜色由 --accent 决定：默认品牌色，.ok 完成、.warn 等你处理、.danger 出错；
+ * 答复过的卡片（.muted）收成一行安静的小字，不再占版面。
+ */
+
+.card {
+  --accent: var(--primary);
+  position: relative;
+  padding: var(--sp-3) var(--sp-4) var(--sp-3) calc(var(--sp-4) + 2px);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+}
+.card.ok {
+  --accent: var(--dot-done);
+}
+.card.warn {
+  --accent: var(--dot-waiting);
+  background: color-mix(in srgb, var(--tone-waiting-soft) 45%, var(--card));
+}
+.card.danger {
+  --accent: var(--dot-error);
+  background: color-mix(in srgb, var(--tone-error-soft) 45%, var(--card));
+}
+/* 答复过 / 已处理的卡片：一行小字 */
+.card.muted {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  overflow: visible;
+}
+.card.muted::before {
+  display: none;
+}
+.card.muted .anticon {
+  margin-right: 4px;
+}
+.card.permission-done.denied,
+.card.permission-done.cancelled {
+  color: var(--tone-error);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 600;
+  font-size: calc(var(--font-size) + 1px);
+  line-height: var(--lh-tight);
+}
+.card-title > .anticon:first-child {
+  flex: none;
+  color: var(--accent);
+}
+.card-title .pill {
+  margin-left: auto;
+}
+.card-body {
+  margin-top: 6px;
+  color: var(--text-2);
+}
+.card-body.chat-sub {
+  color: var(--muted);
+}
+.card-section-title {
+  margin-top: var(--sp-4);
+  color: var(--text);
+  font-weight: 600;
+}
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.handoff {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  color: var(--text-2);
+  font-size: var(--fs-md);
+}
+.permission-card .card-body b {
+  word-break: break-all;
+}
+.review-pause {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+}
+
+/* 员工表单卡：字段、材料、开工清单、操作 */
+.form-card .ant-form-item {
+  margin-bottom: var(--sp-3);
+}
+.employee-form-card {
+  padding-bottom: var(--sp-4);
+}
+.employee-form-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.employee-form-marks .ant-tag {
+  margin: 0;
+}
+.employee-form-materials {
+  margin: var(--sp-3) 0 var(--sp-2);
+  padding-top: var(--sp-3);
+  border-top: 1px dashed var(--line);
+}
+.employee-form-materials > .card-section-title {
+  margin-top: 0;
+}
+.employee-form-material {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+}
+.employee-form-material .ant-tag {
+  margin: 0 0 0 auto;
+}
+.form-uploads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.form-upload {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+}
+.form-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.employee-form-card .checklist {
+  margin: var(--sp-3) 0 0;
+}
+.employee-form-blockers {
+  color: var(--tone-waiting);
+}
+.week-field {
+  margin-bottom: var(--sp-3);
+}
+.week-field-label {
+  margin-bottom: 6px;
+}
+.week-field-range {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+.chip {
+  padding: 2px 10px;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--r-md);
+  background: var(--chip-bg);
+  color: var(--chip-text);
+  font-size: var(--fs-md);
+}
+.chip.bad {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+.section-grid .ant-checkbox-wrapper {
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+/* ---------- 开工清单与质检的清单行（T30） ---------- */
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 4px 0;
+}
+.check-row .check-label {
+  flex: 1;
+  min-width: 0;
+}
+.check-row .check-detail {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.check-row .state {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-md);
+}
+.check-icon {
+  flex: none;
+  display: inline-flex;
+}
+.tone-ok .check-icon {
+  color: var(--tone-done);
+}
+.tone-todo .check-icon {
+  color: var(--dot-idle);
+}
+.tone-skip .check-icon,
+.tone-skip .state {
+  color: var(--tone-waiting);
+}
+.tone-bad,
+.tone-bad .state {
+  color: var(--tone-error);
+}
+.checklist {
+  margin: 0 var(--sp-4) var(--sp-2);
+  padding: 10px var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+}
+.checklist.ready {
+  border-color: transparent;
+  background: var(--primary-soft);
+}
+.checklist.collapsed {
+  padding: 0;
+}
+.checklist-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+button.checklist-line {
+  padding: 10px var(--sp-3);
+  cursor: pointer;
+}
+.checklist-line .check-icon {
+  color: var(--dot-idle);
+}
+.checklist.ready .checklist-line .check-icon {
+  color: var(--primary);
+}
+.checklist-toggle {
+  margin-left: auto;
+  color: var(--muted);
+}
+.checklist .check-rows {
+  margin-top: 6px;
+}
+.checklist.collapsed .check-rows {
+  margin: 0;
+  padding: 0 var(--sp-3) 10px;
+}
+.checklist-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.empty-box {
+  padding: 22px 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ---------- Agent 写的文件：一行，点开看改动 ---------- */
+.file-change {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card-2);
+}.file-change {
+  padding: 6px var(--sp-3);
+  font-size: var(--fs-md);
+}
+.file-change .ant-collapse-header {
+  padding: 0 !important;
+}
+.file-change .ant-collapse-content-box {
+  padding: var(--sp-2) 0 0 !important;
+}
+.file-change-head.bad {
+  color: var(--tone-error);
+}
+.file-change-body {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.permission-trace.denied {
+  color: var(--tone-error);
+}

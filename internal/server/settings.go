@@ -1,8 +1,7 @@
 // 设置页后端（docs/design.md §14.1、Spec 0004），对应 packages/server/src/routes/settings.ts。
 //
 // 安全约定：
-//   - API Key 永远不完整出现在任何响应里，只回末 4 位 + hasKey；
-//   - DEEPSEEK_API_KEY 环境变量优先于 settings.json，返回里用 source 标明来源；
+//   - API Key 永远不完整出现在任何响应里，只回末 4 位 + hasKey；Key 只来自设置里人填写的内容（Spec 0007）；
 //   - 设置文档（v2）的所有写入都走 internal/settings 的统一入口，写入时 revision +1；
 //   - 导出默认脱敏，诊断包永远是脱敏快照。
 package server
@@ -67,7 +66,7 @@ func (s *Server) notifySettingsSaved() (warning string) {
 	if s.opts.OnSettingsSaved == nil {
 		return ""
 	}
-	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.AppDir, s.settingsEnv())); err != nil {
+	if err := s.opts.OnSettingsSaved(settings.LoadModelSettings(s.opts.AppDir)); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -336,7 +335,6 @@ func (s *Server) handleSettingsConnections(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
 		"lastModel":   view.LastModel,
-		"envOverride": view.EnvOverride,
 		"connections": view.Connections,
 	})
 }
@@ -708,7 +706,7 @@ func (s *Server) handleFetchModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 已有连接按设置页看到的同一个来源取 Key（DEEPSEEK_API_KEY 优先于文件）
+	// 已有连接按设置里保存的 Key 拉取（Key 只来自设置文件）
 	effective := s.effectiveModels()
 	var existing *contract.ModelConnection
 	for index := range effective.Connections {

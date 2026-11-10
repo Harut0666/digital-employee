@@ -25,6 +25,12 @@ const (
 	CardFiling = "knowledge_filing"
 	// CardUseFile 使用目录文件：前台 Agent 提议把工作区目录里的文件用作材料，人确认后才复制进会话
 	CardUseFile = "folder_file"
+	// CardPermission 权限确认（T48）：权限模式要求先问人时，Agent 想做的动作和三个答复按钮
+	CardPermission = "permission"
+	// CardEmployeeForm 员工表单（T49）：run_employee 弹出的结构化表单，取代“确认员工”卡、开工清单卡和提交按钮
+	CardEmployeeForm = "employee_form"
+	// CardQuestion 提问：ask_user_question 向发起人提的结构化问题，人选完提交后答案交还给 Agent
+	CardQuestion = "question"
 )
 
 // 员工确认卡片的来源。
@@ -80,10 +86,68 @@ type Card struct {
 	Size int64  `json:"size,omitempty"`
 	// Confirmed 人已经确认过：材料已经在会话里
 	Confirmed bool `json:"confirmed,omitempty"`
+
+	// permission：RequestID 是答复时用的编号；Action 是动作类别，ActionLabel 是它的说法；
+	// Tool 是 Agent 调的工具，Object 是动作的对象（文件路径、员工），Detail 是一句话说明。
+	// Pending 还在等人答复；答复之后 Decision 是 allow_once、always_allow、deny 之一，停止时是 cancelled
+	RequestID   string `json:"requestId,omitempty"`
+	Action      string `json:"action,omitempty"`
+	ActionLabel string `json:"actionLabel,omitempty"`
+	Tool        string `json:"tool,omitempty"`
+	Object      string `json:"object,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+	Pending     bool   `json:"pending,omitempty"`
+	Decision    string `json:"decision,omitempty"`
+	// Choices 等答复时的三个按钮；答复之后、取消之后没有
+	Choices []PermissionChoice `json:"choices,omitempty"`
+
+	// employee_form：Employee 是员工 ID，Draft 是 Agent 预填的表单字段（人在卡片上改了以后以人提交的为准），
+	// Prefilled 是其中 Agent 预填的字段名，Materials 是 Agent 给的材料及来源；人在卡片上补传的材料不在这里，
+	// 它们是会话材料。Reason 是 Agent 的一句话理由。RequestID、Pending、Decision、TaskID 同上：答复之后
+	// Decision 是 confirmed、rejected 之一，停止时是 cancelled，确认开工后 TaskID 是创建的任务。
+	// Standalone 表示不是 Agent 弹出的（载入公开样例）：没有一轮在等它，重启后仍可确认。
+	EmployeeName string         `json:"employeeName,omitempty"`
+	Prefilled    []string       `json:"prefilled,omitempty"`
+	Materials    []FormMaterial `json:"materials,omitempty"`
+	Standalone   bool           `json:"standalone,omitempty"`
+	// Baseline 弹出卡片时会话里已有的材料文件名：之后新出现的（人在卡片上补传的）才算这张卡上补的材料
+	Baseline []string `json:"baseline,omitempty"`
+	// Checklist 这个员工的开工清单定义：卡片上随人改字段、补材料实时判定哪些已备齐、能不能确认（最终以后端为准）
+	Checklist []contract.ChecklistItem `json:"checklist,omitempty"`
+
+	// question：Questions 是提的问题；答复之后 Decision 是 answered 且 Answers 是答案，停止时 Decision 是 cancelled。
+	// RequestID、Pending 同上
+	// shell 确认卡（permission 卡的变体）：Command 是将要运行的命令（原样），Workdir 是工作目录（真实路径），
+	// Warnings 是醒目的风险提示（尽力而为，不是安全边界）；Detail 是 Agent 写的 description
+	Command  string   `json:"command,omitempty"`
+	Workdir  string   `json:"workdir,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+
+	Questions []Question       `json:"questions,omitempty"`
+	Answers   []QuestionAnswer `json:"answers,omitempty"`
 }
 
-func confirmCard(employees []Employee, proposed, source, reason string) Card {
-	return Card{Type: CardEmployeeConfirm, Proposed: proposed, Source: source, Reason: reason, Candidates: employees}
+// 员工表单上一份材料的来源。
+const (
+	MaterialAttachment = "attachment" // 会话里已有的材料（上传的，或之前确认过的目录文件）
+	MaterialFolder     = "folder"     // 工作区目录里的文件，确认开工时复制进任务
+	MaterialSample     = "sample"     // 应用目录里的公开样例文件，确认开工时复制进任务
+)
+
+// FormMaterial 员工表单上 Agent 给的一份材料。
+type FormMaterial struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size,omitempty"`
+	Source string `json:"source"`
+	// Path 目录文件在工作区目录里的相对路径（source=folder）
+	Path string `json:"path,omitempty"`
+}
+
+// PermissionChoice 权限确认卡上的一个答复按钮：Decision 就是答复时提交的决定。
+type PermissionChoice struct {
+	Decision string `json:"decision"`
+	Label    string `json:"label"`
+	Style    string `json:"style"`
 }
 
 // projectEvent 一条任务事件在会话里的样子；不需要显示时返回 false。
@@ -129,26 +193,37 @@ func projectEvent(event contract.TaskEvent) (Message, bool) {
 	return Message{}, false
 }
 
-// withTask 把任务的卡片并进会话消息，按时间排好，并给还有效的卡片配上现在能点的按钮。
+// withTasks 把会话里每个任务的卡片并进会话消息，按时间排好，并给还有效的卡片配上现在能点的按钮。
+// 每个任务分别投影：先开的任务的开工位置、步骤相关的卡片和说明留在它们发生的时间点，不因后来有新任务而消失。
 // current 是会话回放后的状态，带着入库描述的草稿；由旧任务推导出的只读会话没有，传 nil。
-func (m *Manager) withTask(messages []Message, taskID string, current *record) ([]Message, error) {
-	events, err := m.deps.Engine.Events(taskID, 0)
-	if err != nil {
-		return nil, err
-	}
+func (m *Manager) withTasks(messages []Message, taskIDs []string, current *record) ([]Message, error) {
 	merged := append([]Message{}, messages...)
-	for _, event := range events {
-		if message, ok := projectEvent(event); ok {
-			merged = append(merged, message)
+	for run, taskID := range taskIDs {
+		events, err := m.deps.Engine.Events(taskID, 0)
+		if err != nil {
+			return nil, err
 		}
-		if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
-			if message, ok := m.filingMessage(event, current); ok {
-				merged = append(merged, message)
+		projected := []Message{}
+		for _, event := range events {
+			if message, ok := projectEvent(event); ok {
+				projected = append(projected, message)
+			}
+			if event.Type == contract.EventStateChanged && event.To == contract.StateDelivered {
+				if message, ok := m.filingMessage(event, current); ok {
+					projected = append(projected, message)
+				}
 			}
 		}
-	}
-	if err := m.attachActions(merged, taskID, events); err != nil {
-		return nil, err
+		// 每个任务的事件序号都从 1 开始：第二次运行起的消息 ID 加上运行次数，对话里的 ID 才不重复
+		if run > 0 {
+			for index := range projected {
+				projected[index].ID = fmt.Sprintf("r%d-%s", run+1, projected[index].ID)
+			}
+		}
+		merged = append(merged, projected...)
+		if err := m.attachActions(merged, taskID, events); err != nil {
+			return nil, err
+		}
 	}
 	root := ""
 	if current != nil {
@@ -278,8 +353,9 @@ func (m *Manager) filingMessage(delivered contract.TaskEvent, current *record) (
 	}
 	card := Card{Type: CardFiling, TaskID: delivered.TaskID, AtSeq: delivered.Seq, Title: offer.Title, Filed: offer.Filed}
 	if current != nil {
-		card.Description = current.filingDraft
-		card.DraftFailed = current.filingFailed
+		draft := current.filingDrafts[delivered.TaskID]
+		card.Description = draft.text
+		card.DraftFailed = draft.failed
 	}
 	return Message{
 		ID: fmt.Sprintf("t%d-filing", delivered.Seq), Seq: delivered.Seq, TS: delivered.TS, Kind: KindCard, Card: &card,

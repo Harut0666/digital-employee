@@ -363,7 +363,7 @@ func walkFiles(root, dir, prefix string, exclude map[string]bool, seen *dirSeen,
 	return false
 }
 
-// folderTools 员工接手后总会开放的目录工具：只读，路径越界由 call 接口拒绝并留痕。
+// folderTools 目录工具，所有会话都开放：list_files、read_file 只读，路径越界由 call 接口拒绝并留痕；use_folder_file 过权限关口，由人确认后才复制进材料。
 func (t *turn) folderTools() []tool {
 	list := tool{
 		spec: agent.ToolSpec{
@@ -380,30 +380,70 @@ func (t *turn) folderTools() []tool {
 	}
 	read := tool{
 		spec: agent.ToolSpec{
-			Name:        "read_file",
-			Description: "读工作区目录里一个文件的文本内容，支持 csv、xlsx、docx、txt、md，超过 2 万字截断。",
+			Name: "read_file",
+			Description: "读工作区目录里一个文本文件，输出带行号（“行号: 文本”）。默认从第 1 行读起，单次最多 2000 行、每行最多 2000 个字符、全部内容最多 50KB；" +
+				"没读完时页脚会写出下一次该用的 offset。用 offset（从 1 起）和 limit 翻页。csv、xlsx、docx 先转成文本再分页；二进制文件报错。" +
+				"找内容请先用 find_files / search_content，读之前不要用命令行 cat。",
 			Parameters: map[string]any{"type": "object", "required": []any{"path"}, "properties": map[string]any{
-				"path": map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
+				"path":   map[string]any{"type": "string", "description": "文件路径，相对工作区目录"},
+				"offset": map[string]any{"type": "integer", "description": "从第几行读起，从 1 起，默认 1"},
+				"limit":  map[string]any{"type": "integer", "description": "最多读多少行，默认也是上限 2000"},
 			}},
 		},
 		run: func(arguments map[string]any) (any, error) {
 			requested, _ := arguments["path"].(string)
-			target, _, err := resolveInWorkspace(t.workspaceDir(), requested)
+			offset, limit := 1, 0
+			if raw, present := arguments["offset"]; present && raw != nil {
+				value, ok := wholeNumber(raw)
+				if !ok || value < 1 {
+					return nil, toolFailure("invalid_offset", "offset 从 1 起（第一行是 1），收到 %v。", raw)
+				}
+				offset = value
+			}
+			if raw, present := arguments["limit"]; present && raw != nil {
+				value, ok := wholeNumber(raw)
+				if !ok || value < 1 {
+					return nil, toolFailure("invalid_limit", "limit 必须是正整数，收到 %v。", raw)
+				}
+				limit = value
+			}
+			target, rel, err := resolveInWorkspace(t.workspaceDir(), requested)
 			if err != nil {
 				return nil, denied("%s。我只能读工作区目录里的文件。", err.Error())
 			}
-			client := t.manager.deps.Tools
-			if client == nil {
-				return nil, errors.New("没有可用的工具客户端")
+			info, statErr := os.Stat(target)
+			switch {
+			case errors.Is(statErr, fs.ErrNotExist):
+				return nil, toolFailure("file_missing", "文件不存在：%s。", displayPath(rel))
+			case statErr != nil:
+				return nil, fmt.Errorf("读不了 %s：%v", displayPath(rel), statErr)
+			case info.IsDir():
+				return nil, toolFailure("is_directory", "%s 是文件夹，不是文件。要看里面有什么请用 list_files 或 find_files。", displayPath(rel))
+			case !info.Mode().IsRegular():
+				return nil, toolFailure("not_a_file", "%s 不是普通文件。", displayPath(rel))
 			}
-			result, err := client.Call(contract.ToolReadFile, map[string]any{"path": target})
+			var outcome readOutcome
+			switch strings.ToLower(filepath.Ext(target)) {
+			case ".xlsx", ".docx":
+				// 这两种是压缩包：先用现有解析转成文本，再按同样的方式分页
+				text, parseErr := t.parsedText(target)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				outcome, err = readLines(strings.NewReader(text), offset, limit)
+			default:
+				outcome, err = readTextFile(target, offset, limit)
+			}
 			if err != nil {
-				return nil, err
+				if errors.Is(err, errNotText) {
+					return nil, toolFailure("not_text", "%s：%s。", displayPath(rel), err.Error())
+				}
+				return nil, toolFailure("read_failed", "%s：%s", displayPath(rel), err.Error())
 			}
-			if !result.OK {
-				return nil, errors.New(result.Error)
-			}
-			return result.Data, nil
+			return map[string]any{
+				"path": rel, "text": outcome.Text, "totalLines": outcome.Total,
+				"startLine": outcome.Start, "endLine": outcome.End, "truncated": outcome.Truncated,
+			}, nil
 		},
 	}
 	use := tool{
@@ -415,6 +455,13 @@ func (t *turn) folderTools() []tool {
 				"reason": map[string]any{"type": "string", "description": "一句话说明为什么用这个文件"},
 			}},
 		},
+		// 过权限关口（T49）：仅可查看模式拒绝；完全权限模式自动确认；仅限工作区模式发“使用目录文件”卡，由人确认
+		action:     ActionUseFolderFile,
+		selfDecide: true,
+		describe: func(arguments map[string]any) (string, string) {
+			reason, _ := arguments["reason"].(string)
+			return objectOf(arguments), reason
+		},
 		run: func(arguments map[string]any) (any, error) {
 			requested, _ := arguments["path"].(string)
 			reason, _ := arguments["reason"].(string)
@@ -425,6 +472,26 @@ func (t *turn) folderTools() []tool {
 			info, err := os.Stat(target)
 			if err != nil || !info.Mode().IsRegular() {
 				return nil, fmt.Errorf("没有这个文件：%s", rel)
+			}
+			// 每次读最新的记录：人可能在这一轮进行中换了模式
+			fresh, err := t.manager.load(t.current.id)
+			if err != nil {
+				return nil, err
+			}
+			if Decide(fresh.mode(), ActionUseFolderFile) == VerdictAllow {
+				if err := t.manager.refuseNewTask(fresh); err != nil {
+					return nil, toolFailure(ErrSessionHasTask, "%s", err.Error())
+				}
+				copied, err := t.manager.copyFolderMaterials(t, []string{rel})
+				if err != nil {
+					return nil, toolFailure(contract.ErrInvalidInput, "%s", err.Error())
+				}
+				trace := Message{Kind: KindPermissionAllowed, Tool: "use_folder_file", Args: arguments,
+					Reason: PermissionModeLabels[fresh.mode()] + "模式：自动确认使用目录文件"}
+				if err := t.write(trace); err != nil {
+					return nil, err
+				}
+				return map[string]any{"used": copied[0], "confirmed": "完全权限模式自动确认，文件已复制进会话材料"}, nil
 			}
 			t.cards = append(t.cards, Card{
 				Type: CardUseFile, Path: rel, Name: filepath.Base(target), Size: info.Size(), Reason: reason,
@@ -457,7 +524,7 @@ func folderPathProblem(root, requested string) (string, string, error) {
 		return "", "", failure(contract.ErrInvalidInput, "这是工作区目录本身，不是文件")
 	}
 	for _, segment := range strings.Split(rel, "/") {
-		if hiddenName(segment) || atHidden[segment] {
+		if hiddenName(segment) || atHidden[canonicalSegment(segment)] {
 			return "", "", failure(contract.ErrInvalidInput, "不能用程序自己的文件夹或隐藏文件：%s", rel)
 		}
 	}
@@ -486,12 +553,27 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 	if err != nil {
 		return nil, err
 	}
-	if current.taskID != "" {
+	if m.openTask(current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
 	}
-	root := m.workspaceDir(current.workspaceID)
+	t := &turn{manager: m, current: current}
+	names, err := m.copyFolderMaterials(t, paths)
+	if err != nil {
+		return nil, err
+	}
+	// 再说一句“已把……”：这就是人确认这几张卡片的记录，读取时据此把卡片标成已确认
+	if err := t.write(Message{Kind: KindUser, Role: contract.RoleInitiator, Text: folderConfirmedNotice(names)}); err != nil {
+		return nil, err
+	}
+	return m.reply(t)
+}
+
+// copyFolderMaterials 把工作区目录里的文件复制进会话材料，写 attachment_added；返回规范化后的相对路径。
+// 一批里有一个路径不能用就整批拒绝，不留半份材料。人确认（UseFolderFiles、员工表单卡）和“完全权限”模式自动确认共用它。
+func (m *Manager) copyFolderMaterials(t *turn, paths []string) ([]string, error) {
+	root := m.workspaceDir(t.current.workspaceID)
 	if root == "" {
-		return nil, failure(ErrWorkspaceUnknown, "工作区目录不存在：%s", current.workspaceID)
+		return nil, failure(ErrWorkspaceUnknown, "工作区目录不存在：%s", t.current.workspaceID)
 	}
 	// 先全部校验，再把副本写进会话
 	type confirmed struct{ target, rel string }
@@ -508,11 +590,10 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 		seen[rel] = true
 		batch = append(batch, confirmed{target: target, rel: rel})
 	}
-	t := &turn{manager: m, current: current}
 	// 确认过的材料写进会话日志（attachment_added），人和程序都看得到这份材料
 	names := make([]string, 0, len(batch))
 	for _, item := range batch {
-		size, err := m.store.saveAttachment(id, contract.AttachmentInput{Name: filepath.Base(item.target), SourcePath: item.target})
+		size, err := m.store.saveAttachment(t.current.id, contract.AttachmentInput{Name: filepath.Base(item.target), SourcePath: item.target})
 		if err != nil {
 			return nil, err
 		}
@@ -521,11 +602,7 @@ func (m *Manager) UseFolderFiles(id string, role contract.Role, paths []string) 
 		}
 		names = append(names, item.rel)
 	}
-	// 再说一句“已把……”：这就是人确认这几张卡片的记录，读取时据此把卡片标成已确认
-	if err := t.write(Message{Kind: KindUser, Role: contract.RoleInitiator, Text: folderConfirmedNotice(names)}); err != nil {
-		return nil, err
-	}
-	return m.reply(t)
+	return names, nil
 }
 
 // SaveWorkspaceMaterials 对话里上传的文件同时写一份到 <目录>/材料/，重名加序号、不覆盖。

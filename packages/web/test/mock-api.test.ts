@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createMockApi } from "../src/api/mock";
-import type { MockWebApi, SessionAgentEvent, UiRole } from "../src/api/types";
+import type { MockWebApi, SessionAgentEvent, UiRole, WebApi } from "../src/api/types";
 
 const asRole = (initial: UiRole) => {
   let role = initial;
@@ -77,43 +77,91 @@ describe("模拟数据模式的会话", () => {
     return events;
   }
 
-  test("说一句话 → 确认员工 → 表单草稿 → 上传 → 提交，会话绑定任务", async () => {
+  /** 等到会话里出现还在等人的员工表单卡 */
+  async function waitForForm(api: Pick<WebApi, "getSession">, id: string) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const card = (await api.getSession(id)).messages.find((m) => m.card?.type === "employee_form" && m.card.pending)?.card;
+      if (card) return card;
+      if (Date.now() > deadline) throw new Error("等不到员工表单卡");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  async function waitFor(api: Pick<WebApi, "getSession">, id: string, found: (messages: Awaited<ReturnType<WebApi["getSession"]>>["messages"]) => boolean) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const detail = await api.getSession(id);
+      if (found(detail.messages)) return detail;
+      if (Date.now() > deadline) throw new Error(`等不到：${JSON.stringify(detail.messages)}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  test("说一句话 → 弹员工表单（预填、材料来源）→ 补传 → 确认开工，会话绑定任务", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
     expect(created.status).toBe("reception");
 
-    // 接口立即受理；说的话在事件流里逐字出现，说完才写进消息
+    // 接口立即受理；Agent 调 run_employee，表单卡等人确认
     const said = await api.sendMessage(created.id, "帮我出第 44 周的周报");
     expect(said).toEqual({ ok: true, turn: 1 });
-    const events = await turnOf(api, created.id, 1);
-    expect(events.map((e) => e.type)).toContain("text_delta");
-    expect(events.at(-1)).toMatchObject({ type: "turn_end", reason: "completed" });
-    // 先订阅、后发消息：最早的字可能已经先到，这里只核对收得全的部分\n    const streamed = events.filter((e) => e.type === "text_delta").map((e) => e.text).join("");\n    expect("这项工作适合由经营周报员工接手，请确认。".endsWith(streamed)).toBe(true);\n    expect(streamed.length).toBeGreaterThan(0);
-    expect(events.filter((e) => e.type === "tool_start").map((e) => e.tool)).toEqual(["propose_employee"]);
+    const form = await waitForForm(api, created.id);
+    expect(form.pending).toBe(true);
+    expect(form).toMatchObject({ employee: "weekly-report", prefilled: ["period"], draft: { period: { year: 2026, week: 44 } } });
+    expect(form.materials?.map((m) => [m.name, m.source, m.path])).toEqual([
+      ["销售明细.xlsx", "folder", "销售明细.xlsx"],
+      ["周会纪要_2026W44.docx", "folder", "周会纪要_2026W44.docx"],
+    ]);
 
-    const first = await api.getSession(created.id);
-    expect(cards(first.messages)).toEqual(["employee_confirm"]);
-    const proposal = first.messages.find((m) => m.card)?.card;
-    expect(proposal?.proposed).toBe("weekly-report");
-
-    const confirmed = await api.confirmEmployee(created.id, "weekly-report");
-    expect(confirmed.ok && [confirmed.session.status, cards(confirmed.messages)]).toEqual(["drafting", ["form"]]);
-    // 草稿取自人说过的周次
-    expect(confirmed.ok && confirmed.session.draft).toEqual({ period: { year: 2026, week: 44 } });
-
-    const uploaded = await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx"), new File(["y"], "周会纪要_2026W44.docx")]);
-    expect(uploaded.ok && uploaded.session.attachments.map((a) => a.name)).toEqual(["销售明细.xlsx", "周会纪要_2026W44.docx"]);
-
-    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 }, remark: "" });
-    expect(submitted.ok && submitted.session.status).toBe("task");
-    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    const confirmed = await api.answerEmployeeForm(created.id, form.requestId!, { decision: "confirm", form: { period: { year: 2026, week: 44 }, remark: "" }, attachments: [], skipped: [] });
+    expect(confirmed.ok && confirmed.session.status).toBe("task");
+    const taskId = confirmed.ok ? confirmed.session.taskId : undefined;
     expect((await api.getTask(taskId!))?.state).toBe("admission");
 
     const detail = await api.getSession(created.id);
-    expect(cards(detail.messages)).toContain("form");
-    expect(detail.messages.at(-1)?.card).toMatchObject({ type: "form", submitted: true });
+    expect(detail.messages.find((m) => m.card?.type === "employee_form")?.card).toMatchObject({ pending: false, decision: "confirmed", taskId });
+    expect(detail.messages.find((m) => m.card?.type === "form")?.card).toMatchObject({ type: "form", submitted: true });
+    // 已答复的表单不能再答复
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).toMatchObject({ ok: false, error: "form_settled" });
   });
 
+  test("员工表单：必需项不齐不能确认；不是这个员工；只有发起人能答；read_only 模式拒绝", async () => {
+    const { api, setRole } = asRole("initiator");
+    const created = await api.createSession();
+    await api.sendMessage(created.id, "出周报");
+    const form = await waitForForm(api, created.id);
+    const answer = { decision: "confirm" as const, form: {}, attachments: [], skipped: [] };
+    setRole("reviewer");
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, answer)).toMatchObject({ ok: false, error: "forbidden_role" });
+    setRole("initiator");
+    expect(await api.answerEmployeeForm(created.id, form.requestId!, { ...answer, skipped: ["sales"] })).toMatchObject({ ok: false, error: "invalid_input" });
+    const refused = await api.answerEmployeeForm(created.id, form.requestId!, answer);
+    expect(refused).toMatchObject({ ok: false, error: "checklist_incomplete" });
+    expect((await api.getSession(created.id)).messages.find((m) => m.card?.type === "employee_form")?.card?.pending).toBe(true);
+
+    expect((await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).ok).toBe(true);
+    const detail = await api.getSession(created.id);
+    expect(detail.messages.find((m) => m.card?.type === "employee_form")?.card).toMatchObject({ pending: false, decision: "rejected" });
+    expect(detail.taskId).toBeUndefined();
+
+    const planned = await api.createSession();
+    await api.setPermissionMode(planned.id, "read_only");
+    await api.sendMessage(planned.id, "出周报");
+    const denied = await waitFor(api, planned.id, (messages) => messages.some((m) => m.kind === "tool_denied"));
+    expect(denied.messages.some((m) => m.card?.type === "employee_form")).toBe(false);
+  });
+
+  test("载入公开样例：得到预填的员工表单，样例材料来自公开样例；确认即开工", async () => {
+    const { api } = asRole("initiator");
+    const created = await api.createSession();
+    const loaded = await api.loadSampleForm(created.id);
+    expect(loaded.ok).toBe(true);
+    const form = (await api.getSession(created.id)).messages.find((m) => m.card?.type === "employee_form")?.card;
+    expect(form).toMatchObject({ standalone: true, pending: true, employee: "weekly-report", prefilled: ["period"] });
+    expect(form?.materials?.map((m) => m.source)).toEqual(["sample", "sample"]);
+    const confirmed = await api.answerEmployeeForm(created.id, form!.requestId!, { decision: "confirm", form: form!.draft!, attachments: [], skipped: [] });
+    expect(confirmed.ok && confirmed.session.taskId).toBeTruthy();
+  });
   test("开工清单：必需项不齐不能开工，可跳过项由人确认并写进表单", async () => {
     const { api, setRole } = asRole("initiator");
     const created = await api.createSession();
@@ -138,10 +186,40 @@ describe("模拟数据模式的会话", () => {
     expect((await api.getTask(taskId!))?.form).toMatchObject({ allowMissingMinutes: true });
   });
 
+  test("建会话时带模型、任务交付后换模型（T45）：和 Go 的规则一致", async () => {
+    const { api, setRole } = asRole("initiator");
+    // 带模型：从第一句话起就是它；不在连接列表里的模型被拒绝
+    const created = await api.createSession(undefined, { connection: "示例厂商", model: "demo-reasoner" });
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "示例厂商", model: "demo-reasoner" });
+    await expect(api.createSession(undefined, { connection: "示例厂商", model: "nope" })).rejects.toThrow("不在连接");
+    // 旧任务推导出的只读会话仍拒绝；只有发起人能选
+    expect(await api.selectModel("task-mock-42", "示例厂商", "demo-chat")).toMatchObject({ ok: false, error: "session_read_only" });
+    setRole("reviewer");
+    expect(await api.selectModel(created.id, "示例厂商", "demo-chat")).toMatchObject({ ok: false, error: "forbidden_role" });
+
+    // 交付之后：只改会话的选择，不写任务事件
+    setRole("initiator");
+    await api.confirmEmployee(created.id, "weekly-report");
+    await api.uploadAttachments(created.id, [new File(["x"], "销售明细.csv"), new File(["y"], "周会纪要_2026W44.docx")]);
+    const submitted = await api.submitSession(created.id, { period: { year: 2026, week: 44 } });
+    const taskId = submitted.ok ? submitted.session.taskId : undefined;
+    // 只有 CSV 销售明细、缺门店和目标维表，准入校验（约 0.6 秒）后任务停在待发起人补充；终止它就算结束了（不用等模拟任务自己走到待审核）
+    for (let waited = 0; (await api.getTask(taskId!))?.state !== "awaiting_initiator"; waited += 50) {
+      if (waited > 5000) throw new Error(`准入校验没有结束：${(await api.getTask(taskId!))?.state}`);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect((await api.command(taskId!, { type: "terminate" })).ok).toBe(true);
+    expect((await api.getTask(taskId!))?.state).toBe("terminated");
+    const eventsBefore = (await api.getEvents(taskId!)).length;
+    expect((await api.selectModel(created.id, "示例厂商", "demo-chat")).ok).toBe(true);
+    expect((await api.getEvents(taskId!)).length).toBe(eventsBefore);
+    expect((await api.getSession(created.id)).model).toEqual({ connection: "示例厂商", model: "demo-chat" });
+  });
+
   test("正在说的时候发的话排进这一轮；点停止，已说的部分以“已中断”保存", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
-    const first = await api.sendMessage(created.id, "出周报");
+    const first = await api.sendMessage(created.id, "随便聊聊");
     expect(first).toEqual({ ok: true, turn: 1 });
     // 还没说完就再发一句、再点停止
     const events = turnOf(api, created.id, 1);
@@ -182,6 +260,25 @@ describe("模拟数据模式的会话", () => {
     expect(items.find((i) => i.taskId === "mock-43")?.workspaceName).toBe("我的工作区");
   });
 
+  test("会话有未结束的任务时拒绝再开新任务并说明原因；记录带“第几次运行”", async () => {
+    const { api: web } = asRole("initiator");
+    const api = web as MockWebApi;
+    const created = await api.createSession();
+    await api.confirmEmployee(created.id, "weekly-report");
+    await api.uploadAttachments(created.id, [new File(["x"], "销售明细.xlsx"), new File(["y"], "周会纪要_2026W44.docx")]);
+    const form = { period: { year: 2026, week: 44 }, remark: "" };
+    const first = await api.submitSession(created.id, form);
+    const firstId = first.ok ? first.session.taskId! : "";
+    expect(first.ok && first.session.taskIds).toEqual([firstId]);
+
+    const again = await api.submitSession(created.id, form);
+    expect(again).toMatchObject({ ok: false, error: "session_has_task" });
+    expect(!again.ok && again.message).toContain("还没结束");
+    expect(!again.ok && again.message).toContain(firstId);
+
+    const rows = (await api.records("initiator")).filter((r) => r.sessionId === created.id);
+    expect(rows.map((r) => [r.taskId, r.runNumber])).toEqual([[firstId, 1]]);
+  });
   test("会话可以重命名、归档：归档后默认不列，带 archived 才列", async () => {
     const { api } = asRole("initiator");
     const created = await api.createSession();
@@ -202,5 +299,107 @@ describe("模拟数据模式的会话", () => {
     expect(cards(detail.messages)).toContain("pause");
     expect(detail.messages.find((m) => m.card?.type === "pause")?.card?.actions?.map((a) => a.command)).toEqual(["retry", "terminate"]);
     expect((await api.preflight()).ok).toBe(true);
+  });
+});
+
+describe("模拟数据模式的权限模式（T48）", () => {
+  /** 等到会话里出现满足条件的消息 */
+  async function waitFor(api: Pick<WebApi, "getSession">, id: string, found: (messages: Awaited<ReturnType<WebApi["getSession"]>>["messages"]) => boolean) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      const detail = await api.getSession(id);
+      if (found(detail.messages)) return detail;
+      if (Date.now() > deadline) throw new Error(`等不到：${JSON.stringify(detail.messages)}`);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  const pending = (messages: { card?: { type: string; pending?: boolean } }[]) => messages.some((m) => m.card?.type === "permission" && m.card.pending);
+  const settled = (messages: { kind: string }[]) => messages.some((m) => m.kind === "assistant");
+
+  async function drafting(asRoleApi = asRole("initiator")) {
+    const created = await asRoleApi.api.createSession();
+    await asRoleApi.api.confirmEmployee(created.id, "weekly-report");
+    return { ...asRoleApi, id: created.id };
+  }
+
+  test("新会话是仅限工作区；只有发起人能选；旧值映射成新值；选了写进会话", async () => {
+    const { api, setRole, id } = await drafting();
+    expect((await api.getSession(id)).permissionMode).toBe("workspace");
+    setRole("reviewer");
+    expect(await api.setPermissionMode(id, "full")).toMatchObject({ ok: false, error: "forbidden_role" });
+    setRole("initiator");
+    expect(await api.setPermissionMode(id, "god" as never)).toMatchObject({ ok: false, error: "invalid_input" });
+    const set = await api.setPermissionMode(id, "full");
+    expect(set.ok && set.session.permissionMode).toBe("full");
+    // 后端也收旧五档的值（映射成新值）；落盘和会话视图都只有新值
+    const legacy = await api.setPermissionMode(id, "plan" as never);
+    expect(legacy.ok && legacy.session.permissionMode).toBe("read_only");
+    const detail = await api.getSession(id);
+    expect(detail.messages.filter((m) => m.kind === "permission_mode_set").map((m) => m.mode)).toEqual(["full", "read_only"]);
+    expect((await api.createSession()).permissionMode).toBe("workspace");
+  });
+
+  test("仅限工作区：写文件直接写并留痕，不再弹确认；运行命令先弹确认卡，允许后运行", async () => {
+    const { api, id } = await drafting();
+    await api.sendMessage(id, "把要点整理成一个文件");
+    const wrote = await waitFor(api, id, settled);
+    expect(wrote.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    expect(wrote.messages.some((m) => m.kind === "permission_allowed" && m.tool === "write_file")).toBe(true);
+    expect(wrote.messages.find((m) => m.kind === "tool_called" && m.tool === "write_file")?.result).toMatchObject({ action: "created" });
+
+    await api.sendMessage(id, "运行命令看看有多少个文件");
+    const asked = await waitFor(api, id, pending);
+    const card = asked.messages.find((m) => m.card?.type === "permission")!.card!;
+    expect(card).toMatchObject({ action: "run_command", actionLabel: "运行命令", pending: true });
+    expect(card.choices?.map((c) => c.decision)).toEqual(["allow_once", "deny"]);
+    expect((await api.decidePermission(id, card.requestId!, "allow_once")).ok).toBe(true);
+    expect(await api.decidePermission(id, card.requestId!, "deny")).toMatchObject({ ok: false, error: "permission_settled" });
+    const done = await waitFor(api, id, (messages) => messages.filter((m) => m.kind === "assistant").length === 2);
+    expect(done.messages.find((m) => m.card?.type === "permission")?.card).toMatchObject({ pending: false, decision: "allow_once" });
+    expect(done.messages.filter((m) => m.kind === "assistant").at(-1)?.text).toContain("命令跑完了");
+  });
+
+  test("拒绝：命令不运行，留下发起人拒绝", async () => {
+    const { api, id } = await drafting();
+    await api.sendMessage(id, "运行命令看看有多少个文件");
+    const card = (await waitFor(api, id, pending)).messages.find((m) => m.card?.type === "permission")!.card!;
+    await api.decidePermission(id, card.requestId!, "deny");
+    const denied = await waitFor(api, id, settled);
+    expect(denied.messages.some((m) => m.kind === "tool_denied" && m.tool === "shell" && m.decision === "deny" && m.reason?.startsWith("发起人拒绝"))).toBe(true);
+    expect(denied.messages.some((m) => m.kind === "assistant" && m.text?.includes("命令跑完了"))).toBe(false);
+  });
+
+  test("仅可查看：写文件、运行命令直接拒绝；完全权限：直接写、直接运行并留痕", async () => {
+    const readOnly = await drafting();
+    await readOnly.api.setPermissionMode(readOnly.id, "read_only");
+    await readOnly.api.sendMessage(readOnly.id, "把要点整理成一个文件");
+    const planned = await waitFor(readOnly.api, readOnly.id, settled);
+    expect(planned.messages.some((m) => m.kind === "tool_denied" && m.reason?.includes("仅可查看模式"))).toBe(true);
+    expect(planned.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    await readOnly.api.sendMessage(readOnly.id, "运行命令看看");
+    const refused = await waitFor(readOnly.api, readOnly.id, (messages) => messages.filter((m) => m.kind === "tool_denied").length === 2);
+    expect(refused.messages.some((m) => m.kind === "tool_denied" && m.tool === "shell" && m.reason?.includes("仅可查看模式"))).toBe(true);
+
+    const full = await drafting();
+    await full.api.setPermissionMode(full.id, "full");
+    await full.api.sendMessage(full.id, "把要点整理成一个文件");
+    const written = await waitFor(full.api, full.id, settled);
+    expect(written.messages.some((m) => m.kind === "permission_allowed" && m.tool === "write_file" && m.reason?.includes("完全权限模式"))).toBe(true);
+    expect(written.messages.some((m) => m.kind === "tool_called" && m.tool === "write_file")).toBe(true);
+    await full.api.sendMessage(full.id, "运行命令看看");
+    const ran = await waitFor(full.api, full.id, (messages) => messages.filter((m) => m.kind === "assistant").length === 2);
+    expect(ran.messages.some((m) => m.card?.type === "permission")).toBe(false);
+    expect(ran.messages.some((m) => m.kind === "permission_allowed" && m.tool === "shell")).toBe(true);
+    expect(ran.messages.filter((m) => m.kind === "assistant").at(-1)?.text).toContain("命令跑完了");
+  });
+
+  test("等确认时点停止：确认卡记为已取消，命令没运行", async () => {
+    const { api, id } = await drafting();
+    await api.sendMessage(id, "运行命令看看有多少个文件");
+    await waitFor(api, id, pending);
+    expect(await api.stopTurn(id)).toMatchObject({ ok: true, stopped: true });
+    const stopped = await waitFor(api, id, (messages) => messages.some((m) => m.card?.type === "permission" && !m.card.pending));
+    expect(stopped.messages.find((m) => m.card?.type === "permission")?.card).toMatchObject({ pending: false, decision: "cancelled" });
+    expect(stopped.messages.some((m) => m.kind === "assistant" && m.text?.includes("命令跑完了"))).toBe(false);
   });
 });

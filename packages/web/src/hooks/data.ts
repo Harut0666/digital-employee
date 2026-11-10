@@ -1,7 +1,9 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { TaskEvent } from "@de/core/contract";
 import type { AgentToolView, EmployeeInfo, PreflightResult, SessionAgentEvent, SessionDetail, TaskSnapshot, WebApi } from "../api";
+import type { PastRun } from "../view/chat-view";
 import { deriveSessionView, type SessionView } from "../view/session-view";
+import { reloadOnEvent } from "../view/session-stream";
 export const ApiContext = createContext<WebApi | null>(null);
 export function useApi(): WebApi {
   const api = useContext(ApiContext);
@@ -60,18 +62,19 @@ export function useSession(id: string | undefined): SessionState {
 
 export interface LiveState {
   /** 正在说的一轮：逐字出现的文字和已经调用的工具（说完会变成会话里的消息） */
-  live?: { turn: number; text: string; tools: AgentToolView[]; running: boolean };
+  live?: { turn: number; text: string; tools: AgentToolView[]; running: boolean; startedAt?: number; endedAt?: number };
 }
 
 /**
- * 订阅一个会话的事件流（T40）：说的话逐字出现，工具调用逐个列出，一轮结束时让调用方重读会话。
+ * 订阅一个会话的事件流（T40）：说的话逐字出现，工具调用逐个列出；一轮开始、结束和出现流程卡片时让调用方重读会话
+ * （哪些事件要重读见 view/session-stream.ts）。
  * 切走会话时断开；正在说的那一轮在切回来时会重读会话补上。
  */
-export function useSessionStream(id: string | undefined, onTurnEnd: () => void): LiveState {
+export function useSessionStream(id: string | undefined, onReload: () => void): LiveState {
   const api = useApi();
   const [live, setLive] = useState<LiveState["live"]>();
-  const ended = useRef(onTurnEnd);
-  ended.current = onTurnEnd;
+  const reload = useRef(onReload);
+  reload.current = onReload;
   useEffect(() => {
     setLive(undefined);
     if (!id) return;
@@ -79,12 +82,12 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
       setLive((prev) => {
         switch (event.type) {
           case "turn_start":
-            return { turn: event.turn, text: "", tools: [], running: true };
+            return { turn: event.turn, text: "", tools: [], running: true, startedAt: Date.now() };
           case "text_delta":
             if (prev && prev.turn === event.turn) return { ...prev, running: true, text: prev.text + (event.text ?? "") };
-            return { turn: event.turn, text: event.text ?? "", tools: [], running: true };
+            return { turn: event.turn, text: event.text ?? "", tools: [], running: true, startedAt: Date.now() };
           case "tool_start": {
-            const base = prev && prev.turn === event.turn ? prev : { turn: event.turn, text: "", tools: [], running: true };
+            const base = prev && prev.turn === event.turn ? prev : { turn: event.turn, text: "", tools: [], running: true, startedAt: Date.now() };
             const tool: AgentToolView = { id: event.id ?? "", tool: event.tool ?? "", args: event.args, ended: false };
             return { ...base, running: true, tools: [...base.tools.filter((t) => t.id !== tool.id), tool] };
           }
@@ -98,14 +101,14 @@ export function useSessionStream(id: string | undefined, onTurnEnd: () => void):
             };
           }
           case "turn_end":
-            if (prev && prev.turn === event.turn) return { ...prev, running: false };
+            if (prev && prev.turn === event.turn) return { ...prev, running: false, endedAt: Date.now() };
             return prev;
           default:
             // message：写进会话的卡片和其它消息，由一轮结束时重读会话补齐
             return prev;
         }
       });
-      if (event.type === "turn_end") ended.current();
+      if (reloadOnEvent(event)) reload.current();
     };
     return api.subscribeSession(id, apply);
   }, [api, id]);
@@ -215,5 +218,30 @@ export function useTask(id: string | undefined): TaskState {
   return { snapshot, view, events, loading, reload };
 }
 
-
-
+/**
+ * 会话里早先的任务（Spec 0007“会话与任务一对多”）：它们都已结束，读一次事件和快照就够了，
+ * 用来在对话里按各自的时间点显示步骤行和交付物。当前任务由 useTask 负责。
+ */
+export function usePastRuns(taskIds: readonly string[]): PastRun[] {
+  const api = useApi();
+  const [loaded, setLoaded] = useState<Record<string, PastRun>>({});
+  const key = taskIds.join(",");
+  useEffect(() => {
+    let alive = true;
+    taskIds.forEach((id, index) => {
+      Promise.all([api.getTask(id), api.getEvents(id)]).then(
+        ([snapshot, events]) => {
+          if (!alive || !snapshot) return;
+          const run: PastRun = { taskId: id, run: index + 1, state: snapshot.state, deliverables: snapshot.deliverables, events, steps: snapshot.steps };
+          setLoaded((prev) => ({ ...prev, [id]: run }));
+        },
+        () => {},
+      );
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, key]);
+  return useMemo(() => taskIds.flatMap((id) => (loaded[id] ? [loaded[id]!] : [])), [loaded, key]);
+}

@@ -1,7 +1,7 @@
 // Package session 是会话模块：人和前台 Agent 的对话，独立于任务引擎。
 //
-// 会话只通过 contract.Engine 和任务打交道。Agent 能产生的只有草稿和提议，
-// 发送任务命令的路径只在人触发的 Submit 里，Agent 的工具拿到的是只读接口（见 frontdesk.go）。
+// 会话只通过 contract.Engine 和任务打交道。发送任务命令的路径只有开工（startEmployeeTask：员工表单卡上人确认，
+// 或 run_employee 在 full 下免确认直接开工）和旧会话兼容的 Submit，Agent 的工具拿到的任务接口是只读的（见 frontdesk.go）。
 package session
 
 import (
@@ -91,6 +91,10 @@ type Deps struct {
 	Tools contract.ToolClient
 	// Filing 入库卡片要用的知识库信息；nil 表示没有知识库，交付后不发入库卡片
 	Filing FilingSource
+	// LocalAddrs 本服务被访问过的地址（Host:Port）：shell 命令里出现它们要加警告（见 shell.go）。nil 表示不知道
+	LocalAddrs func() []string
+	// Sample 应用目录里的公开样例（T49“载入公开样例”）；nil 或返回 nil 表示没有样例
+	Sample func() *Sample
 	Now    func() time.Time
 }
 
@@ -114,9 +118,17 @@ type Manager struct {
 	seen      map[string]time.Time
 	// seenLegacy 打开过的旧任务会话（它们没有会话日志，没有别的记录已读的地方）
 	seenLegacy map[string]bool
+	// legacyArchived 旧任务会话的归档状态（没有会话日志，单独存在应用目录的文件里）
+	legacyArchived *legacyArchive
 	// views 会话的投影缓存：消息条数和更新时间没变就沿用（侧栏每几秒读一次全部会话）
 	views map[string]cachedView
 	// recordsCache 记录 tab 的缓存：任务列表没变时不用再读每个会话的日志
+	// waits 正在等人答复的权限确认（T48），permMu 保护它和里面的 settled
+	permMu sync.Mutex
+	waits  map[string]*permissionWait
+	// forms 员工表单卡的等待（T49），formMu 保护这张表
+	formMu       sync.Mutex
+	forms        map[string]*formWait
 	recordsMu    sync.Mutex
 	recordsStamp string
 	records      []Record
@@ -129,10 +141,10 @@ func New(deps Deps) *Manager {
 	}
 	// 第一次读会话目录之前也先看一眼：新建的会话马上就能出现在列表里，之后的扫描隔一会儿一次
 	return &Manager{
-		deps: deps, store: newStore(deps.Dir, deps.Now),
+		deps: deps, store: newStore(deps.Dir, deps.Now), legacyArchived: newLegacyArchive(deps.Dir),
 		jobs: map[string]*turnJob{}, buses: map[string]*bus{}, turnSeq: map[string]int64{},
-		humanLocks: map[string]*sync.Mutex{},
-		scanEvery:  time.Second, scannedAt: deps.Now().Add(-time.Hour),
+		humanLocks: map[string]*sync.Mutex{}, waits: map[string]*permissionWait{}, forms: map[string]*formWait{},
+		scanEvery: time.Second, scannedAt: deps.Now().Add(-time.Hour),
 	}
 }
 
@@ -143,7 +155,9 @@ const sessionScanEvery = time.Second
 type cachedView struct {
 	at        int
 	updatedAt string
-	view      View
+	// task 当时会话当前任务的指纹（见 taskStamp）
+	task string
+	view View
 }
 
 // busyText 上一条回复还没结束时又发来消息：说明一声。
@@ -154,13 +168,15 @@ const ErrWorkspaceUnknown = "workspace_not_found"
 
 // View 读取时返回的会话。
 type View struct {
-	ID          string         `json:"id"`
-	WorkspaceID string         `json:"workspaceId"`
-	Status      string         `json:"status"`
-	ReadOnly    bool           `json:"readOnly"`
-	Title       string         `json:"title"`
-	Employee    string         `json:"employee,omitempty"`
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspaceId"`
+	Status      string `json:"status"`
+	ReadOnly    bool   `json:"readOnly"`
+	Title       string `json:"title"`
+	Employee    string `json:"employee,omitempty"`
+	// TaskID 当前任务（会话里最新的一个）；TaskIDs 按开工顺序的全部任务
 	TaskID      string         `json:"taskId,omitempty"`
+	TaskIDs     []string       `json:"taskIds"`
 	Draft       map[string]any `json:"draft,omitempty"`
 	Attachments []Attachment   `json:"attachments"`
 	CreatedAt   string         `json:"createdAt"`
@@ -181,6 +197,10 @@ type View struct {
 	Archived bool `json:"archived"`
 	// Unread 任务交付或终止之后还没打开过
 	Unread bool `json:"unread"`
+	// PermissionMode 权限模式（ADR-0007 增补二）：read_only、workspace、full；新会话总是 workspace。只输出新值
+	PermissionMode string `json:"permissionMode"`
+	// Todos Agent 最新的待办清单（todo_write）；没写过时为空数组
+	Todos []TodoItem `json:"todos"`
 }
 
 // Detail 读取单个会话时返回：会话加全部消息。
@@ -206,14 +226,36 @@ func (m *Manager) WorkspaceOf(id string) (string, error) {
 	return current.workspaceID, nil
 }
 
-// Create 在 workspaceID 工作区里开一个新会话；工作区必须登记过。
-func (m *Manager) Create(workspaceID string) (*View, error) {
+// Create 在 workspaceID 工作区里开一个新会话。model 是可选的新对话页选的模型
+// （Spec 0007「会话模型的选择」）：校验规则和会话里选模型一样，选中的模型决定这个会话从第一句话起用哪个；
+// nil 时沿用设置：先按 lastModel，再按第一个可用模型（没人明确选过，不写 lastModel）。
+func (m *Manager) Create(workspaceID string, model *contract.ModelRef) (*View, error) {
 	if m.deps.Workspace == nil || !m.deps.Workspace(workspaceID) {
 		return nil, failure(ErrWorkspaceUnknown, "工作区不存在：%s", workspaceID)
+	}
+	var chosen *contract.ModelRef
+	if model != nil {
+		ref := contract.ModelRef{Connection: strings.TrimSpace(model.Connection), Model: strings.TrimSpace(model.Model)}
+		if ref.Connection == "" || ref.Model == "" {
+			return nil, failure(contract.ErrInvalidInput, "选模型要同时给出连接和模型")
+		}
+		if err := m.checkSelectable(ref); err != nil {
+			return nil, err
+		}
+		chosen = &ref
 	}
 	id := newID(m.deps.Now())
 	if _, err := m.store.append(id, Message{Kind: kindCreated, WorkspaceID: workspaceID}); err != nil {
 		return nil, err
+	}
+	if chosen != nil {
+		if _, err := m.store.append(id, Message{Kind: kindModelSelected, Model: chosen, Selected: true}); err != nil {
+			return nil, err
+		}
+		// 和会话里选模型一样记进 lastModel，新会话沿用它
+		if err := m.saveLastModel(*chosen); err != nil {
+			return nil, err
+		}
 	}
 	current, err := m.load(id)
 	if err != nil {
@@ -238,10 +280,10 @@ func (m *Manager) read(id string) (*Detail, error) {
 	if err != nil {
 		return nil, err
 	}
-	messages := visibleMessages(current.messages)
+	messages := m.projectCards(visibleMessages(current.messages), current)
 
-	if current.taskID != "" {
-		if messages, err = m.withTask(messages, current.taskID, current); err != nil {
+	if len(current.taskIDs) > 0 {
+		if messages, err = m.withTasks(messages, current.taskIDs, current); err != nil {
 			return nil, err
 		}
 	} else {
@@ -273,6 +315,25 @@ func (m *Manager) begin(id string, role contract.Role) (*turn, func(), error) {
 // beginUnlocked 不用写锁、也不检查忙：只给发消息和已经占着这一轮写锁的循环用。
 func (m *Manager) beginUnlocked(id string, role contract.Role) (*turn, func(), error) {
 	return m.beginLocked(id, role, true)
+}
+
+// beginAside 人的操作不用等这一轮：只占“人的操作”那把锁（两个人同时点只有第一个进去），
+// 不占前台 Agent 这一轮的写锁。给不改草稿、材料、任务的操作用（选模型）：Agent 正在回复或停在权限确认、
+// 员工表单卡上时也能做，写进日志的选择从下一轮对话起生效，当前这一轮继续用它开始时选定的模型。
+func (m *Manager) beginAside(id string) (*turn, func(), error) {
+	if _, err := m.load(id); err != nil {
+		return nil, nil, err
+	}
+	human := m.humanLock(id)
+	if !human.TryLock() {
+		return nil, nil, failure(ErrSessionBusy, "上一个操作还在处理，请稍候")
+	}
+	current, err := m.load(id)
+	if err != nil {
+		human.Unlock()
+		return nil, nil, err
+	}
+	return &turn{manager: m, current: current, role: contract.RoleInitiator, tasks: m.deps.Engine}, human.Unlock, nil
 }
 
 func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*turn, func(), error) {
@@ -314,7 +375,7 @@ func (m *Manager) beginLocked(id string, role contract.Role, unlocked bool) (*tu
 	}, nil
 }
 func (m *Manager) reply(t *turn) (*Reply, error) {
-	messages := visibleMessages(t.out)
+	messages := m.projectCards(visibleMessages(t.out), t.current)
 	// t.current 是写入之前的快照：补上这次新写进去的草稿和材料，清单按写完的样子显示
 	for _, message := range t.out {
 		if message.Kind == kindAttachmentAdded || message.Kind == kindDraftSet {
@@ -352,8 +413,8 @@ func (m *Manager) fullView(current *record) (*View, error) {
 	return view, nil
 }
 
-// Confirm 人在卡片上确认由哪个员工接手。这是人的动作，Agent 没有对应的工具。
-// 人说过话时紧接着开一轮，让 Agent 据此填表（这就是“下一步”）。
+// Confirm 旧会话兼容（T49 之前的“确认员工”卡）：把会话记到这个员工名下。新界面不再调用它：
+// 员工由 Agent 调 run_employee 时带上，人在员工表单卡上确认。这是人的动作，Agent 没有对应的工具。
 func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以确认员工")
@@ -362,34 +423,14 @@ func (m *Manager) Confirm(id string, role contract.Role, employee string) (*Repl
 	if err != nil {
 		return nil, err
 	}
-	// 只放一次锁：确认员工可能写两张消息、再登记下一轮，各分支都走 defer 释放（T44 修双释放）
 	defer done()
-	err = m.confirmLocked(t, employee)
-
-	if err != nil {
-		if _, ok := err.(*handoverPending); !ok {
-			return nil, err
-		}
-		// 写锁还拿着就把填表那轮登记上：从这一刻起它就算在跑，紧接着发来的消息按插话送进这一轮。
-		// 这一轮自己放锁后再去调模型，由它在下一步之前接着填表。
-		var job *turnJob
-		job, err = m.startTurnLocked(id)
-		if err == nil {
-			noteSteer(job)
-		}
-		if err != nil {
-			return nil, err
-		}
+	if err := m.confirmLocked(t, employee); err != nil {
+		return nil, err
 	}
 	return m.reply(t)
 }
 
-// handoverPending 确认员工时人说过话：填表交给下一轮，不在这次请求里等模型。
-type handoverPending struct{}
-
-func (*handoverPending) Error() string { return "handover pending" }
-
-// confirmLocked 写确认员工和接手说明；人说过话时返回 handoverPending。
+// confirmLocked 写确认员工和接手说明。
 func (m *Manager) confirmLocked(t *turn, employee string) error {
 	if t.current.employee != "" {
 		return failure(contract.ErrIllegalTransition, "这个会话已由员工接手")
@@ -410,15 +451,7 @@ func (m *Manager) confirmLocked(t *turn, employee string) error {
 	if err := t.write(Message{Kind: kindEmployeeSet, Employee: employee}); err != nil {
 		return err
 	}
-	if err := t.write(Message{Kind: KindNotice, Text: name + "已接手。"}); err != nil {
-		return err
-	}
-	if t.current.spoken() {
-		// 人说过的话不用再说一遍：让 Agent 据此填表（这算一条插话，由新一轮在下一步之前送达）
-		return &handoverPending{}
-	}
-	t.cards = append(t.cards, t.formCard())
-	return t.flushCards()
+	return t.write(Message{Kind: KindNotice, Text: name + "已接手。"})
 }
 
 // AddAttachments 把人上传的材料暂存进会话，提交时才进任务。
@@ -434,7 +467,7 @@ func (m *Manager) AddAttachments(id string, role contract.Role, files []contract
 	if err != nil {
 		return nil, err
 	}
-	if current.taskID != "" {
+	if m.openTask(current) != nil {
 		return nil, failure(ErrSessionHasTask, "任务已经开始，请在暂停卡片上补充材料")
 	}
 	t := &turn{manager: m, current: current}
@@ -466,8 +499,8 @@ func (m *Manager) Submit(id string, role contract.Role, form map[string]any) (*R
 		return nil, err
 	}
 	defer done()
-	if t.current.taskID != "" {
-		return nil, failure(ErrSessionHasTask, "这个会话已有任务，要做新任务请开新会话")
+	if err := m.refuseNewTask(t.current); err != nil {
+		return nil, err
 	}
 	if t.current.employee == "" {
 		return nil, failure(ErrEmployeeMissing, "请先确认由哪个员工接手")
@@ -546,8 +579,9 @@ func (m *Manager) legacyView(summary contract.TaskSummary) *View {
 	view := &View{
 		ID: legacyPrefix + summary.ID, WorkspaceID: summary.WorkspaceID,
 		Status: StatusTask, ReadOnly: true, Title: summary.Title,
-		Employee: summary.Employee, TaskID: summary.ID, Attachments: []Attachment{},
-		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{},
+		Employee: summary.Employee, TaskID: summary.ID, TaskIDs: []string{summary.ID}, Attachments: []Attachment{},
+		CreatedAt: summary.UpdatedAt, UpdatedAt: summary.UpdatedAt, WaitingFor: []contract.Role{}, PermissionMode: DefaultPermissionMode, Todos: []TodoItem{},
+		Archived: m.legacyArchived.has(legacyPrefix + summary.ID),
 	}
 	m.applySummary(view, summary)
 	if snapshot, found := m.deps.Engine.Get(summary.ID); found && snapshot.Model != nil {
@@ -564,7 +598,7 @@ func (m *Manager) getLegacy(id string) (*Detail, error) {
 		if summary.ID != taskID {
 			continue
 		}
-		messages, err := m.withTask(nil, taskID, nil)
+		messages, err := m.withTasks(nil, []string{taskID}, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -586,7 +620,9 @@ func (m *Manager) List(workspaceID string, includeArchived bool) ([]*View, error
 		if current == nil {
 			continue
 		}
-		bound[current.taskID] = true
+		for _, taskID := range current.taskIDs {
+			bound[taskID] = true
+		}
 		if workspaceID != "" && current.workspaceID != workspaceID {
 			continue
 		}
@@ -603,7 +639,11 @@ func (m *Manager) List(workspaceID string, includeArchived bool) ([]*View, error
 		if workspaceID != "" && summary.WorkspaceID != workspaceID {
 			continue
 		}
-		out = append(out, m.legacyStatus(summary))
+		view := m.legacyStatus(summary)
+		if view.Archived && !includeArchived {
+			continue
+		}
+		out = append(out, view)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return parseTime(out[i].UpdatedAt).After(parseTime(out[j].UpdatedAt)) })
 	return out, nil
@@ -616,10 +656,11 @@ func notFound(id string) error {
 func (m *Manager) view(current *record) *View {
 	view := &View{
 		ID: current.id, WorkspaceID: current.workspaceID, Status: StatusReception, Title: titleOf(current),
-		Employee: current.employee, TaskID: current.taskID, Draft: current.draft,
+		Employee: current.employee, TaskID: current.taskID, TaskIDs: append([]string{}, current.taskIDs...), Draft: current.draft,
 		Attachments: append([]Attachment{}, current.attachments...),
 		CreatedAt:   current.createdAt, UpdatedAt: current.updatedAt,
-		WaitingFor: []contract.Role{}, Archived: current.archived,
+		WaitingFor: []contract.Role{}, Archived: current.archived, PermissionMode: current.mode(),
+		Todos: append([]TodoItem{}, current.todos...),
 	}
 	if current.employee != "" {
 		view.Status = StatusDrafting

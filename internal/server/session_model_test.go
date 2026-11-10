@@ -26,6 +26,8 @@ import (
 type fakeModelTurn struct {
 	ToolCalls []agent.ScriptedToolCall
 	Status    int
+	// Text 没有工具调用时的纯文本答复（前台 Agent 的回答）
+	Text string
 }
 
 // choices 这一轮的响应体。
@@ -37,6 +39,9 @@ func (t *fakeModelTurn) choices() []map[string]any {
 			"id": fmt.Sprintf("call_%d", index), "type": "function",
 			"function": map[string]any{"name": call.Name, "arguments": string(arguments)},
 		})
+	}
+	if len(calls) == 0 && t.Text != "" {
+		return []map[string]any{{"message": map[string]any{"content": t.Text}, "finish_reason": "stop"}}
 	}
 	return []map[string]any{{"message": map[string]any{"content": "", "tool_calls": calls}, "finish_reason": "tool_calls"}}
 }

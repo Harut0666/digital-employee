@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"digital-employee/internal/agent"
 	"digital-employee/internal/contract"
@@ -38,7 +39,8 @@ const filingPrompt = `你在帮发起人把一份已交付的文件放进知识�
 const filingUnavailableText = "模型暂时不可用，没能起草描述。请在入库卡片上自己写一句描述。"
 
 // DraftFiling 人在入库卡片上请模型起草描述。草稿写进会话日志，入库仍要人确认。
-func (m *Manager) DraftFiling(ctx context.Context, id string, role contract.Role) (*Reply, error) {
+// taskID 是要入库的任务（会话里有多个任务，每个交付的任务各有一张入库卡片）；空串表示最新的任务。
+func (m *Manager) DraftFiling(ctx context.Context, id string, role contract.Role, taskID string) (*Reply, error) {
 	if role != contract.RoleInitiator {
 		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以把交付物放进知识库")
 	}
@@ -48,17 +50,20 @@ func (m *Manager) DraftFiling(ctx context.Context, id string, role contract.Role
 	}
 	defer done()
 	notYet := failure(contract.ErrIllegalTransition, "任务交付之后才能放进知识库")
-	if t.current.taskID == "" || m.deps.Filing == nil {
+	if taskID == "" {
+		taskID = t.current.taskID
+	}
+	if taskID == "" || !slices.Contains(t.current.taskIDs, taskID) || m.deps.Filing == nil {
 		return nil, notYet
 	}
-	snapshot, found := m.deps.Engine.Get(t.current.taskID)
+	snapshot, found := m.deps.Engine.Get(taskID)
 	if !found || snapshot.State != contract.StateDelivered {
 		return nil, notYet
 	}
-	if _, ok := m.deps.Filing.Offer(t.current.taskID); !ok {
+	if _, ok := m.deps.Filing.Offer(taskID); !ok {
 		return nil, failure(contract.ErrNotFound, "这个任务没有可以放进知识库的交付物")
 	}
-	text, err := m.deps.Filing.Text(t.current.taskID)
+	text, err := m.deps.Filing.Text(taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,13 +78,13 @@ func (m *Manager) DraftFiling(ctx context.Context, id string, role contract.Role
 		return nil, err
 	}
 	if description == "" {
-		if err := t.write(Message{Kind: kindFilingDrafted, Reason: "模型不可用"}); err != nil {
+		if err := t.write(Message{Kind: kindFilingDrafted, TaskID: taskID, Reason: "模型不可用"}); err != nil {
 			return nil, err
 		}
 		if err := t.write(Message{Kind: KindNotice, Text: filingUnavailableText}); err != nil {
 			return nil, err
 		}
-	} else if err := t.write(Message{Kind: kindFilingDrafted, TaskID: t.current.taskID, Text: description}); err != nil {
+	} else if err := t.write(Message{Kind: kindFilingDrafted, TaskID: taskID, Text: description}); err != nil {
 		return nil, err
 	}
 	return m.reply(t)

@@ -21,9 +21,9 @@ export function StageBar({
 }) {
   return (
     <div className="stages">
-      <ol className="stage-track">
+      <ol className="stage-track" aria-label="任务进度">
         {line.stages.map((s) => (
-          <li key={s.key} className={`stage ${s.status}`}>
+          <li key={s.key} className={`stage ${s.status}`} aria-current={s.status === "current" || s.status === "paused" ? "step" : undefined}>
             <span className="stage-dot">
               {s.status === "done" && <CheckOutlined />}
               {s.status === "paused" && <PauseOutlined />}

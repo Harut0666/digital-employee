@@ -22,7 +22,7 @@ export function FilingCard({ item, actions, session }: { item: FilingItem; actio
   const draft = async () => {
     setDrafting(true);
     try {
-      await session.draftFiling();
+      await session.draftFiling(item.taskId);
     } finally {
       setDrafting(false);
     }
@@ -59,7 +59,7 @@ export function FilingCard({ item, actions, session }: { item: FilingItem; actio
   return (
     <div className="card">
       <div className="card-title">
-        <BookOutlined style={{ color: "var(--primary)" }} /> 放入知识库
+        <BookOutlined /> 放入知识库
       </div>
       <div className="card-body chat-sub">交付物放进知识库后，之后的员工先看描述再决定要不要读正文。知识库只作背景参考，不会成为周报的数字来源。</div>
       {initiator ? (

@@ -2,19 +2,7 @@
 // 之前只在“最后一条的 key / 条数”变化时平滑滚一次：流式回复的 key 不变、切会话时内容还在加载，都会停在半截。
 
 import { useCallback, useEffect, useRef, type RefObject } from "react";
-
-/** 离底部多少像素以内算“在底部”（留一点余量给取整和滚动条） */
-export const BOTTOM_SLACK = 48;
-
-export interface ScrollMetrics {
-  scrollHeight: number;
-  clientHeight: number;
-  scrollTop: number;
-}
-
-export function nearBottom(el: ScrollMetrics, slack = BOTTOM_SLACK): boolean {
-  return el.scrollHeight - el.clientHeight - el.scrollTop <= slack;
-}
+import { isNearBottom } from "../view/scroll-follow";
 
 /**
  * 让 ref 指向的滚动容器贴底。resetKey 变了（切会话）就重新贴底。
@@ -58,7 +46,7 @@ export function useStickToBottom(ref: RefObject<HTMLElement | null>, resetKey: s
       if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(event.key)) markUser();
     };
     const onScroll = () => {
-      if (userScrolling) pinned.current = nearBottom(el);
+      if (userScrolling) pinned.current = isNearBottom(el);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     el.addEventListener("wheel", markUser, { passive: true });

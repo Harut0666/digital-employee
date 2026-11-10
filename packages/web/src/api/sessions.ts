@@ -3,9 +3,14 @@
 // 这样提交前检查不通过时界面能拿到设置入口。读取类接口出错时抛异常。
 
 import type {
+  EmployeeFormAnswer,
   FolderListing,
   ModelConnectionOption,
+  ModelRef,
+  PermissionDecision,
+  PermissionMode,
   PreflightResult,
+  QuestionAnswer,
   SessionAgentEvent,
   SessionDetail,
   SessionResult,
@@ -18,8 +23,11 @@ import type {
 export interface SessionApi {
   listSessions(workspaceId?: string, options?: { archived?: boolean }): Promise<SessionSummary[]>;
   getSession(id: string): Promise<SessionDetail>;
-  /** 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式） */
-  createSession(workspaceId?: string): Promise<SessionSummary>;
+  /**
+   * 在某个工作区里开新会话；不给 workspaceId 时服务端取唯一的工作区（单目录模式）。
+   * model 是新对话页选中（T45）：从第一句话起用哪个模型；不给时沿用设置的 lastModel。
+   */
+  createSession(workspaceId?: string, model?: ModelRef): Promise<SessionSummary>;
   /**
    * 发一句话：接口立即受理（202），回复在会话事件流里逐字出现。
    * 正在回复时再发的话排进同一轮，在下一步之前送达。
@@ -38,11 +46,21 @@ export interface SessionApi {
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */
   skipChecklistItem(id: string, item: string): Promise<SessionResult>;
-  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写 */
-  draftFiling(id: string): Promise<SessionResult>;
+  /** 入库卡片：请模型起草描述；模型不可用时结果里是一条说明，由人手写。taskId 是要入库的任务，不给就是最新的 */
+  draftFiling(id: string, taskId?: string): Promise<SessionResult>;
   /** 会话模型：可选的有 Key 的连接和模型、在会话里选模型 */
   modelOptions(): Promise<ModelConnectionOption[]>;
   selectModel(id: string, connection: string, model: string): Promise<SessionResult>;
+  /** 权限模式（T48）：发起人在输入框左下角选；每个会话各自记住，新会话总是“仅限工作区”（workspace） */
+  setPermissionMode(id: string, mode: PermissionMode): Promise<SessionResult>;
+  /** 员工表单卡上的答复（T49）：确认开工（带人改过的字段、材料、确认跳过的项）或“不是这个员工”；只有发起人能答 */
+  answerEmployeeForm(id: string, requestId: string, answer: EmployeeFormAnswer): Promise<SessionResult>;
+  /** 欢迎页“载入公开样例”（T49）：把样例的输入预填成一张员工表单，人确认即开工 */
+  loadSampleForm(id: string): Promise<SessionResult>;
+  /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
+  decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
+  /** 提问卡（ask_user_question）上的答复：每题选了什么、“其他”里写了什么；只有发起人能答 */
+  answerQuestion(id: string, requestId: string, answers: QuestionAnswer[]): Promise<SessionResult>;
   /** 改会话的标题、归档 */
   updateSession(id: string, patch: { title?: string; archived?: boolean }): Promise<SessionSummary>;
   /** 提交前检查：默认模型连接有没有可用 Key；给了任务就用任务的会话模型 */
@@ -89,14 +107,23 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
       return read<SessionSummary[]>(url(`sessions${suffix}`));
     },
     getSession: (id) => read<SessionDetail>(session(id)),
-    createSession: (workspaceId) =>
-      read<SessionSummary>(url("sessions"), {
+    createSession: (workspaceId, model) => {
+      const body: Json = {};
+      if (workspaceId) body.workspaceId = workspaceId;
+      if (model) body.model = { connection: model.connection, model: model.model };
+      return read<SessionSummary>(url("sessions"), {
         method: "POST",
-        headers: { "x-role": getRole(), ...(workspaceId ? { "content-type": "application/json" } : {}) },
-        ...(workspaceId ? { body: JSON.stringify({ workspaceId }) } : {}),
-      }),
+        headers: { "x-role": getRole(), ...(workspaceId || model ? { "content-type": "application/json" } : {}) },
+        ...(workspaceId || model ? { body: JSON.stringify(body) } : {}),
+      });
+    },
     modelOptions: () => read<ModelConnectionOption[]>(url("settings/models")),
     selectModel: (id, connection, model) => act(session(id, "/model"), JSON.stringify({ connection, model }), true, "PUT"),
+    setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
+    answerEmployeeForm: (id, requestId, answer) => act(session(id, `/employee-forms/${encodeURIComponent(requestId)}`), JSON.stringify(answer)),
+    loadSampleForm: (id) => act(session(id, "/sample"), JSON.stringify({})),
+    decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
+    answerQuestion: (id, requestId, answers) => act(session(id, `/questions/${encodeURIComponent(requestId)}`), JSON.stringify({ answers })),
     async updateSession(id, patch) {
       // 服务端返回 {ok, session, statusDot}：取里面的会话摘要
       const body = await read<{ session?: SessionSummary }>(session(id), {
@@ -119,7 +146,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
-    draftFiling: (id) => act(session(id, "/filing-draft"), JSON.stringify({})),
+    draftFiling: (id, taskId) => act(session(id, "/filing-draft"), JSON.stringify(taskId ? { taskId } : {})),
     preflight: (taskId) => read<PreflightResult>(url(taskId ? `preflight?taskId=${encodeURIComponent(taskId)}` : "preflight")),
     subscribeSession(id, onEvent) {
       // 服务端每件事都带 event 名；EventSource 带不了请求头，但事件流是只读的，不依赖角色
