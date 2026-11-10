@@ -248,7 +248,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const sessionActions: SessionActions = {
     employees,
     attachments: detail?.attachments ?? [],
-    // 员工表单卡上的“确认开工”“不是这个员工”：失败（清单没备齐、模型没配）交给卡片显示，不弹全局提示
+    // 员工表单卡上的“确认开工”“取消”：失败（清单没备齐、模型没配）交给卡片显示，不弹全局提示
     answerForm: async (requestId, answer) => {
       if (!sessionId) return { ok: false, error: "not_found", message: "没有选中会话" };
       const res = await settle(api.answerEmployeeForm(sessionId, requestId, answer));

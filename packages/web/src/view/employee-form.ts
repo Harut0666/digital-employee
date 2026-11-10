@@ -6,7 +6,7 @@
 
 import type { ChecklistDef, SessionAttachment, SessionCard, UiRole } from "../api/types";
 
-/** 卡片所处的阶段：等人、已确认开工、选错员工、被停止 */
+/** 卡片所处的阶段：等人、已确认开工、发起人取消、被停止 */
 export type EmployeeFormState = "pending" | "confirmed" | "rejected" | "cancelled";
 
 /** 字段上的标记：Agent 预填的；人改过 Agent 预填的值 */
@@ -62,7 +62,7 @@ export interface EmployeeFormInput {
 const STATE_TEXT: Record<EmployeeFormState, string> = {
   pending: "等你核对并确认",
   confirmed: "已确认开工",
-  rejected: "已选「不是这个员工」",
+  rejected: "已取消",
   cancelled: "已取消",
 };
 

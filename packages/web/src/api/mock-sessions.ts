@@ -725,7 +725,7 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
         return finish("", "stopped");
       }
       if (result.rejected) {
-        const reason = "发起人拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。";
+        const reason = "发起人取消了这张员工表单，没有开工。不要原样再发同样的表单：先问问发起人想怎么调整（换一个员工、补充或修改信息，还是先不做了）。";
         write(s, { kind: "tool_denied", tool: "run_employee", args, reason, decision: "deny" }, []);
         emit(s, turn, { type: "message" });
         end({ reason, isErr: true });

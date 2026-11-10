@@ -125,7 +125,7 @@ describe("模拟数据模式的会话", () => {
     expect(await api.answerEmployeeForm(created.id, form.requestId!, { decision: "reject" })).toMatchObject({ ok: false, error: "form_settled" });
   });
 
-  test("员工表单：必需项不齐不能确认；不是这个员工；只有发起人能答；read_only 模式拒绝", async () => {
+  test("员工表单：必需项不齐不能确认；取消；只有发起人能答；read_only 模式拒绝", async () => {
     const { api, setRole } = asRole("initiator");
     const created = await api.createSession();
     await api.sendMessage(created.id, "出周报");

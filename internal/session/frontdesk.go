@@ -43,7 +43,7 @@ func toolFailure(code, format string, args ...any) error {
 }
 
 // denial 越权调用：拒绝，并写入会话日志。
-// byInitiator 为 true 表示这是发起人自己的拒绝（权限确认卡上点“拒绝”、员工表单上点“不是这个员工”），
+// byInitiator 为 true 表示这是发起人自己的拒绝（权限确认卡上点“拒绝”、员工表单上点“取消”），
 // 会话日志里记 decision=deny，界面据此区分“人拒绝了”和“程序按边界、模式拒绝了”，不靠文案前缀。
 type denial struct {
 	reason      string
@@ -128,17 +128,10 @@ func (t *turn) flushCards() error {
 }
 
 // history 发给模型的对话：只有人和 Agent 说的话，卡片和留痕是界面消息。
+// 自动压缩过的会话：最近一次压缩之前的对话换成那段摘要（见 compact.go）。
 func (t *turn) history() []agent.Message {
-	messages := []agent.Message{}
-	for _, message := range t.current.messages {
-		switch message.Kind {
-		case KindUser:
-			messages = append(messages, textMessage("user", message.Text))
-		case KindAssistant:
-			messages = append(messages, textMessage("assistant", message.Text))
-		}
-	}
-	return messages
+	summary, entries := t.historyEntries()
+	return conversationOf(summary, entries)
 }
 
 func textMessage(role, text string) agent.Message {
@@ -274,9 +267,18 @@ func (loop *turnLoop) flushCards() error {
 
 // resolveModel 取前台 Agent 的模型；失败写入会话日志。
 func (loop *turnLoop) resolveModel() (*agent.ResolvedStepModel, error) {
-	fail := func(reason string) (*agent.ResolvedStepModel, error) {
+	resolved, reason := loop.lookupModel()
+	if reason != "" {
 		loop.say(Message{Kind: KindModelFailed, Reason: reason})
 		return nil, errModelUnavailable
+	}
+	return resolved, nil
+}
+
+// lookupModel 取前台 Agent 的模型，不写日志；取不到时返回原因。
+func (loop *turnLoop) lookupModel() (*agent.ResolvedStepModel, string) {
+	fail := func(reason string) (*agent.ResolvedStepModel, string) {
+		return nil, reason
 	}
 	var provider agent.ModelProvider
 	if loop.turn.manager.deps.Model != nil {
@@ -301,15 +303,25 @@ func (loop *turnLoop) resolveModel() (*agent.ResolvedStepModel, error) {
 	if provider.Kind() == "real" && resolved.APIKey == "" {
 		return fail("模型连接没有配置 API Key")
 	}
-	return resolved, nil
+	return resolved, ""
 }
 
-// stream 一次流式模型调用；文字增量直接推送，停止之后返回的结尾由调用方处理。
-func (loop *turnLoop) stream(ctx context.Context, resolved *agent.ResolvedStepModel, messages []agent.Message, tools []agent.ToolSpec) (*agent.AssistantMessage, error) {
+// streamOptions 一次模型调用的选项（Key、输出上限、重试、超时）。
+func (loop *turnLoop) streamOptions(resolved *agent.ResolvedStepModel) agent.StreamOptions {
 	var execution *contract.ExecutionSettings
 	if loop.turn.manager.deps.Execution != nil {
 		execution = loop.turn.manager.deps.Execution()
 	}
+	return agent.StreamOptions{
+		APIKey:     resolved.APIKey,
+		MaxTokens:  resolved.Model.MaxTokens,
+		MaxRetries: agent.ResolveModelMaxRetries(resolved.MaxRetries, execution),
+		TimeoutMS:  resolved.TimeoutMS,
+	}
+}
+
+// stream 一次流式模型调用；文字增量直接推送，停止之后返回的结尾由调用方处理。
+func (loop *turnLoop) stream(ctx context.Context, resolved *agent.ResolvedStepModel, messages []agent.Message, tools []agent.ToolSpec) (*agent.AssistantMessage, error) {
 	send := func(text string) {
 		if text == "" {
 			return
@@ -325,13 +337,8 @@ func (loop *turnLoop) stream(ctx context.Context, resolved *agent.ResolvedStepMo
 		_ = loop.appendDelta(text)
 	}
 	return resolved.EventStream(ctx, resolved.Model, agent.StreamRequest{Messages: messages, Tools: tools}, agent.EventStreamOptions{
-		StreamOptions: agent.StreamOptions{
-			APIKey:     resolved.APIKey,
-			MaxTokens:  resolved.Model.MaxTokens,
-			MaxRetries: agent.ResolveModelMaxRetries(resolved.MaxRetries, execution),
-			TimeoutMS:  resolved.TimeoutMS,
-		},
-		OnText: send,
+		StreamOptions: loop.streamOptions(resolved),
+		OnText:        send,
 	})
 }
 
@@ -348,6 +355,9 @@ func (loop *turnLoop) converse(ctx context.Context, system string, conversation 
 		open[item.spec.Name] = item
 	}
 	messages := append([]agent.Message{{Role: "system", Content: []agent.ContentBlock{agent.TextBlock(system)}}}, conversation...)
+	// 对话原文在 messages 里的结束位置：超出上下文时 fitContext 只从这一段里丢最早的原文
+	historyEnd := len(messages)
+	droppedSaid := false
 	// 这一轮开始时排着的插话（比如接手后的“据此填表”）在第一步之前送达。
 	// 不属于某一轮的一次性调用（比如起草入库描述）没有插话。
 	if loop.job != nil {
@@ -363,6 +373,13 @@ func (loop *turnLoop) converse(ctx context.Context, system string, conversation 
 	// 这一轮已经说出的部分（包括调用工具之前的那半句），停止或断流时都要保留
 	spoken := strings.Builder{}
 	for rounds := 0; ; rounds++ {
+		// 工具结果越攒越多：快超出模型的上下文窗口时先截短较早的结果，再不够丢最早的原文（见 compact.go）
+		fitted, end, dropped := fitContext(messages, historyEnd, availableTokens(resolved.Model))
+		messages, historyEnd = fitted, end
+		if dropped > 0 && !droppedSaid && loop.job != nil {
+			droppedSaid = true
+			loop.say(Message{Kind: KindNotice, Text: droppedNotice})
+		}
 
 		produced, err := loop.stream(ctx, resolved, messages, specs)
 		if produced != nil {

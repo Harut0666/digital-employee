@@ -37,7 +37,7 @@ const view = (c: SessionCard, extra: Partial<Parameters<typeof deriveEmployeeFor
   });
 
 describe("员工表单卡的状态", () => {
-  test("等人、已确认、不是这个员工、被停止", () => {
+  test("等人、已确认、取消、被停止", () => {
     expect(employeeFormState({ pending: true })).toBe("pending");
     expect(employeeFormState({ decision: "confirmed" })).toBe("confirmed");
     expect(employeeFormState({ decision: "rejected" })).toBe("rejected");

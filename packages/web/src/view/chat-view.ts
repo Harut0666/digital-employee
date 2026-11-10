@@ -38,7 +38,7 @@ export type ChatItem =
       attachments: SessionAttachment[];
       mode: "superseded" | "submitted";
     })
-  /** 员工表单（T49）：run_employee 弹出的结构化表单，人核对、补充、确认开工或“不是这个员工” */
+  /** 员工表单（T49）：run_employee 弹出的结构化表单，人核对、补充、确认开工或“取消” */
   | (ItemBase & { kind: "employee_form"; card: SessionCard; writable: boolean })
   | (ItemBase & { kind: "pause"; pause?: PauseView; actions: TaskAction[]; active: boolean })
   /** 使用目录文件：前台 Agent 提议把人工作区目录里的文件当材料，人确认后才复制进会话 */

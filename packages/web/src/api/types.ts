@@ -359,7 +359,7 @@ export interface SessionMessage {
   mode?: PermissionMode;
   /** todo_written：Agent 整表替换后的待办清单 */
   todos?: TodoItem[];
-  /** tool_denied：为 "deny" 表示是发起人自己拒绝的（权限确认卡上的“拒绝”、员工表单上的“不是这个员工”），不是程序按边界或模式拒绝的 */
+  /** tool_denied：为 "deny" 表示是发起人自己拒绝的（权限确认卡上的“拒绝”、员工表单上的“取消”），不是程序按边界或模式拒绝的 */
   decision?: string;
 }
 

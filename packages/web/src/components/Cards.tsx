@@ -59,7 +59,7 @@ export interface SessionActions {
   employees: EmployeeInfo[];
   /** 会话里现在的材料（员工表单卡据此认出人补传的） */
   attachments: SessionAttachment[];
-  /** 员工表单卡上的答复（T49）：确认开工，或“不是这个员工” */
+  /** 员工表单卡上的答复（T49）：确认开工，或“取消” */
   answerForm: (requestId: string, answer: EmployeeFormAnswer) => Promise<SessionResult>;
   upload: (files: File[]) => Promise<void>;
   /** 确认（或 @ 选择）目录里的文件作为材料：复制进会话，与上传等效 */

@@ -393,7 +393,7 @@ func (s *Server) handleAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 
 // handleAnswerEmployeeForm POST /api/sessions/{id}/employee-forms/{requestId}：发起人在员工表单卡上答复。
 // decision=confirm 是“确认开工”（form 是人改过的表单字段，attachments 是要带进任务的会话材料，
-// skipped 是人确认跳过的可跳过清单项）；decision=reject 是“不是这个员工”。
+// skipped 是人确认跳过的可跳过清单项）；decision=reject 是“取消”。
 func (s *Server) handleAnswerEmployeeForm(w http.ResponseWriter, r *http.Request) {
 	// 改变审核、退回、终止、权限确认状态的接口只接受界面页面发出的请求（origin.go）
 	if !requireBrowserPage(w, r) {

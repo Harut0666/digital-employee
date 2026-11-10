@@ -1,13 +1,13 @@
 // 员工表单卡（T49）：Agent 调 run_employee 整理好员工的输入，人在这里核对、补充、确认。
 // 卡头写明员工，标出哪些字段和材料是 Agent 预填的、材料来自哪里；人可以直接改字段、补传材料、确认跳过可跳过的开工清单项；
-// 必需项没备齐不能确认。两个按钮：“确认开工”和“不是这个员工”（把“发起人拒绝，原因：选错员工”交回 Agent）。
+// 必需项没备齐不能确认（鼠标停在置灰的“确认开工”上会提示还缺什么）。两个按钮：“确认开工”和“取消”（告诉 Agent 发起人取消了这张表单）。
 // 卡片派生出的东西（标记、来源、不能确认的原因）都在 view/employee-form.ts。
 
 import { useMemo, useRef, useState } from "react";
 import Form from "@rjsf/antd";
 import validator from "@rjsf/validator-ajv8";
 import { getDefaultFormState, type RJSFSchema } from "@rjsf/utils";
-import { Alert, Button, Tag, Upload } from "antd";
+import { Alert, Button, Tag, Tooltip, Upload } from "antd";
 import { CheckOutlined, CloseOutlined, PaperClipOutlined, SettingOutlined, TeamOutlined, UploadOutlined } from "@ant-design/icons";
 import type { SettingsEntry } from "../api";
 import type { ChatItem } from "../view/chat-view";
@@ -215,11 +215,16 @@ export function EmployeeFormCard({
       {initiator ? (
         <div className="card-actions" style={{ justifyContent: "flex-end" }}>
           <Button danger icon={<CloseOutlined />} loading={busy === "reject"} disabled={busy !== undefined && busy !== "reject"} onClick={() => void reject()}>
-            不是这个员工
+            取消
           </Button>
-          <Button type="primary" icon={<CheckOutlined />} loading={busy === "confirm"} disabled={!derived.canConfirm || (busy !== undefined && busy !== "confirm")} onClick={() => void confirm()}>
-            确认开工
-          </Button>
+          {/* 置灰的按钮收不到鼠标事件，提示挂在外面一层 span 上 */}
+          <Tooltip title={!derived.canConfirm && derived.blockers.length > 0 ? derived.blockers.join("；") : undefined}>
+            <span>
+              <Button type="primary" icon={<CheckOutlined />} loading={busy === "confirm"} disabled={!derived.canConfirm || (busy !== undefined && busy !== "confirm")} onClick={() => void confirm()}>
+                确认开工
+              </Button>
+            </span>
+          </Tooltip>
         </div>
       ) : (
         <Handoff handoff={{ text: "等待发起人核对并确认", switchTo: ["initiator"] }} onRole={actions.onRole} />

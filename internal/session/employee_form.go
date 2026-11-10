@@ -3,7 +3,7 @@
 // 前台 Agent 把对话、目录文件和已有材料整理成一个员工的输入（表单字段 + 材料）调用 run_employee。
 // 输入定义直接用员工配置里的表单定义和开工清单，不另设一份：
 //   - 字段值不合法（类型、范围、不存在的字段、文件字段）：把具体问题作为工具错误交回 Agent，不开表单；
-//   - 通过权限判断后，弹出员工表单卡，由人核对、补充、确认（“确认开工”或“不是这个员工”）。
+//   - 通过权限判断后，弹出员工表单卡，由人核对、补充、确认（“确认开工”或“取消”）。
 //     workspace 一定弹；full 在表单完整有效、必需开工清单项备齐时免确认直接开工，否则弹。
 //     workspace 下目录文件用作材料要人确认；full 自动确认；
 //   - 确认开工由人触发（AnswerEmployeeForm），程序按现有路径做准入校验并创建任务；目录文件在确认时复制进会话材料，
@@ -33,7 +33,7 @@ const ToolRunEmployee = "run_employee"
 // 人对员工表单卡的答复（请求体里的 decision）。
 const (
 	AnswerConfirm = "confirm" // 确认开工
-	AnswerReject  = "reject"  // 不是这个员工
+	AnswerReject  = "reject"  // 取消
 )
 
 // 员工表单卡答复之后卡片上的 Decision（停止时是 DecisionCancelled）。
@@ -48,8 +48,8 @@ const ErrFormSettled = "form_settled"
 // kindEmployeeFormDecided 员工表单卡有了答复（RequestID、Decision、TaskID）；只改变会话状态，卡片上体现。
 const kindEmployeeFormDecided = "employee_form_decided"
 
-// rejectedReason “不是这个员工”交回 Agent 的话。
-const rejectedReason = "发起人拒绝，原因：选错员工。发起人认为这项工作不该由这个员工做，请重新判断该由哪个员工做，或问问发起人想让谁做。"
+// rejectedReason 员工表单上点“取消”交回 Agent 的话。取消不一定是选错了员工，可能是信息不对或不想做了，所以让 Agent 先问。
+const rejectedReason = "发起人取消了这张员工表单，没有开工。不要原样再发同样的表单：先问问发起人想怎么调整（换一个员工、补充或修改信息，还是先不做了）。"
 
 // Sample 应用目录里的公开样例：员工、预填的表单字段、样例材料文件。
 type Sample struct {
@@ -441,7 +441,7 @@ func startedResult(taskID contract.TaskID, state contract.TaskState) map[string]
 	}
 }
 
-// askForm 弹出员工表单卡，这一轮在这里暂停，直到人确认、说“不是这个员工”或点停止。
+// askForm 弹出员工表单卡，这一轮在这里暂停，直到人确认、说“取消”或点停止。
 func (loop *turnLoop) askForm(ctx context.Context, id, name string, config *contract.EmployeeConfig, fields map[string]any, materials []FormMaterial, reason string) (any, error) {
 	if ctx.Err() != nil {
 		return nil, errTurnCancelled
@@ -708,7 +708,7 @@ func (m *Manager) sample() *Sample {
 
 // FormAnswer 人在员工表单卡上的答复。
 type FormAnswer struct {
-	// Decision confirm（确认开工）或 reject（不是这个员工）
+	// Decision confirm（确认开工）或 reject（取消）
 	Decision string
 	// Form 人在卡片上改过的表单字段；为 nil 时用卡片上的预填
 	Form map[string]any
@@ -753,7 +753,7 @@ func (m *Manager) formWaitFor(sessionID string, card Card) *formWait {
 	return wait
 }
 
-// AnswerEmployeeForm 发起人在员工表单卡上答复：确认开工，或者说“不是这个员工”。
+// AnswerEmployeeForm 发起人在员工表单卡上答复：确认开工，或者说“取消”。
 // 这是人的动作，Agent 没有对应的工具。不占这一轮的写锁：这一轮正停在这张卡上等着。
 func (m *Manager) AnswerEmployeeForm(id string, role contract.Role, requestID string, answer FormAnswer) (*Reply, error) {
 	if role != contract.RoleInitiator {

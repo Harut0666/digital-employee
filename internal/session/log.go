@@ -96,6 +96,8 @@ type Message struct {
 	ConfirmedPath string `json:"confirmedPath,omitempty"`
 	// Item 开工清单项的 id
 	Item string `json:"item,omitempty"`
+	// CompactedThrough 自动压缩（kindCompacted）的摘要覆盖到哪一条消息为止（含）：之后的原话照常发给模型
+	CompactedThrough string `json:"compactedThrough,omitempty"`
 	// Turn 前台 Agent 回复的轮次编号（T40）：一轮结束时写入的消息都带着它。
 	// 文字增量在事件流里推给前端，但会话读取按日志重画对话，所以增量也按轮次记一份，
 	// 来晚的客户端和重连之后的客户端能看到完整的那一轮。
