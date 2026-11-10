@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Button, Collapse, Dropdown, message, Modal, Segmented, Tooltip } from "antd";
 import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, DownOutlined, ExportOutlined, InboxOutlined } from "@ant-design/icons";
 import type { TaskSnapshot } from "../api";
-import { deriveReviewPanel, openMenu } from "../view/review-panel";
+import { deriveReviewPanel, openMenu, previewSource } from "../view/review-panel";
 import type { EarlierDelivery, FilingView } from "../view/delivery";
 import { actionPlan } from "../view/permissions";
 import { DocxPreview } from "./DocxPreview";
@@ -53,6 +53,8 @@ export function ReviewPanel({ snapshot, actions, session, filing, earlier = [] }
 
   const version = view.latest ? undefined : view.selected;
   const docUrl = view.docKind ? actions.downloadUrl(view.docKind, version) : undefined;
+  // 预览按地址刷新：最新版的下载地址不带版本，重做后要靠版本号区分，否则一直显示旧版
+  const previewUrl = previewSource(docUrl, view.selected);
   const pause = view.reviewing && snapshot.pause?.code !== "awaiting_review" ? snapshot.pause : undefined;
   const plan = actionPlan(view.reviewing ? actions.taskActions : [], view.reviewing ? actions.waitingFor : [], actions.role);
   const menu = openMenu(view.files, view.docKind);
@@ -100,9 +102,9 @@ export function ReviewPanel({ snapshot, actions, session, filing, earlier = [] }
 
       <div className="review-doc">
         {view.docKind === "md" ? (
-          <MarkdownPreview key={docUrl ?? "placeholder"} url={docUrl} />
+          <MarkdownPreview key={previewUrl ?? "placeholder"} url={previewUrl} />
         ) : (
-          <DocxPreview key={docUrl ?? "placeholder"} url={docUrl} reflow />
+          <DocxPreview key={previewUrl ?? "placeholder"} url={previewUrl} reflow />
         )}
       </div>
 

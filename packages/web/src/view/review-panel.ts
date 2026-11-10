@@ -78,6 +78,16 @@ export function deriveReviewPanel(input: ReviewPanelInput, selected?: number): R
 }
 
 /** 窗口宽度低于这个值时，右栏收成抽屉 */
+/**
+ * 预览用的地址：在下载地址后面带上当前版本号。
+ * “最新版”的下载地址不带版本参数，重做出了第 2 版后地址和第 1 版一模一样，预览组件（按地址刷新）不会重新加载，
+ * 会一直停在旧版内容上（真实模型复测里发现的）；浏览器也可能直接用缓存。带上版本号就是两个不同的地址。
+ */
+export function previewSource(url: string | undefined, version: number | undefined): string | undefined {
+  if (!url || version === undefined) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}rev=${version}`;
+}
+
 export const DRAWER_BELOW = 1024;
 
 export interface PanelLayout {

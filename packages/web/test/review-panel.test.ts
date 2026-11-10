@@ -1,6 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import type { DeliverableVersion } from "../src/api/types";
-import { deriveReviewPanel, openMenu, panelLayout } from "../src/view/review-panel";
+import { deriveReviewPanel, openMenu, panelLayout, previewSource } from "../src/view/review-panel";
+
+// 真实模型复测里发现：退回重做出了第 2 版，预览却一直停在第 1 版。
+// 原因是“最新版”的下载地址不带版本，两版地址相同，预览组件按地址刷新就不会重新加载。
+describe("previewSource", () => {
+  test("最新版的两个版本得到不同的预览地址", () => {
+    const base = "/api/tasks/t1/deliverables/md";
+    expect(previewSource(base, 1)).not.toBe(previewSource(base, 2));
+    expect(previewSource(base, 2)).toBe("/api/tasks/t1/deliverables/md?rev=2");
+  });
+  test("下载地址已有参数时用 & 拼接", () => {
+    expect(previewSource("/api/tasks/t1/deliverables/docx?version=1", 1)).toBe("/api/tasks/t1/deliverables/docx?version=1&rev=1");
+  });
+  test("没有地址（模拟模式）或没有版本时原样返回", () => {
+    expect(previewSource(undefined, 2)).toBeUndefined();
+    expect(previewSource("/x", undefined)).toBe("/x");
+  });
+});
 
 const files = (round: number) => [
   { kind: "docx" as const, path: `report-r${round}.docx`, sha256: `d${round}` },
