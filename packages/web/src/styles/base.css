@@ -45,7 +45,7 @@ summary:focus-visible,
 /* ---------- 外框：左栏 | 中栏 | 右栏 ---------- */
 .shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 360px;
+  grid-template-columns: var(--sidebar-w) minmax(340px, 1fr) 360px;
   gap: var(--sp-2);
   height: 100%;
   padding: var(--sp-2);
@@ -53,7 +53,7 @@ summary:focus-visible,
 /* 审核时右栏加宽到一半左右，但最多让到给对话栏留出约 380px（左栏 + 两侧边距 + 两条间隙之外的部分） */
 .shell.wide {
   --sidebar-w: 236px;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) clamp(360px, calc(100vw - var(--sidebar-w) - 4 * var(--sp-2) - 380px), 48vw);
+  grid-template-columns: var(--sidebar-w) minmax(340px, 1fr) clamp(360px, calc(100vw - var(--sidebar-w) - 4 * var(--sp-2) - 380px), 48vw);
 }
 .shell.no-panel {
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);

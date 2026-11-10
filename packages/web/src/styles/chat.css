@@ -676,3 +676,34 @@
   padding: var(--sp-6);
   color: var(--muted);
 }
+
+/* ---------- 输入区在窄栏里也不挤掉发送箭头：箭头和停止按钮不收缩，模型名和权限模式的文字先省略 ---------- */
+.composer-bar {
+  flex-wrap: nowrap;
+}
+.composer-bar-left {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.composer-bar-right {
+  flex: 1 1 0;
+  justify-content: flex-end;
+}
+.composer .mode-picker,
+.composer .model-picker {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+.composer .picker-label {
+  min-width: 0;
+  max-width: min(220px, 100%);
+}
+.composer .send-slot,
+.composer .stop-button {
+  flex: none;
+}
+.composer .send-slot .ant-btn {
+  flex: none;
+  min-width: 32px;
+}

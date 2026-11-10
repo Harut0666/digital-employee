@@ -560,3 +560,94 @@
   height: 70vh;
   border: 0;
 }
+
+/* ---------- 对话和右栏连成一整块：中间没有空隙，只有一条分隔线 ---------- */
+.shell:not(.no-panel):not(.narrow) > .col.chat {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+}
+.shell > .col.panel.panel-tabs:not(.drawer-panel) {
+  /* 抵消网格的列间距，让右栏紧贴对话 */
+  margin-left: calc(-1 * var(--sp-2));
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+}
+.drawer-panel.panel-tabs {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+.rp-tabs {
+  padding: 6px 8px 0;
+  background: var(--card-2);
+  border-bottom: 1px solid var(--line);
+}
+.rp-tab.active {
+  margin-bottom: -1px;
+  border-color: var(--line);
+  border-bottom: 1px solid var(--card);
+}
+.rp-tabs .rp-add,
+.rp-tabs .panel-close {
+  margin-bottom: 4px;
+}
+/* 标签页里的内容不再各画一层卡片：整个右栏就是一张卡 */
+.rp-body.scroll {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.rp-body .review {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  container-type: inline-size;
+}
+
+/* 右栏窄的时候，底部的检验记录和审核按钮上下排，不互相挤成一字一行 */
+.review-row {
+  flex-wrap: wrap;
+}
+.review-row > b {
+  white-space: nowrap;
+}
+.review-foot {
+  flex-wrap: wrap;
+}
+.review-info {
+  flex: 1 1 240px;
+}
+@container (max-width: 560px) {
+  .review-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .review-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding-left: 0;
+    border-left: 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+  }
+  .review-actions .card-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .review-actions .card-actions .ant-btn {
+    min-width: 0;
+  }
+  .review-actions .handoff {
+    max-width: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .review-info {
+    flex: none;
+  }
+}
