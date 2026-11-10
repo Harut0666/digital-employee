@@ -290,9 +290,47 @@ func TestRunnerEmitsModelDeltas(t *testing.T) {
 	}
 }
 
+// 提交不合格不立刻失败：具体的 Schema 错误作为工具结果交回模型，模型重交合格结果就能继续。
+// （真实模型常多写一个 Schema 没有的字段，复测里曾因此当场暂停。）
+func TestRunnerLetsModelFixInvalidSubmission(t *testing.T) {
+	t.Parallel()
+	extra := validSubmission()
+	extra["note"] = "多余字段" // additionalProperties:false，不合格
+	input := runInput(agent.ModelScript{"match_causes": {submitTurn(extra), submitTurn(validSubmission())}})
+	result, err := newRunner().Run(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.ModelCalls != 2 {
+		t.Fatalf("重交合格结果应成功且共 2 次模型调用：%+v", result)
+	}
+	requests := input.Model.(*agent.ScriptedProvider).Requests()
+	if len(requests) != 2 {
+		t.Fatalf("请求数 = %d，want 2", len(requests))
+	}
+	feedback := ""
+	for _, message := range requests[1].Request.Messages {
+		if message.Role != "tool" {
+			continue
+		}
+		for _, block := range message.Content {
+			if block.IsError {
+				feedback = block.Text
+			}
+		}
+	}
+	for _, want := range []string{"本次提交无效", "must NOT have additional properties", agent.SubmitToolName} {
+		if !strings.Contains(feedback, want) {
+			t.Fatalf("交给模型的错误缺少 %q：%q", want, feedback)
+		}
+	}
+}
+
+// 一直不合格：用完轮次上限才按 invalid_output 失败，说明里带最后一次的 Schema 错误。
 func TestRunnerRejectsInvalidOutput(t *testing.T) {
 	t.Parallel()
-	input := runInput(agent.ModelScript{"match_causes": {submitTurn(map[string]any{"causes": []any{}})}})
+	bad := submitTurn(map[string]any{"causes": []any{}})
+	input := runInput(agent.ModelScript{"match_causes": {bad, bad, bad, bad}}) // 轮次上限 4
 	result, err := newRunner().Run(input)
 	if err != nil {
 		t.Fatal(err)

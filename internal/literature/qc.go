@@ -344,12 +344,24 @@ func checkLength(in QcInput) contract.QcCheckResult {
 	return result("length", "篇幅", issues, in.fix())
 }
 
-// lengthIssue 写给模型看的篇幅修正意见：页数按两位小数写（一位小数会出现“4.5 超过 4.5”这种自相矛盾的话），
-// 并给出整体至少要压缩的比例；比例多留 3 个百分点，避免“刚好压到线上又差一点”反复重跑。
+// lengthIssue 写给模型看的篇幅修正意见。要点有三：
+//   - 页数写到两位小数（一位小数会出现“4.5 超过 4.5”这种自相矛盾的话）；
+//   - 给绝对字数而不是百分比：全文里表格、来源清单都是程序生成的，模型自己写的叙述只占约五分之一，
+//     “压缩全文 9%”对它等于要删掉近一半叙述，它做不到；
+//   - 点明另一个杠杆：来源清单按引用的不同编号逐条生成，少引几个编号也能缩短篇幅。
+//
+// 多留约 120 字余量，避免“刚好压到线上又差一点”反复重跑。
 func lengthIssue(estimated, limit, maxPages float64) string {
-	cut := int(math.Ceil((1-limit/estimated)*100)) + 3
-	return fmt.Sprintf("按版式估算约 %.2f 页，超过上限 %.2f 页（%.0f 页留 10%% 余量）：请把全文整体压缩至少约 %d%%（删去次要的修饰和重复说明，保留结论、数字和引用角标），再提交", estimated, limit, maxPages, cut)
+	excess := int(math.Round((estimated - limit) * charsPerPage))
+	cut := excess + 120
+	return fmt.Sprintf("按版式估算约 %.2f 页，超过上限 %.2f 页（%.0f 页留 10%% 余量），全文约超出 %d 字。"+
+		"表格和来源清单由程序生成、你改不了，只能靠叙述和引用来减：请把叙述至少删减约 %d 字（删去次要的修饰、重复说明和过长的指标罗列，保留结论、数字和引用角标），"+
+		"并少引用几个不同的编号（每少一个，来源清单约少 %d 字），再提交",
+		estimated, limit, maxPages, excess, cut, sourceLineChars)
 }
+
+// sourceLineChars 来源清单里一条引用大约占的字数（专利一行约 85 字），写进篇幅修正意见里给模型估算用。
+const sourceLineChars = 85
 
 func sectionText(s *BriefSection) string {
 	if s == nil {

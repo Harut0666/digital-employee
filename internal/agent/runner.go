@@ -116,7 +116,6 @@ func NewJudgmentRunner(options RunnerOptions) *Runner { return &Runner{options: 
 type submission struct {
 	valid  bool
 	output any
-	errors string
 }
 
 func describeContext(context map[string]any, corrections []string) string {
@@ -241,6 +240,9 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 
 	denied := map[string]bool{}
 	var current *submission
+	// 最近一次不合格提交的 Schema 错误。提交不合格不立刻结束步骤：把错误交还给模型，让它在轮次上限内重交；
+	// 轮次用完还不合格才按 invalid_output 失败（真实模型常多写一个 Schema 没有的字段，重交一次就能过）。
+	invalidErrors := ""
 	var failureKind contract.JudgmentFailure
 	failureMessage := ""
 	modelError := ""
@@ -264,8 +266,13 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 			break
 		}
 		if turns >= rounds {
-			failureKind = contract.FailStepRounds
-			failureMessage = fmt.Sprintf("超过本步骤的轮次上限（%d 轮）", rounds)
+			if invalidErrors != "" {
+				failureKind = contract.FailInvalidOutput
+				failureMessage = "提交的结果不符合输出 Schema：" + invalidErrors
+			} else {
+				failureKind = contract.FailStepRounds
+				failureMessage = fmt.Sprintf("超过本步骤的轮次上限（%d 轮）", rounds)
+			}
 			break
 		}
 		turn := turns
@@ -367,8 +374,11 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 					arguments = map[string]any{}
 				}
 				if errs := validator.Validate(arguments); len(errs) > 0 {
-					current = &submission{valid: false, errors: ErrorText(errs)}
-					results = append(results, ToolResultBlock(call.ID, "提交的结果不符合输出 Schema", false))
+					// 不合格：本次提交无效，把具体错误告诉模型，下一轮重交；同一条消息里的其他工具调用照常处理
+					invalidErrors = ErrorText(errs)
+					results = append(results, ToolResultBlock(call.ID,
+						"提交的结果不符合输出 Schema，本次提交无效："+invalidErrors+"。请只保留 Schema 里定义的字段，修正后再次调用 "+SubmitToolName+" 提交完整结果。", true))
+					continue
 				} else {
 					current = &submission{valid: true, output: arguments}
 					results = append(results, ToolResultBlock(call.ID, "已提交", false))
@@ -427,10 +437,7 @@ func (r *Runner) Run(in JudgmentInput) (contract.JudgmentResult, error) {
 	}
 
 	if current != nil {
-		if current.valid {
-			return contract.JudgmentResult{OK: true, Output: current.output, ModelCalls: realCalls}, nil
-		}
-		return fail(contract.FailInvalidOutput, "提交的结果不符合输出 Schema："+current.errors), nil
+		return contract.JudgmentResult{OK: true, Output: current.output, ModelCalls: realCalls}, nil
 	}
 	if failureMessage != "" {
 		return fail(failureKind, failureMessage), nil
