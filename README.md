@@ -9,18 +9,20 @@
 
 > **评审/演示**：直接看 [快速开始](#快速开始)——打包一次 exe → 双击启动（直接打开原生窗口）→ 添加自己的模型连接 → 跑任务。逐项真实模型验收见 [真实模型手动测试指南（Spec 0007）](docs/manual-test-0007.md)。
 
-<img src="docs/ui/final/01-welcome.png" alt="欢迎页" width="760">
+<p align="center"><img src="docs/screenshots/01-welcome.png" alt="欢迎页：直接找员工，或说一句话让前台安排" width="860"></p>
 
-<img src="docs/ui/final/03-review.png" alt="审核页" width="760">
+<p align="center"><img src="docs/screenshots/02-review-weekly-report.png" alt="场景 A：待审核，右栏预览 Word 周报并显示检验记录" width="860"></p>
+
+> 上面是真实运行的界面截图（剧本式假模型，不联网；数据是公开样例）。更多：[任务步骤与详情](docs/screenshots/03-task-steps.png) · [工具故障暂停与重试](docs/screenshots/04-tool-failure.png) · [场景 B 研判简报](docs/screenshots/05-review-literature-brief.png) · [工作区文件浏览](docs/screenshots/06-workspace-files.png)。
 
 ## 亮点
 
 - **程序编排步骤，模型只做判断**：计算步骤直接调工具，判断步骤（原因匹配、写报告、解读退回意见）才交给模型，模型在轮次与时长上限内运行 —— 见 [ADR-0001](docs/adr/0001-program-orchestrated-steps.md)。
 - **数字和引用只走槽位**：正文里的数字与原文引用由程序从事实和纪要填入，模型写错会被质检抓出 —— 见 [ADR-0002](docs/adr/0002-facts-via-slots.md)。
-- **质检不通过自动修正**：结构、溯源、禁用指标、篇幅、异常覆盖、引用真实、意见响应 7 类检查，按 `fixStep` 重跑对应步骤，次数用尽才转人工。质检按员工配置的**质检档**（`qc.yaml` 的 `profile`）选检查：周报是上面这 7 类，技术文献研判简报是另一套（见场景 B）。
+- **质检不通过自动修正**：结构完整、数据溯源、异常覆盖、引用真实、纪要矛盾覆盖、禁用指标、篇幅 7 项检查，退回重做后再加“意见响应”共 8 类，按 `fixStep` 重跑对应步骤，次数用尽才转人工。质检按员工配置的**质检档**（`qc.yaml` 的 `profile`）选检查：周报是上面这一套，技术文献研判简报是另一套（见场景 B）。
 - **两个业务员工，换配置就换岗位**：场景 A 经营周报员工（Word）和场景 B 技术文献研判员工（Markdown），共用同一个引擎、状态机、工具注册表和质检框架；差别全在员工目录里的配置（流程、提示词、输出 Schema、质检参数、自带资料）。
 - **JSONL 事件日志 + 断点恢复**：每个任务 `events.jsonl` 追加写；重启后重放事件、只重跑未完成步骤；支持命令行回放。
-- **右栏标签页**：右栏像浏览器一样有标签页——默认页是“交付”（交付物预览、检验记录、审核、放入知识库、早先的交付），“任务步骤”里点一步就在下面看这一步做了什么（工具调用、模型轮次、质检、暂停与重做），“工作区文件”可以浏览、预览工作区里的文件夹和文件；后两页点“+”才打开，都只读，不提供推进操作。交付物右上角可用 Word 等本机应用打开。对话里只留员工的工具卡片（员工表单卡等）和要人答复的确认。
+- **右栏标签页**：右栏（右上角 × 可整体关闭）像浏览器一样有标签页——默认页是“交付”（交付物预览、检验记录、审核、放入知识库、早先的交付），“任务步骤”里点一步就在下面看这一步做了什么（工具调用、模型轮次、质检、暂停与重做），“工作区文件”可以浏览、预览工作区里的文件夹和文件；后两页点“+”才打开，都只读，不提供推进操作。交付物右上角可用 Word 等本机应用打开。对话里只留员工的工具卡片（员工表单卡等）和要人答复的确认。
 - **工作区就是目录**：工作区只是名字加一个本机目录，侧栏同时列出所有工作区和它们下面的会话；取消登记只删登记，目录里的文件、会话和任务都保留；设置、员工和知识库存在应用目录，所有工作区共用 —— 见 [ADR-0006](docs/adr/0006-workspace-is-a-folder.md)。
 - **设置里不预置任何厂商**：全新安装时没有任何模型连接，由人自己“添加连接”（名称、地址、Key，任何 OpenAI 兼容的服务都行），再从 `{baseUrl}/models` 拉取模型并勾选。Key 只来自设置里填写的内容，不会被环境变量覆盖。
 - **会话里选模型**：输入框右下角按会话选模型，新对话页也能选；新会话沿用上次选择；任何状态（含已交付、已终止）都能换，任务运行中切换从下一个判断步骤生效；轨迹和步骤行标出每步用的模型。
@@ -53,7 +55,7 @@ digital-employee/
 │   ├── scenario-a/         样例数据（销售明细、周会纪要、格式要求）
 │   ├── scenario-b/         场景 B 样例数据（专利库、论文库、三份业务方清单、格式要求、公开样例用例）
 │   └── cases/              43 条命令行用例（A / S / T / B 系列）及其剧本式假模型输出
-├── scripts/                构建与冒烟：build-exe.ps1、build-go.ps1、smoke-go.ps1、gen-embedded.ts 等
+├── scripts/                构建与冒烟：build-exe.ps1、build-go.ps1、smoke-exe.ps1、smoke-go.ps1 等
 ├── docs/                   设计文档、架构图、术语表、ADR、工单、界面稿
 └── README.md
 ```
@@ -61,6 +63,36 @@ digital-employee/
 ## 快速开始
 
 > 评审演示只要三步：**打包一次 exe → 双击启动 → 在弹出的窗口里用**。使用者不需要安装 Go、Bun、数据库或其它运行时（Windows 10 需要已装 WebView2 Runtime，见下文排错）。
+
+### 命令速查
+
+PowerShell，在仓库根目录执行。前置：Windows 10 / 11 x64、Go 1.27.3+、Bun 1.4+（只有构建机需要）。
+
+```powershell
+# ── 打包成可执行文件 ──────────────────────────────────────────
+$env:GOSUMDB='sum.golang.org'; $env:GOTOOLCHAIN='auto'      # 本机若关了校验库，先设这两个
+bun install                                                  # 前端依赖（仅首次）
+powershell -ExecutionPolicy Bypass -File scripts\build-exe.ps1   # → dist\digital-employee.exe（GUI 版，含前端构建）
+#   等价写法：bun run build:exe；手动分步：bun run build:web，再 go build（见下文「1. 打包软件」）
+
+# ── 启动 ─────────────────────────────────────────────────────
+.\dist\digital-employee.exe                  # 双击同款：原生窗口（关窗即退出）
+.\dist\digital-employee.exe --browser        # 用浏览器代替窗口
+.\dist\digital-employee.exe --serve-only     # 只起服务端，不开窗口、不开浏览器
+$env:DE_APP_DIR='D:\de-test\app'; .\dist\digital-employee.exe    # 用隔离数据启动（不碰日常数据）
+$env:DE_SCRIPTED='samples\cases\scripts\A-01.json'; .\dist\digital-employee.exe   # 不填 Key 的离线演示（剧本式假模型）
+
+# ── 从源码运行（开发）────────────────────────────────────────
+bun run build:web                            # go:embed 需要 packages\web\dist
+go run ./cmd/digital-employee                # 控制台版：窗口 / --browser / --serve-only 同上
+bun run dev:web                              # 前端热更新（先另开一个终端 --serve-only，再设 VITE_API_TARGET）
+
+# ── 测试 ─────────────────────────────────────────────────────
+go test ./...                                # 全部后端测试（剧本模型，不联网、不要 Key）
+bun test packages/web                        # 前端测试
+bun run typecheck                            # 前端类型检查
+powershell -ExecutionPolicy Bypass -File scripts\smoke-go.ps1    # 控制台版冒烟：A-01 + 起服务端 + SSE
+```
 
 ### 1. 打包软件
 
@@ -84,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-exe.ps1
 2. `go build -trimpath -ldflags "-s -w -H=windowsgui -X main.appVersion=<版本>" -o dist/digital-employee.exe ./cmd/digital-employee`（`-H=windowsgui`：GUI 子系统，双击没有黑色控制台窗口；应用图标和版本信息在 `cmd\digital-employee\resource_windows_amd64.syso` 里，已入库，自动链接）
 3. 打印体积和 PE Subsystem，不是 GUI(2) 就报失败。脚本**不会运行**产出的 exe（运行会弹出窗口）
 
-产物：**`dist\digital-employee.exe`**，单文件约 **27MB**。
+产物：**`dist\digital-employee.exe`**，单文件约 **28MB**。
 
 **手动分步**（等价，便于 CI 或自定义）：
 
@@ -306,7 +338,7 @@ $env:VITE_API_TARGET='http://localhost:8787'; bun run dev:web   # http://localho
 - **会话里怎么开工**：Agent 调 `run_employee` → 员工表单卡 → 发起人点“确认开工”→ 程序做开工清单判定、提交前检查、准入校验并创建任务（目录文件在确认时复制进任务）。“完全权限”模式下，表单完整有效且必需的开工清单项备齐时免确认直接开工。会话里的任务在“草稿 → 提交”这一步之前的人工确认由员工表单卡承担，不再有“确认员工 / 开工清单 / 提交”三张卡。
 - 提交前先检查会话模型（所在连接有 Key、模型在连接的模型列表里）。一个连接都没有时提示“还没有配置模型连接”并带设置入口；有连接但模型不可用时提示对应原因。不通过就拦下，不会跑到一半才失败。
 - 同一个会话同一时刻最多一个未结束（非已交付、非已终止）的任务；有未结束任务时 `run_employee` 和“载入公开样例”都被拒绝，并说明是哪个任务、现在什么状态。
-- 任务的执行过程在对话里以步骤行显示，顶部保留轨迹状态机；两者只读，只由流程卡片上的按钮推进。
+- 任务的执行过程在界面里分两处只读展示：对话顶部是状态轨迹（发起 → 准入 → 执行 → 质检 → 审核 → 交付），右栏“任务步骤”标签页是步骤清单和每一步的详情；推进动作只由流程卡片和右栏交付页上的按钮发起。
 - 完整流转表见[设计文档 §5](docs/design.md)。
 
 ## 前台 Agent、权限模式与员工当工具
@@ -375,6 +407,9 @@ $env:VITE_API_TARGET='http://localhost:8787'; bun run dev:web   # http://localho
 | `POST /api/sessions/:id/questions/:requestId` | 答复“提问”卡：`{answers:[{id, selected[], custom?}]}`（只有发起人，非发起人 403） |
 | `POST /api/sessions/:id/employee-forms/:requestId` | 答复员工表单卡：`confirm`（可带改过的字段、补传的材料、确认跳过的清单项）或 `reject`（不是这个员工）（只有发起人） |
 | `POST /api/sessions/:id/sample` | 载入公开样例：弹出一张预填好的员工表单 |
+| `POST /api/sessions/:id/employee-form` | 欢迎页“直接找员工”：不经过前台 Agent，直接弹一张空白员工表单（只有发起人） |
+| `GET /api/sessions/:id/workspace?path=` · `GET …/workspace/file?path=` · `POST …/workspace/open` | 右栏“工作区文件”：浏览目录、预览文件、用本机应用打开 / 在文件夹中显示（路径限定在该会话的工作区内，隐藏文件拒绝，POST 需浏览器同源标记） |
+| `POST /api/tasks/:id/deliverables/:kind/open` | 交付物右上角“打开”：`mode` 为 `default`（默认应用）/ `text`（文本编辑器）/ `reveal`（在文件夹中显示），可带 `version`；只开该任务登记过的交付物 |
 | `POST /api/sessions/:id/messages` | 发消息，立即返回 202；回复走会话事件流 |
 | `GET /api/sessions/:id/stream` | 会话事件流（文字增量、工具调用、流程卡片） |
 | `POST /api/sessions/:id/stop` | 停止当前一轮（等权限确认或员工表单时同样有效） |
@@ -414,12 +449,12 @@ employees/weekly-report/
 
 ## 设置中心
 
-侧栏左上角的设置入口里分七节：**模型连接、外观与交互、执行与预算、演示与调试、权限与审批、诊断与关于、工作区**。
+侧栏底部的「设置」里分七节：**模型连接、外观与交互、执行与预算、权限与审批、演示与调试、诊断与关于、工作区**。
 
 - **设置文档**：全部设置存在**应用目录**的 `settings.json`（`version: 2`；应用目录缺省 `%APPDATA%\digital-employee-app`，可用 `DE_APP_DIR` 改），每次写入 `revision` +1；旧版文件读时自动补默认值，第一次写入时迁移为 v2，未知字段原样保留；旧文档里的 `defaultConnection` / `defaultModel` 会换算成 `lastModel`。两个窗口同时保存时会返回冲突提示，不会静默覆盖。
 - **模型连接**：**没有预置任何厂商**，全新安装时一个连接都没有（页面显示空状态和「添加连接」）。「添加连接」填名称、地址（任何 OpenAI 兼容服务的 Base URL）、Key；可配多个连接，每个模型还能单独设上下文窗口、输出上限与推理档位（关闭 / 最低 / 低 / 中 / 高 / 最高），连接级可设超时与重试次数；「测试连接」发一条极短请求验证 Key 与模型是否可用；「拉取模型」请求 `{baseUrl}/models`，结果以勾选框列出，勾选后再保存，拉取结果本身不写设置，新建的、还没保存的连接也能先拉。Key 只来自这里填写的内容，不再有环境变量（如 `DEEPSEEK_API_KEY`）覆盖，也没有“来自环境变量”的标记。升级前已有的连接（包括老用户的 deepseek 连接）原样保留，按普通连接对待。
 - **会话模型**：输入框右下角按会话选模型（新对话页也有同一个下拉），显示“连接 / 模型”；下拉里列出所有可用模型（连接有 Key 且模型列表非空），没有可用模型时显示“还没有可用的模型”并带设置入口。任何状态（没有任务、运行中、待审核、已交付、已终止）都能换；切换后对话里有一条说明；最近一次选择记进设置 `lastModel`，新会话沿用它（`lastModel` 也没有时取第一个可用模型）。任务未结束时切换会写一条“模型已切换”任务事件，从下一个判断步骤生效，正在进行的调用不中断；任务已结束或没有任务时只改会话的选择，下一次对话和下一个任务用它。
-- **外观与交互**：主题（浅色 / 深色 / 跟随系统）、字号、轨迹详细度（简洁 / 标准 / 详细）、轨迹折叠时机、回车行为、链接打开方式；保存后立即生效。
+- **外观与交互**：主题（浅色 / 深色 / 跟随系统）、字号、轨迹详细度（简洁 / 标准 / 详细）、轨迹折叠时机（任务步骤挪到右栏后这一项暂不生效）、回车行为、链接打开方式；保存后立即生效。
 - **执行与预算**：`stepTimeoutMs`、`modelMaxRetries`、`retryBackoffMs`、`qcAutofix` 是**默认值**，优先级为「步骤或连接配置 → 设置 → 内置值」（内置分别为 120 秒 / 2 次 / `[500,1500,4000]` 毫秒 / 3 次）。员工配置里显式写了就以员工配置为准。
 - **演示与调试**：工具故障注入、数据溯源故障、模拟崩溃（一次性开关，命中即清）。
 - **权限与审批**：只读 / 工作区可写 / 完全访问三档预设、审批策略（每次询问 / 从不询问）、默认角色；危险操作会二次确认并写审计。**本机模式：预设只影响审批确认与审计留痕，不提供系统级文件沙箱，也不改变操作系统文件权限。** 注意它和会话里的**权限模式**（仅可查看 / 仅限工作区 / 完全权限）是两件事：这一节管设置页上危险操作的确认框，权限模式管前台 Agent 写文件、运行员工要不要先问人，互不影响。
@@ -443,7 +478,7 @@ employees/weekly-report/
 | `internal/session` | 会话（一对多任务）、前台 Agent 循环与工具、权限模式与权限确认、`run_employee` 与员工表单、目录材料 |
 | `internal/app` / `internal/desktop` | 应用目录与工作区准备、启动、端口；原生窗口 |
 | `internal/cli` / `cmd/digital-employee` | 命令行子命令与程序入口 |
-| `packages/web` | React 前端：会话与步骤行轨迹 / 发起 / 审核 / 设置 / 配置 / 知识库 |
+| `packages/web` | React 前端：会话与右栏标签页（交付、任务步骤、工作区文件）/ 审核 / 设置 / 员工配置 / 知识库 |
 
 - 数据流：表单与材料 → 准入工具校验 → 计算步骤（工具）与判断步骤（模型 + 受限工具）→ 质检 → 自动修正或转人工 → 人工审核 → 交付物。
 - 每个任务目录下保存事件日志、附件、配置快照、产物与交付物；重启后只重放日志，不重新调用模型。
@@ -479,9 +514,9 @@ employees/weekly-report/
 - 第二个员工「知识库问答员工」已落地（T34）：只有一个判断步骤，查知识库索引、按需读正文；已交付文件经人确认才入库（[ADR-0005](docs/adr/0005-knowledge-base-is-background.md)）。
 - Spec 0006 已落地（T36–T44）：工作区即目录（应用目录 + 工作区登记 + 旧数据一次性迁移 + 单目录模式）、设置里拉取模型、侧栏“工作区 | 记录”、会话模型与运行中切换、前台 Agent 流式循环、目录材料、交付物写入工作区、对话里的步骤行；收尾补齐了对拍基准、6 条新用例、目录链接防护、测试提速（server 包约 480s → 约 170s）。
 - Spec 0007 已落地（T45–T49，T50 收尾中）：新对话页能选模型、任何状态都能换模型；设置不再预置厂商（空状态 + 添加连接，去掉 `DEEPSEEK_API_KEY` 覆盖）；会话与任务一对多；三档权限模式（原五档已简化，见 ADR-0007 增补二）与 `write_file` / `edit_file`；员工当工具（`run_employee` + 员工表单卡，取代“确认员工 / 开工清单 / 提交”三张卡，公开样例改为预填表单）。真实模型手动测试按 [docs/manual-test-0007.md](docs/manual-test-0007.md) 由使用者执行。
-- 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集 36 条在剧本模式 36/36 通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
-- **场景 B（技术文献研判员工）已落地**（[Spec 0008](docs/specs/0008-scenario-b-literature-brief.md)）：输入技术方向和业务方的专利清单 → 清单核对（去重、库中查不到、同族合并）→ 模型逐条判断相关性 → 程序定纳入范围（清单与方向不符、资料不足时暂停）→ 路线归类 → 程序统计路线、趋势、申请人和转化线索 → 检索佐证论文 → 写简报 → 渲染 Markdown（图表 PNG 放旁边的 `assets/`）→ 7 项质检（结构、摘要角标、引用真实、数据溯源、禁用词、篇幅、意见响应）。只用本地专利库和论文库，每句话带引用角标，来源清单由程序生成；员工是配置不是代码（`employees/literature-brief/`）。公开样例 B-01 至 B-05 与两条变体（重做、资料偏少）在剧本模式全部通过；**真实模型尚未验证**，手动测试按 [docs/manual-test-b.md](docs/manual-test-b.md) 由使用者执行。
-- 单文件 exe：`scripts/build-exe.ps1` → `dist/digital-employee.exe`（约 27MB，GUI 子系统），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/build-go.ps1` + `scripts/smoke-go.ps1`（控制台版）覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
+- 真实模型验证：A-01 至 A-05 各 3 次、共 444 项判定要点全部通过；自测用例集（现 43 条）在剧本模式全部通过，S 系列另做了真实模型抽跑。结果见 [`docs/results/`](docs/results/)。
+- **场景 B（技术文献研判员工）已落地**（[Spec 0008](docs/specs/0008-scenario-b-literature-brief.md)）：输入技术方向和业务方的专利清单 → 清单核对（去重、库中查不到、同族合并）→ 模型逐条判断相关性 → 程序定纳入范围（清单与方向不符、资料不足时暂停）→ 路线归类 → 程序统计路线、趋势、申请人和转化线索 → 检索佐证论文 → 写简报 → 渲染 Markdown（图表 PNG 放旁边的 `assets/`）→ 质检（结构、摘要角标、引用真实、数据溯源、禁用词、篇幅 6 项，退回重做后加“意见响应”共 7 项）。只用本地专利库和论文库，每句话带引用角标，来源清单由程序生成；员工是配置不是代码（`employees/literature-brief/`）。公开样例 B-01 至 B-05 与两条变体（重做、资料偏少）在剧本模式全部通过；**真实模型尚未验证**，手动测试按 [docs/manual-test-b.md](docs/manual-test-b.md) 由使用者执行。
+- 单文件 exe：`scripts/build-exe.ps1` → `dist/digital-employee.exe`（约 28MB，GUI 子系统），首次启动准备应用目录，欢迎页可一键载入公开样例；`scripts/build-go.ps1` + `scripts/smoke-go.ps1`（控制台版）覆盖“exe 跑通 A-01 + 起服务端提供界面与 SSE”。
 - 原生窗口：双击（或不带参数）直接用 MyGo 打开（系统 WebView2），与 `--browser` 方式共用应用目录。
 - 已知限制：
   - 字体未嵌入。图表先用 `DE_FONT_PATHS` 指定的字体，否则用系统中文字体（Windows 上是微软雅黑 `msyh.ttc`）；Word 正文字体名固定为 `Microsoft YaHei`（缺失时由阅读端回退）。实测 Windows 11 上图表与 Word 中文显示正常；在完全没有中文字体的机器上图表中文会缺字，这是已知风险。
