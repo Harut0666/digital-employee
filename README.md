@@ -395,7 +395,7 @@ digital-employee/
 ├── employees/              weekly-report / literature-brief / knowledge-qa
 ├── samples/                场景 A、B 样例数据；cases/ 是 43 条用例和剧本模型输出
 ├── scripts/                构建与冒烟脚本
-└── docs/                   设计、架构图、规格、测试记录、提交材料、截图
+└── docs/screenshots/       README 用的界面截图
 ```
 
 后端是 Go（`net/http` + SSE），前端是 React/Vite + antd。工具在进程内调用，不另起子进程。
@@ -413,7 +413,7 @@ digital-employee/
 
 - `go test ./...` 覆盖引擎、质检、模型、工具、渲染、服务端、会话和 CLI，全部用剧本模型，不联网。
 - `bun test packages/web` 覆盖前端的纯函数和视图。
-- 用例格式见 [samples/cases/README.md](samples/cases/README.md)，结果记录在 [docs/results/](docs/results/)。
+- 用例格式见 [samples/cases/README.md](samples/cases/README.md)。
 - 场景 B 的专利、申请人、指标和论文都是为比赛模拟的数据，见 `samples/scenario-b/数据说明.md`。
 
 ---
@@ -430,17 +430,4 @@ digital-employee/
 
 ---
 
-## 文档
-
-- **提交材料**：
-  - [技术报告](docs/submission/技术报告.docx)（6 页，另有 [PDF](docs/submission/技术报告.pdf)）
-  - [答辩 PPT](docs/submission/答辩.pptx)（8 页，含演讲备注）
-  - [答辩模拟问答](docs/submission/答辩模拟问答.md)
-- [设计文档](docs/design.md)：范围、状态机、质检、场景 A/B、界面、打包
-- [架构图](docs/architecture.md)：进程拓扑、分层依赖、状态机、会话循环、事件流、磁盘布局
-- [术语表](GLOSSARY.md)
-- 规格：
-  - [0007 通用对话 Agent 与员工当工具](docs/specs/0007-general-agent-employees-as-tools.md)
-  - [0008 技术文献研判员工](docs/specs/0008-scenario-b-literature-brief.md)
-- 手动测试指南：[0007](docs/manual-test-0007.md)、[场景 B](docs/manual-test-b.md)
-- [场景 B 真实模型复测记录](docs/results/self-test-b-real-model.md)
+术语的准确含义见 [术语表](GLOSSARY.md)。

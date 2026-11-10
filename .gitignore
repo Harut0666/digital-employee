@@ -35,5 +35,9 @@ out-go*/
 .allcase-ws/
 .parity-ws/
 
+# 文档只留在本地，仓库里只放 README 用的截图
+docs/*
+!docs/screenshots/
+
 # Office 打开文件时产生的锁文件
 ~$*

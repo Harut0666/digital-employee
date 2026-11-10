@@ -145,7 +145,7 @@
 
 ## 自测用例集（`S-xx`）
 
-`S-01`～`S-24` 按 [design §15](../../docs/design.md) 的场景 A 清单补齐，覆盖正常、边界、缺材料、异常、流程五类；标题以类别开头，方便在汇总里分类看。每条都有配套剧本与 `expect.checks`。
+`S-01`～`S-24` 按场景 A 的自测清单补齐，覆盖正常、边界、缺材料、异常、流程五类；标题以类别开头，方便在汇总里分类看。每条都有配套剧本与 `expect.checks`。
 
 | 用例 | 类别 | 覆盖点 | 终止状态 |
 |---|---|---|---|
@@ -232,4 +232,4 @@ bun packages/cli/src/main.ts check out/A-01 samples/cases/A-01.json
 bun packages/cli/src/main.ts run-cases "samples/cases/*.json" --scripted --out out/self-test
 ```
 
-全量跑（A-0x + S-xx + T-xx 共 36 条）的结果存档在 [docs/results/self-test-scripted.md](../../docs/results/self-test-scripted.md)。
+全量跑：`go run ./cmd/digital-employee run-cases "samples/cases/*.json" --scripted --out out/cases`。
