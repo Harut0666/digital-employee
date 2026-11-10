@@ -89,13 +89,14 @@ export function AddWorkspaceModal({
               value={form.path}
               onChange={(e) => setForm({ ...form, path: e.target.value })}
               onPressEnter={() => void save()}
-              placeholder="如 D:\项目\华东区（留空则在应用目录下新建）"
+              placeholder="请选择工作区"
               aria-label="工作区目录"
             />
             <Button icon={<FolderOpenOutlined />} disabled={picking} onClick={() => void browse()}>
               {picking ? "选择中…" : "浏览…"}
             </Button>
           </div>
+          <span className="ws-field-tip">不选目录时，会在应用目录下新建一个。</span>
         </div>
         <div className="ws-field">
           <span>名称</span>
@@ -103,10 +104,11 @@ export function AddWorkspaceModal({
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             onPressEnter={() => void save()}
-            placeholder="缺省取目录名"
+            placeholder="请输入工作区名称"
             maxLength={40}
             aria-label="工作区名称"
           />
+          <span className="ws-field-tip">不填时使用目录名。</span>
         </div>
       </div>
     </Modal>

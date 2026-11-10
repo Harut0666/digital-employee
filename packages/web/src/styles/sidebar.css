@@ -556,3 +556,8 @@
   box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
+
+.ws-field > .ws-field-tip {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
