@@ -103,14 +103,14 @@ type Stats struct {
 	TrendNote  string      `json:"trendNote"`
 	CutoffDate string      `json:"cutoffDate"`
 	// RecentFromYear 近几年的起始年份
-	RecentFromYear int `json:"recentFromYear"`
+	RecentFromYear int     `json:"recentFromYear"`
 	RecentSharePct float64 `json:"recentSharePct"`
 	// Applicants 申请量前 5 名（第 5 名并列的全部列出）
 	Applicants  []ApplicantStat    `json:"applicants"`
 	Composition []TypeCount        `json:"composition"`
 	Joint       []JointApplication `json:"joint"`
 	// Leads 转化线索
-	Transferred []Lead `json:"transferred"`
+	Transferred  []Lead `json:"transferred"`
 	WorthContact []Lead `json:"worthContact"`
 }
 

@@ -203,7 +203,7 @@ func briefScript(lib *Library, s *ScreenResult, scope *ScopeResult, stats *Stats
 	}
 	if withNotes {
 		draft["revisionNotes"] = []any{map[string]any{
-			"comment": "风险与不确定性写得太简单，请补充数据口径和样本的局限。",
+			"comment":  "风险与不确定性写得太简单，请补充数据口径和样本的局限。",
 			"sections": []string{"risks"},
 			"change":   "在风险与不确定性里补充了数据口径、同族合并和样本范围的局限。",
 		}}

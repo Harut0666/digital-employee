@@ -34,9 +34,9 @@ type Hit struct {
 
 // SearchOutput 检索结果：写明查了哪些库，简报的“资料概况”据此说明是否补充检索。
 type SearchOutput struct {
-	Searched []string `json:"searched"`
-	Queries  []string `json:"queries"`
-	Hits     []Hit    `json:"hits"`
+	Searched []string    `json:"searched"`
+	Queries  []string    `json:"queries"`
+	Hits     []Hit       `json:"hits"`
 	Library  LibraryInfo `json:"library"`
 }
 

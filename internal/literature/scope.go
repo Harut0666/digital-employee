@@ -45,8 +45,8 @@ type Counts struct {
 
 // ScopeResult 纳入范围。OK 为 false 时 Pause 说明为什么要停下来。
 type ScopeResult struct {
-	OK    bool   `json:"ok"`
-	Pause *Gate  `json:"pause,omitempty"`
+	OK     bool   `json:"ok"`
+	Pause  *Gate  `json:"pause,omitempty"`
 	Counts Counts `json:"counts"`
 	// Included 纳入分析的发明
 	Included []Invention `json:"included"`
@@ -144,7 +144,9 @@ func mismatchGate(screen *ScreenResult, result *ScopeResult, cfg contract.Litera
 	for reason, n := range reasons {
 		top = append(top, kv{reason, n})
 	}
-	sort.SliceStable(top, func(a, b int) bool { return top[a].N > top[b].N || top[a].N == top[b].N && top[a].Reason < top[b].Reason })
+	sort.SliceStable(top, func(a, b int) bool {
+		return top[a].N > top[b].N || top[a].N == top[b].N && top[a].Reason < top[b].Reason
+	})
 	parts := []string{
 		fmt.Sprintf("清单与填写的技术方向“%s”不符：%d 项发明中有 %d 项与该方向无关（超过一半）", screen.Direction, result.Counts.Inventions, result.Counts.Irrelevant),
 	}

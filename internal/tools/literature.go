@@ -49,10 +49,10 @@ type scopeToolInput struct {
 }
 
 type statsToolInput struct {
-	Direction   string                      `json:"direction"`
-	Included    []literature.Invention      `json:"included"`
+	Direction   string                       `json:"direction"`
+	Included    []literature.Invention       `json:"included"`
 	Assignments []literature.RouteAssignment `json:"assignments"`
-	Config      *contract.LiteratureQC      `json:"config"`
+	Config      *contract.LiteratureQC       `json:"config"`
 }
 
 type searchToolInput struct {

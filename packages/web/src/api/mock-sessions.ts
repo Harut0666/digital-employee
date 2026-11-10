@@ -1086,6 +1086,42 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
       return reply(s, out);
     },
 
+    /** 直接找员工：给指定员工弹出一张空白员工表单，人填好确认后开工 */
+    async openEmployeeForm(id, employeeId) {
+      if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以找员工开工");
+      const s = writable(id);
+      if (isFailure(s)) return s;
+      const open = await openTask(s);
+      if (open) return fail("session_has_task", `这个会话里的任务 ${open.id} 还没结束（现在是“${STATE_LABELS[open.state] ?? open.state}”），等它交付或终止后才能开新任务。`);
+      const employee = employees.find((e) => e.id === employeeId);
+      if (!employee) return fail("not_found", `没有这个员工：${employeeId}`);
+      const requestId = newRequestId();
+      s.forms.set(requestId, {});
+      const out: SessionMessage[] = [];
+      write(
+        s,
+        {
+          kind: "card",
+          card: {
+            type: "employee_form",
+            requestId,
+            employee: employee.id,
+            employeeName: employee.name,
+            draft: {},
+            prefilled: [],
+            materials: [],
+            checklist: CHECKLISTS[employee.id],
+            baseline: s.files.map((f) => f.name),
+            pending: true,
+            standalone: true,
+            reason: `你直接选了${employee.name}，没有经过前台 Agent`,
+          },
+        },
+        out,
+      );
+      return reply(s, out);
+    },
+
     async uploadAttachments(id, files) {
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以上传材料");
       const s = writable(id);

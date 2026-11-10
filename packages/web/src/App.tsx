@@ -332,6 +332,21 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     }
   };
 
+  // 欢迎页“直接找员工”：开一个会话，不经过前台 Agent，直接给这位员工弹出空白表单，人填好确认开工
+  const openEmployee = async (employeeId: string, employeeName: string) => {
+    try {
+      const targetWorkspace = startWorkspaceId(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined);
+      const created = await api.createSession(targetWorkspace);
+      const res = await api.openEmployeeForm(created.id, employeeId);
+      setSelection({ kind: "session", id: created.id });
+      refreshSidebar();
+      if (!res.ok) message.error(res.message);
+      else message.success(`已打开${employeeName}的表单，填好后点“确认开工”`);
+    } catch (e) {
+      fail(e, "打开员工表单失败");
+    }
+  };
+
   // 事件比快照先到时，快照里的操作属于上一个状态，不能拿来显示按钮；状态变化后会重新拉取
   const live = task.snapshot?.state === taskState ? task.snapshot : undefined;
   const actions: CardActions = {
@@ -398,6 +413,8 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         openSettings={actions.openSettings}
         onStart={startConversation}
         onSample={() => void loadSample()}
+        employees={employees}
+        onPickEmployee={(e) => void openEmployee(e.id, e.name)}
         modelOptions={modelOptions}
         defaultModel={lastModel}
         target={newChatTarget(workspaceState.list, selection.kind === "new" ? selection.workspaceId : undefined)}

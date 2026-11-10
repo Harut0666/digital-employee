@@ -26,6 +26,7 @@ import { deriveStepRows } from "../view/step-rows";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
 import { composerView, enterHint, STARTERS, type Starter } from "../view/composer";
+import type { EmployeeInfo } from "../api/types";
 import { stateTone } from "../view/session-row";
 import type { NewChatTarget } from "../view/new-chat";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
@@ -631,6 +632,8 @@ export function NewConversation({
   openSettings,
   onStart,
   onSample,
+  employees,
+  onPickEmployee,
   role,
   modelOptions,
   defaultModel,
@@ -643,6 +646,9 @@ export function NewConversation({
   /** 发出第一句话：带上右下角选中的模型（没选时 undefined，服务端沿用 lastModel） */
   onStart: (text: string, model?: ModelRef) => Promise<boolean>;
   onSample: () => void;
+  /** “直接找员工”：列出的员工，点一下不经过前台 Agent，直接打开这位员工的空白表单 */
+  employees?: readonly EmployeeInfo[];
+  onPickEmployee?: (employee: EmployeeInfo) => void;
   role: UiRole;
   /** 新会话沿用的模型（设置的 lastModel）：右下角先显示它，可以有可用模型时换（T39、T45） */
   modelOptions?: readonly ModelConnectionOption[];
@@ -694,6 +700,28 @@ export function NewConversation({
           ) : (
             <>
               {target && <WorkspaceTarget target={target} onChange={onChangeWorkspace} />}
+              {employees && employees.length > 0 && onPickEmployee && (
+                <>
+                  <div className="welcome-section">直接找员工</div>
+                  <div className="starters employee-entries" role="list" aria-label="直接找员工">
+                    {employees.map((employee) => (
+                      <button
+                        key={employee.id}
+                        type="button"
+                        role="listitem"
+                        className="starter employee-entry"
+                        disabled={role !== "initiator"}
+                        title={role !== "initiator" ? "只有发起人能找员工开工" : undefined}
+                        onClick={() => onPickEmployee(employee)}
+                      >
+                        <span className="starter-title">{employee.name}</span>
+                        <span className="starter-desc">{employee.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="welcome-section">或者说一句话，让前台安排</div>
+                </>
+              )}
               <div className="starters" role="list" aria-label="示例起点">
                 {STARTERS.map((starter) => (
                   <button key={starter.key} type="button" role="listitem" className="starter" onClick={() => startWith(starter)}>

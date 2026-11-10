@@ -57,6 +57,8 @@ export interface SessionApi {
   answerEmployeeForm(id: string, requestId: string, answer: EmployeeFormAnswer): Promise<SessionResult>;
   /** 欢迎页“载入公开样例”（T49）：把样例的输入预填成一张员工表单，人确认即开工 */
   loadSampleForm(id: string): Promise<SessionResult>;
+  /** 欢迎页“直接找员工”：不经过前台 Agent，给指定员工弹出一张空白员工表单，人填好确认后开工 */
+  openEmployeeForm(id: string, employee: string): Promise<SessionResult>;
   /** 权限确认卡上的答复：允许一次、本会话总是允许这一类、拒绝；只有发起人能答 */
   decidePermission(id: string, requestId: string, decision: PermissionDecision): Promise<SessionResult>;
   /** 提问卡（ask_user_question）上的答复：每题选了什么、“其他”里写了什么；只有发起人能答 */
@@ -122,6 +124,7 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     setPermissionMode: (id, mode) => act(session(id, "/permission-mode"), JSON.stringify({ mode }), true, "PUT"),
     answerEmployeeForm: (id, requestId, answer) => act(session(id, `/employee-forms/${encodeURIComponent(requestId)}`), JSON.stringify(answer)),
     loadSampleForm: (id) => act(session(id, "/sample"), JSON.stringify({})),
+    openEmployeeForm: (id, employee) => act(session(id, "/employee-form"), JSON.stringify({ employee })),
     decidePermission: (id, requestId, decision) => act(session(id, `/permissions/${encodeURIComponent(requestId)}`), JSON.stringify({ decision })),
     answerQuestion: (id, requestId, answers) => act(session(id, `/questions/${encodeURIComponent(requestId)}`), JSON.stringify({ answers })),
     async updateSession(id, patch) {

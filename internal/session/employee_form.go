@@ -891,6 +891,46 @@ func (m *Manager) LoadSample(id string, role contract.Role) (*Reply, error) {
 	return m.reply(t)
 }
 
+// OpenEmployeeForm 欢迎页“直接找员工”：不经过前台 Agent，直接给指定员工弹出一张空白的员工表单，
+// 人自己填字段、传材料、确认开工。和载入样例同一条路径，卡片不依赖某一轮对话，重启后仍可确认。
+func (m *Manager) OpenEmployeeForm(id string, role contract.Role, employeeID string) (*Reply, error) {
+	if role != contract.RoleInitiator {
+		return nil, failure(contract.ErrForbiddenRole, "只有发起人可以找员工开工")
+	}
+	employees, err := m.deps.Employees()
+	if err != nil {
+		return nil, err
+	}
+	name := employeeNameOf(employees, employeeID)
+	if name == "" || m.deps.LoadEmployee == nil {
+		return nil, failure(contract.ErrNotFound, "没有这个员工：%s", employeeID)
+	}
+	config, err := m.deps.LoadEmployee(employeeID)
+	if err != nil {
+		return nil, failure(contract.ErrNotFound, "读不到员工配置：%s", err.Error())
+	}
+	t, done, err := m.begin(id, role)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	if err := m.refuseNewTask(t.current); err != nil {
+		return nil, err
+	}
+	fields := map[string]any{}
+	card := Card{
+		Type: CardEmployeeForm, RequestID: newRequestID(), Employee: employeeID, EmployeeName: name, Draft: fields,
+		Prefilled: prefilledNames(fields), Materials: []FormMaterial{}, Reason: "你直接选了" + name + "，没有经过前台 Agent",
+		Pending: true, Standalone: true, Checklist: config.Checklist, Baseline: attachmentNames(t.current.attachments),
+	}
+	m.registerForm(&formWait{id: card.RequestID, session: id})
+	if err := t.write(Message{Kind: KindCard, Card: &card}); err != nil {
+		m.dropForm(card.RequestID)
+		return nil, err
+	}
+	return m.reply(t)
+}
+
 // ---------------------------------------------------------------- 读取时给卡片配上状态
 
 // projectEmployeeForms 给员工表单卡配上现在的状态：有没有答复、是否还在等。

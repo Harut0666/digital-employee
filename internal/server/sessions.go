@@ -464,6 +464,28 @@ func (s *Server) handleLoadSample(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, reply)
 }
 
+// handleOpenEmployeeForm POST /api/sessions/{id}/employee-form：欢迎页“直接找员工”，body {employee}。
+// 给指定员工弹出一张空白员工表单，人填好确认后开工，不经过前台 Agent（也不需要模型 Key 就能打开表单）。
+func (s *Server) handleOpenEmployeeForm(w http.ResponseWriter, r *http.Request) {
+	role, ok := roleOf(r)
+	if !ok {
+		writeAPIError(w, http.StatusForbidden, roleRequired)
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	employee, _ := body["employee"].(string)
+	reply, err := s.sessions.OpenEmployeeForm(r.PathValue("id"), role, strings.TrimSpace(employee))
+	if err != nil {
+		writeSessionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, reply)
+}
+
 // handleModelOptions GET /api/settings/models：会话里可以选的模型（只列有 Key 的连接和它们列出的模型）。
 func (s *Server) handleModelOptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.sessions.ModelOptions())

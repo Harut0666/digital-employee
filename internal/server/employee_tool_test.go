@@ -870,3 +870,38 @@ func TestOnlyTheInitiatorsWordsCanStartAnEmployee(t *testing.T) {
 		t.Fatal("不该弹表单或开工")
 	}
 }
+
+// 欢迎页“直接找员工”：不经过前台 Agent，给指定员工弹出一张空白表单卡；人确认后才开工。
+func TestOpeningAnEmployeeFormDirectlyGivesABlankCard(t *testing.T) {
+	h := newHarness(t, caseScript(t, "A-01"), withScriptedModel(), withAppMode())
+	created := h.createSession()
+	open := func(role contract.Role, employee string) (int, []byte) {
+		return h.postJSON("/api/sessions/"+created.ID+"/employee-form", role, map[string]any{"employee": employee})
+	}
+
+	if status, _ := open(contract.RoleReviewer, harnessEmployee); status != http.StatusForbidden {
+		t.Fatalf("审核人不能直接找员工开工：%d", status)
+	}
+	if status, _ := open(contract.RoleInitiator, "no-such-employee"); status != http.StatusNotFound {
+		t.Fatalf("不存在的员工：%d", status)
+	}
+	if h.taskCount() != 0 {
+		t.Fatal("被拒绝的请求不该开工")
+	}
+
+	status, data := open(contract.RoleInitiator, harnessEmployee)
+	if status != http.StatusOK {
+		t.Fatalf("直接找员工：%d %s", status, data)
+	}
+	card := h.waitForm(created.ID)
+	if card.Employee != harnessEmployee || !card.Pending || !card.Standalone || len(card.Draft) != 0 || len(card.Materials) != 0 {
+		t.Fatalf("应是一张空白的员工表单卡：%+v", card)
+	}
+	if h.taskCount() != 0 {
+		t.Fatal("人确认之前不该开工")
+	}
+	got := h.readSession(created.ID)
+	if cards := formCards(got); len(cards) != 1 || !cards[0].Pending {
+		t.Fatalf("会话里的表单卡 = %+v", cards)
+	}
+}
