@@ -3,6 +3,7 @@ package literature
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -337,10 +338,17 @@ func checkLength(in QcInput) contract.QcCheckResult {
 	if in.Rendered != nil {
 		limit := in.Config.MaxPages * LengthMargin
 		if in.Rendered.EstimatedPages > limit {
-			issues = append(issues, fmt.Sprintf("按版式估算约 %.1f 页，超过上限 %.1f 页（%.0f 页留 10%% 余量），请压缩叙述", in.Rendered.EstimatedPages, limit, in.Config.MaxPages))
+			issues = append(issues, lengthIssue(in.Rendered.EstimatedPages, limit, in.Config.MaxPages))
 		}
 	}
 	return result("length", "篇幅", issues, in.fix())
+}
+
+// lengthIssue 写给模型看的篇幅修正意见：页数按两位小数写（一位小数会出现“4.5 超过 4.5”这种自相矛盾的话），
+// 并给出整体至少要压缩的比例；比例多留 3 个百分点，避免“刚好压到线上又差一点”反复重跑。
+func lengthIssue(estimated, limit, maxPages float64) string {
+	cut := int(math.Ceil((1-limit/estimated)*100)) + 3
+	return fmt.Sprintf("按版式估算约 %.2f 页，超过上限 %.2f 页（%.0f 页留 10%% 余量）：请把全文整体压缩至少约 %d%%（删去次要的修饰和重复说明，保留结论、数字和引用角标），再提交", estimated, limit, maxPages, cut)
 }
 
 func sectionText(s *BriefSection) string {
