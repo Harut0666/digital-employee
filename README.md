@@ -498,7 +498,7 @@ employees/weekly-report/
 
 ## 文档
 
-- **提交材料**：[技术报告（docx）](docs/submission/技术报告.docx)（6 页，另附 [PDF](docs/submission/技术报告.pdf)）、[答辩 PPT](docs/submission/答辩.pptx)（16 页，含演讲备注）
+- **提交材料**：[技术报告（docx）](docs/submission/技术报告.docx)（6 页，另附 [PDF](docs/submission/技术报告.pdf)）、[答辩 PPT](docs/submission/答辩.pptx)（8 页，围绕编排循环，含演讲备注）
 - [设计文档](docs/design.md)：范围、技术栈、架构、状态机、质检、场景 A/B、界面、打包
 - [架构图与结构观察](docs/architecture.md)：进程拓扑、分层依赖、状态机、会话循环、事件流、磁盘布局（Mermaid）
 - [术语表](GLOSSARY.md)：任务、角色、步骤、事实等术语的准确含义
