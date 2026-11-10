@@ -245,6 +245,8 @@ export interface SessionMessage {
   args?: Record<string, unknown>;
   result?: unknown;
   reason?: string;
+  /** 这条消息是第几轮回复里写下的（用户消息没有）；和会话事件流里的 turn 对得上 */
+  turn?: number;
   /** 选择模型这条消息记下的模型（不显示在对话里，切换说明由视图按前后两次的模型插入） */
   model?: ModelRef;
 }

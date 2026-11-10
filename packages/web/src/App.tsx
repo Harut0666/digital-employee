@@ -214,7 +214,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   };
 
   // 正在说的一轮：说的话逐字出现、工具调用逐个列出；一轮结束时重读会话（完整消息和卡片这一刻才写下来）
-  const stream = useSessionStream(sessionId, session.reload);
+  // 只读会话（旧任务推出来的）没有事件流，服务端会回 409，已知只读就不订阅。
+  // 不能等会话详情读出来再订阅：刚建的会话回复很快，等详情回来这一轮可能已经结束，页面就收不到“回合结束”去重读会话。
+  // 只读与否取自侧栏列表（刚建的会话还不在列表里，按可订阅处理）。
+  const knownReadOnly =
+    (detail?.id === sessionId && detail?.readOnly) || flattenSessions(workspaceState.list).some((s) => s.id === sessionId && s.readOnly);
+  const streamable = sessionId && !knownReadOnly ? sessionId : undefined;
+  const stream = useSessionStream(streamable, session.reload);
 
   /** 发一句话：接口立即受理，回复在会话事件流里出现。正在说的时候再发，排进这一轮 */
   const send = async (text: string): Promise<boolean> => {
@@ -238,9 +244,11 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const loadSample = async () => {
     try {
       const snap = await api.loadPublicSample();
-      // 样例任务没有会话，以旧任务的只读会话出现在侧栏里（和记录 tab 的会话对应）
+      // 样例任务没有会话，以旧任务的只读会话出现在侧栏里（和记录 tab 的会话对应）。
+      // 必须直接读最新的列表：refreshSidebar 是异步的，这时 workspaceState.list 还是没有新草稿的旧数据
       refreshSidebar();
-      const bound = flattenSessions(workspaceState.list).find((s) => s.taskId === snap.id);
+      const fresh = await workspaceApi.list();
+      const bound = flattenSessions(fresh).find((s) => s.taskId === snap.id);
       if (bound) setSelection({ kind: "session", id: bound.id });
       message.success("已载入公开样例，提交后开始生成周报");
     } catch (e) {

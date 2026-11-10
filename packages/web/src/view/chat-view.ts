@@ -92,19 +92,29 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
 }
 
 export function deriveChat(session: SessionDetail, task?: ChatTask, events: readonly TaskEvent[] = [], live?: LiveTurn): ChatItem[] {
-  const items = deriveMessages(session, task, events);
-  if (!live || (!live.text && live.tools.length === 0)) return items;
-  // 还没写成消息的这一轮排在最后一条之后
+  if (!live || (!live.text && live.tools.length === 0)) return deriveMessages(session, task, events);
   const ts = session.updatedAt;
-  if (live.tools.length > 0) {
-    // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
-    items.push({ key: `tools-${live.turn}-${live.tools.length}`, ts, kind: "tools", turn: live.turn, items: live.tools });
+  // 每次调用的工具序号一变就换一个 key：折叠状态只对这一批调用有效
+  const tools: Extract<ChatItem, { kind: "tools" }> | undefined =
+    live.tools.length > 0 ? { key: `tools-${live.turn}-${live.tools.length}`, ts, kind: "tools", turn: live.turn, items: live.tools } : undefined;
+  const items = deriveMessages(session, task, events, tools);
+  // 工具调用先于它引出的消息和卡片：日志里已经有这一轮的调用记录时，工具行就排在那个位置（上面已放好）；
+  // 日志里还没有（调用还在进行）才排到最后
+  if (tools && !items.includes(tools)) items.push(tools);
+  // 说完的这一轮，说的话已经写成会话里的消息，不再重复显示逐字出现的那份
+  if (live.text && live.running !== false) {
+    items.push({ key: `streaming-${live.turn}-${live.text.length}`, ts, kind: "streaming", turn: live.turn, text: live.text });
   }
-  if (live.text) items.push({ key: `streaming-${live.turn}-${live.text.length}`, ts, kind: "streaming", turn: live.turn, text: live.text });
   return items;
 }
 
-function deriveMessages(session: SessionDetail, task: ChatTask | undefined, events: readonly TaskEvent[]): ChatItem[] {  const items: ChatItem[] = [];
+function deriveMessages(
+  session: SessionDetail,
+  task: ChatTask | undefined,
+  events: readonly TaskEvent[],
+  liveTools?: Extract<ChatItem, { kind: "tools" }>,
+): ChatItem[] {
+  const items: ChatItem[] = [];
   const lastIndex = (match: (card: SessionCard) => boolean) => {
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const card = session.messages[i]?.card;
@@ -134,8 +144,31 @@ function deriveMessages(session: SessionDetail, task: ChatTask | undefined, even
         if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
         else if (m.card) items.push(cardItem(base, m.card, index));
         break;
+      case "tool_called":
+      case "tool_denied": {
+        // 工具调用按日志里的位置排：在它引出的回复和卡片之前，刷新、切走再切回来也在
+        if (liveTools && m.turn === liveTools.turn) {
+          // 这一轮正在（或刚刚）说：用事件流里更新鲜的那份，只放在第一次调用的位置
+          if (!items.includes(liveTools)) items.push(liveTools);
+          break;
+        }
+        const call: AgentToolView = {
+          id: m.id,
+          tool: m.tool ?? "",
+          args: m.args,
+          ended: true,
+          result: m.result,
+          reason: m.reason,
+          isErr: m.kind === "tool_denied" ? true : undefined,
+        };
+        const last = items.at(-1);
+        // 连着的调用合成一行（同一轮里模型一口气调了好几个工具）
+        if (last?.kind === "tools" && last !== liveTools && last.turn === (m.turn ?? 0)) last.items.push(call);
+        else items.push({ ...base, key: `tools-log-${m.id}`, kind: "tools", turn: m.turn ?? 0, items: [call] });
+        break;
+      }
       default:
-        // 工具留痕和模型失败只进会话日志，不进对话
+        // 模型失败只进会话日志，不进对话
         break;
     }
   });

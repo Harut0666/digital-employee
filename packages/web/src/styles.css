@@ -110,7 +110,8 @@ body {
 }
 /* 审核时右栏加宽到一半左右 */
 .shell.wide {
-  grid-template-columns: 236px minmax(0, 1fr) 48vw;
+  /* 右栏最多 48vw，但要给对话栏留出至少约 380px（236 左栏 + 2×12 边距 + 2×12 间隙 = 284） */
+  grid-template-columns: 236px minmax(0, 1fr) clamp(360px, calc(100vw - 284px - 380px), 48vw);
 }
 .shell.no-panel {
   grid-template-columns: 256px minmax(0, 1fr);
@@ -524,15 +525,28 @@ body {
 }
 
 /* ---------- 对话里的任务步骤（T43）：每个步骤一行 ---------- */
-.step-rows {
+/* 状态机、步骤、清单、轨迹详情共用的顶部区域：最多占对话栏的 36%，再高就自己滚，
+   对话区始终留得出地方（之前步骤固定 220px + 轨迹 280px，矮窗口里对话只剩一条缝） */
+.chat-top {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 36%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-bottom: 1px solid var(--line);
+}
+.chat-top > * {
   flex: none;
+}
+.chat-top > :last-child {
+  border-bottom: none;
+}
+.step-rows {
   padding: 4px 20px 8px;
   border-bottom: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 220px;
-  overflow: auto;
 }
 .step-row {
   display: flex;

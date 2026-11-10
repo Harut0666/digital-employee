@@ -16,6 +16,7 @@ import { ROLE_LABELS } from "../view/permissions";
 import { renderCard, type CardActions, type SessionActions } from "./Cards";
 import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
 import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
+import { useStickToBottom } from "../hooks/stick-to-bottom";
 import { StepList } from "./StepList";
 import { StageBar } from "./StageBar";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
@@ -378,10 +379,8 @@ export function SessionChat({
     setFocusedStep(stepId);
     setTraceOpen(true);
   };
-  const lastKey = items.at(-1)?.key;
-  useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
-  }, [lastKey, items.length]);
+  // 贴底：新消息、逐字增长的回复、顶部区域变高变矮都跟着；人往上翻了就不打扰；切会话重新贴底
+  const pinToBottom = useStickToBottom(bodyRef, detail.id);
   const tag = detail.taskState ? <StateTag state={detail.taskState} /> : SESSION_TAG[detail.status] && <Tag style={{ margin: 0 }}>{SESSION_TAG[detail.status]}</Tag>;
   const showStages = Boolean(detail.taskId) || detail.status === "drafting";
   return (
@@ -401,26 +400,29 @@ export function SessionChat({
         )}
         {headerExtra}
       </div>
-      {showStages && (
-        <StageBar
-          line={stages}
-          live={trajectory.active}
-          meta={detail.taskId ? { modelCalls, elapsedMs } : undefined}
-          model={detail.taskId && detail.model ? modelLabel(detail.model) : undefined}
-        />
-      )}
-      {detail.taskId && started && <StepList rows={stepRows} onOpen={openStep} />}
-      {checklist}
-      {detail.taskId && traceOpen && (
-        <TrajectoryDetails
-          view={trajectory}
-          elapsedMs={elapsedMs}
-          modelCalls={modelCalls}
-          attachments={attachments}
-          artifacts={artifacts}
-          focusStepId={focusedStep}
-        />
-      )}
+      {/* 状态机、步骤、清单、轨迹详情共用一块有上限的区域：太高时自己滚，不把对话挤没 */}
+      <div className="chat-top">
+        {showStages && (
+          <StageBar
+            line={stages}
+            live={trajectory.active}
+            meta={detail.taskId ? { modelCalls, elapsedMs } : undefined}
+            model={detail.taskId && detail.model ? modelLabel(detail.model) : undefined}
+          />
+        )}
+        {detail.taskId && started && <StepList rows={stepRows} onOpen={openStep} />}
+        {checklist}
+        {detail.taskId && traceOpen && (
+          <TrajectoryDetails
+            view={trajectory}
+            elapsedMs={elapsedMs}
+            modelCalls={modelCalls}
+            attachments={attachments}
+            artifacts={artifacts}
+            focusStepId={focusedStep}
+          />
+        )}
+      </div>
       <div className="chat-body" ref={bodyRef}>
         {items.map((item) =>
         item.kind === "user" || item.kind === "agent" ? (
@@ -439,7 +441,10 @@ export function SessionChat({
         disabled={detail.readOnly}
         folderFiles={detail.taskId ? [] : folderFiles}
         onUseFolderFile={session.useFolderFiles ? (path) => session.useFolderFiles([path]) : undefined}
-        onSend={onSend}
+        onSend={(text) => {
+          pinToBottom(); // 自己发的话，无论之前翻到哪都回到底部
+          return onSend(text);
+        }}
         modelPicker={
           <ModelPicker options={modelOptions} current={detail.model} disabled={detail.readOnly} onPick={onSelectModel} openSettings={openSettings} />
         }

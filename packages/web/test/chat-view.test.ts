@@ -32,22 +32,39 @@ const EMPLOYEES = [
 ];
 
 describe("deriveChat", () => {
-  test("人和 Agent 的话成为气泡，程序说明单独显示，工具留痕不进对话", () => {
+  test("人和 Agent 的话成为气泡，程序说明单独显示，工具调用合成一行排在引出的回复之前，模型失败不进对话", () => {
     const items = deriveChat(
       session([
         msg({ kind: "user", role: "initiator", text: "帮我出第 44 周的周报" }),
-        msg({ kind: "tool_called", tool: "propose_employee" }),
-        msg({ kind: "tool_denied", tool: "submit", reason: "没有开放" }),
+        msg({ kind: "tool_called", tool: "propose_employee", args: { employee: "weekly-report" }, result: { proposed: "weekly-report" }, turn: 1 }),
+        msg({ kind: "tool_denied", tool: "submit", reason: "没有开放", turn: 1 }),
         msg({ kind: "model_failed", reason: "401" }),
-        msg({ kind: "assistant", text: "这项工作适合经营周报员工。" }),
+        msg({ kind: "assistant", text: "这项工作适合经营周报员工。", turn: 1 }),
         msg({ kind: "notice", text: "经营周报员工已接手。" }),
       ]),
     );
-    expect(items.map((i) => [i.kind, "text" in i ? i.text : ""])).toEqual([
-      ["user", "帮我出第 44 周的周报"],
-      ["agent", "这项工作适合经营周报员工。"],
-      ["notice", "经营周报员工已接手。"],
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools", "agent", "notice"]);
+    const tools = items[1];
+    expect(tools?.kind === "tools" && tools.items.map((t) => [t.tool, t.ended, t.isErr ?? false, t.reason])).toEqual([
+      ["propose_employee", true, false, undefined],
+      ["submit", true, true, "没有开放"],
     ]);
+  });
+
+  test("历史里的工具行：刷新后没有事件流也在，不同轮的调用分成两行", () => {
+    const items = deriveChat(
+      session([
+        msg({ kind: "user", role: "initiator", text: "出周报" }),
+        msg({ kind: "tool_called", tool: "propose_employee", turn: 1 }),
+        msg({ kind: "assistant", text: "已提议。", turn: 1 }),
+        msg({ kind: "user", role: "initiator", text: "再查一下" }),
+        msg({ kind: "tool_called", tool: "query_task", turn: 2 }),
+        msg({ kind: "assistant", text: "查到了。", turn: 2 }),
+      ]),
+    );
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools", "agent", "user", "tools", "agent"]);
+    const keys = items.filter((i) => i.kind === "tools").map((i) => i.key);
+    expect(new Set(keys).size).toBe(2);
   });
 
   test("员工确认卡片：接待中只有最后一张能确认，员工接手后都失效", () => {
@@ -209,4 +226,57 @@ describe("deriveChat", () => {
     expect(deriveChat(base).map((i) => i.kind)).toEqual(["user"]);
     const calling = deriveChat(base, undefined, [], { turn: 1, text: "", tools: [{ id: "c1", tool: "fill_form_draft", ended: false }] });
     expect(calling.map((i) => i.kind)).toEqual(["user", "tools"]);
-  });});
+  });
+
+  const confirmCard = { type: "employee_confirm" as const, proposed: "weekly-report", source: "model" as const, candidates: EMPLOYEES };
+  const proposeTools = [{ id: "c1", tool: "propose_employee", args: { employee: "weekly-report" }, ended: true, result: { proposed: "weekly-report" } }];
+
+  test("这一轮的工具行排在它引出的回复和卡片之前（日志里已有调用记录）", () => {
+    const items = deriveChat(
+      session([
+        msg({ kind: "user", role: "initiator", text: "出周报" }),
+        msg({ kind: "tool_called", tool: "propose_employee", turn: 1 }),
+        msg({ kind: "assistant", text: "已提议由经营周报员工接手。", turn: 1 }),
+        msg({ kind: "card", card: confirmCard, turn: 1 }),
+      ]),
+      undefined,
+      [],
+      { turn: 1, text: "", tools: proposeTools, running: false },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools", "agent", "employee_confirm"]);
+  });
+
+  test("以前几轮的工具行留在原来的位置，不会跑到后面新消息的下面", () => {
+    const items = deriveChat(
+      session([
+        msg({ kind: "user", role: "initiator", text: "出周报" }),
+        msg({ kind: "tool_called", tool: "propose_employee", turn: 1 }),
+        msg({ kind: "card", card: confirmCard, turn: 1 }),
+        msg({ kind: "user", role: "initiator", text: "换一个" }),
+        msg({ kind: "assistant", text: "好的。", turn: 2 }),
+      ]),
+      undefined,
+      [],
+      { turn: 1, text: "", tools: proposeTools, running: false },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools", "employee_confirm", "user", "agent"]);
+  });
+
+  test("调用还在进行、日志里还没有记录时，工具行排在最后", () => {
+    const items = deriveChat(
+      session([msg({ kind: "user", role: "initiator", text: "出周报" })]),
+      undefined,
+      [],
+      { turn: 1, text: "", tools: [{ id: "c1", tool: "propose_employee", ended: false }], running: true },
+    );
+    expect(items.map((i) => i.kind)).toEqual(["user", "tools"]);
+  });
+
+  test("说完这一轮后，逐字出现的那份文字不再重复显示；还在说时照常显示", () => {
+    const base = session([msg({ kind: "user", role: "initiator", text: "出周报" }), msg({ kind: "assistant", text: "好的。", turn: 1 })]);
+    const done = deriveChat(base, undefined, [], { turn: 1, text: "好的。", tools: [], running: false });
+    expect(done.map((i) => i.kind)).toEqual(["user", "agent"]);
+    const talking = deriveChat(base, undefined, [], { turn: 2, text: "再", tools: [], running: true });
+    expect(talking.map((i) => i.kind)).toEqual(["user", "agent", "streaming"]);
+  });
+});
