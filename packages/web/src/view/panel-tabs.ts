@@ -1,7 +1,7 @@
 // 右栏标签页（像浏览器）：一个默认页（交付 / 补充材料 / 待开工，不能关），其余页点了才打开、可以关。
 // 纯函数：状态怎么变都在这里，界面只负责画。
 
-export type ExtraTab = "steps" | "detail";
+export type ExtraTab = "steps" | "files";
 export type TabId = "main" | ExtraTab;
 
 export interface PanelTabs {
@@ -14,8 +14,8 @@ export const INITIAL_TABS: PanelTabs = { extra: [], active: "main" };
 
 /** 其他页能打开的全部种类，也是“+”菜单里的顺序 */
 export const EXTRA_TABS: { id: ExtraTab; label: string; hint: string }[] = [
-  { id: "steps", label: "任务步骤", hint: "每一步的进度、耗时和所用模型" },
-  { id: "detail", label: "任务详情", hint: "每一步做了什么：工具调用、模型轮次、质检，以及附件和产物" },
+  { id: "steps", label: "任务步骤", hint: "每一步的进度；点一步，下面看它做了什么" },
+  { id: "files", label: "工作区文件", hint: "浏览工作区里的文件夹和文件，预览、打开" },
 ];
 
 export const tabLabel = (id: ExtraTab): string => EXTRA_TABS.find((t) => t.id === id)?.label ?? id;

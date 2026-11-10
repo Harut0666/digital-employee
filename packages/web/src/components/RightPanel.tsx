@@ -1,8 +1,8 @@
 // 右栏：像浏览器一样的标签页。第一页是默认页（交付 / 补充材料 / 待开工，不能关），
 // 任务步骤、任务详情放在右上角的“+”里，点了才打开，可以关。整栏右端的 × 关掉整个右栏。
 import { useMemo } from "react";
-import { Dropdown } from "antd";
-import { BranchesOutlined, CloseOutlined, OrderedListOutlined, PlusOutlined } from "@ant-design/icons";
+import { Button, Dropdown } from "antd";
+import { CloseOutlined, FolderOpenOutlined, OrderedListOutlined, PlusOutlined } from "@ant-design/icons";
 import type { TaskEvent } from "@de/core/contract";
 import type { StepStatusView } from "../api";
 import { deriveStepRows } from "../view/step-rows";
@@ -11,6 +11,10 @@ import { closedTabs, EXTRA_TABS, tabLabel, type ExtraTab, type PanelTabs, type T
 import { StepList } from "./StepList";
 import { TrajectoryDetails, type TraceFile } from "./Trajectory";
 import { PanelClose } from "./PanelClose";
+import { WorkspaceFiles } from "./WorkspaceFiles";
+
+/** 任务步骤页里“看全部步骤的详情（含附件和产物）”用的特殊值 */
+export const ALL_STEPS = "*";
 
 /** 任务步骤、任务详情用的任务数据（没有任务时这两页不可用） */
 export interface PanelTask {
@@ -27,7 +31,7 @@ export interface PanelTask {
 
 const TAB_ICONS: Record<ExtraTab, React.ReactNode> = {
   steps: <OrderedListOutlined />,
-  detail: <BranchesOutlined />,
+  files: <FolderOpenOutlined />,
 };
 
 export function RightPanel({
@@ -37,6 +41,7 @@ export function RightPanel({
   main,
   mainFlush,
   task,
+  sessionId,
   focusedStep,
   onFocusStep,
   onClose,
@@ -49,7 +54,9 @@ export function RightPanel({
   /** 默认页自己管滚动和边距（交付物预览）；否则这里给边距、整页滚动 */
   mainFlush: boolean;
   task?: PanelTask;
-  /** 从任务步骤里点进任务详情时要定位的步骤 */
+  /** 工作区文件页要读哪个会话所在的工作区 */
+  sessionId?: string;
+  /** 任务步骤页里点中的那一步（ALL_STEPS 是看全部）；它的详情显示在步骤列表下面 */
   focusedStep?: string;
   onFocusStep: (stepId: string | undefined) => void;
   onClose: () => void;
@@ -59,7 +66,8 @@ export function RightPanel({
     () => (task ? deriveStepRows(task.events, task.steps, { nowMs: Date.now(), fallbackModel: task.fallbackModel }) : []),
     [task],
   );
-  const available = task ? closedTabs(tabs) : [];
+  // 任务步骤要有任务，工作区文件要有会话
+  const available = closedTabs(tabs).filter((id) => (id === "steps" ? Boolean(task) : Boolean(sessionId)));
   const tabButton = (id: TabId, label: string, closable: ExtraTab | undefined) => (
     <div key={id} className={`rp-tab ${tabs.active === id ? "active" : ""}`} role="presentation">
       <button type="button" role="tab" aria-selected={tabs.active === id} className="rp-tab-main" onClick={() => onTabs({ open: id })}>
@@ -75,31 +83,49 @@ export function RightPanel({
   );
 
   let body: React.ReactNode = main;
-  if (tabs.active === "steps" && task) {
+  if (tabs.active === "steps" && task && trajectory) {
+    const focusedRow = stepRows.find((row) => row.id === focusedStep);
     body = (
-      <StepList
-        rows={stepRows}
-        defaultOpen
-        title="任务步骤"
-        onOpen={(stepId) => {
-          onFocusStep(stepId);
-          onTabs({ open: "detail" });
-        }}
-      />
+      <div className="rp-steps">
+        <StepList
+          rows={stepRows}
+          defaultOpen
+          title="任务步骤"
+          selected={focusedStep === ALL_STEPS ? undefined : focusedStep}
+          onOpen={(stepId) => onFocusStep(stepId === focusedStep ? undefined : stepId)}
+        />
+        <div className="rp-detail">
+          <div className="rp-detail-head">
+            <span>{focusedStep === ALL_STEPS ? "任务详情 · 全部步骤" : focusedRow ? `任务详情 · ${focusedRow.label}` : "任务详情"}</span>
+            {focusedStep === undefined ? (
+              <Button size="small" type="link" onClick={() => onFocusStep(ALL_STEPS)}>
+                查看全部
+              </Button>
+            ) : (
+              <Button size="small" type="link" onClick={() => onFocusStep(undefined)}>
+                收起详情
+              </Button>
+            )}
+          </div>
+          {focusedStep === undefined ? (
+            <div className="rp-detail-hint">点上面的一步，这里显示它做了什么：工具调用、模型轮次、质检。</div>
+          ) : (
+            <TrajectoryDetails
+              view={trajectory}
+              elapsedMs={task.elapsedMs}
+              modelCalls={task.modelCalls}
+              attachments={task.attachments}
+              artifacts={task.artifacts}
+              focusStepId={focusedStep === ALL_STEPS ? undefined : focusedStep}
+              onlyStepId={focusedStep === ALL_STEPS ? undefined : focusedStep}
+            />
+          )}
+        </div>
+      </div>
     );
-  } else if (tabs.active === "detail" && task && trajectory) {
-    body = (
-      <TrajectoryDetails
-        view={trajectory}
-        elapsedMs={task.elapsedMs}
-        modelCalls={task.modelCalls}
-        attachments={task.attachments}
-        artifacts={task.artifacts}
-        focusStepId={focusedStep}
-      />
-    );
-  }
-  const flush = tabs.active === "main" && mainFlush;
+  } else if (tabs.active === "files" && sessionId) {
+    body = <WorkspaceFiles sessionId={sessionId} />;
+  }  const flush = tabs.active === "main" && mainFlush;
 
   return (
     <div className="rp">
@@ -123,7 +149,7 @@ export function RightPanel({
               onClick: ({ key }) => onTabs({ open: key as ExtraTab }),
             }}
           >
-            <button type="button" className="rp-add" aria-label="打开任务步骤或任务详情" title="打开任务步骤、任务详情">
+            <button type="button" className="rp-add" aria-label="打开任务步骤或工作区文件" title="打开任务步骤、工作区文件">
               <PlusOutlined />
             </button>
           </Dropdown>
@@ -131,7 +157,7 @@ export function RightPanel({
         <span className="rp-spacer" />
         <PanelClose onClose={onClose} />
       </div>
-      <div className={`rp-body ${flush ? "flush" : "scroll"}`}>{body}</div>
+      <div className={`rp-body ${flush || tabs.active === "files" ? "flush" : "scroll"}`}>{body}</div>
     </div>
   );
 }

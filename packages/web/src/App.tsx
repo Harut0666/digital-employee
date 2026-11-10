@@ -556,6 +556,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       main={panel}
       mainFlush={!titled}
       task={panelTask}
+      sessionId={sessionId}
       focusedStep={focusedStep}
       onFocusStep={setFocusedStep}
       onClose={closePanel}

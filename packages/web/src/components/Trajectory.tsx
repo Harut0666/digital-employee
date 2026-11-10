@@ -149,6 +149,7 @@ export function TrajectoryDetails({
   attachments,
   artifacts,
   focusStepId,
+  onlyStepId,
 }: {
   view: TrajectoryView;
   modelCalls: { used: number; limit: number };
@@ -157,6 +158,8 @@ export function TrajectoryDetails({
   artifacts: TraceFile[];
   /** 从对话里的步骤行点进来时要定位的步骤（T43） */
   focusStepId?: string;
+  /** 只看这一步（任务步骤页里点了某一步）：只列这一步的轨迹，不列附件和产物 */
+  onlyStepId?: string;
 }) {
   const { ui } = useUiPreferences();
   const linkProps = useLinkProps();
@@ -186,7 +189,7 @@ export function TrajectoryDetails({
     <div className="trace open">
       <div className="trace-head static">
         <span className="trace-title">
-          <BranchesOutlined /> 轨迹详情
+          <BranchesOutlined /> 任务详情
         </span>
         <span className={`dot ${dotOf(view.state)}`} />
         <span className="trace-summary">{summary}</span>
@@ -194,14 +197,23 @@ export function TrajectoryDetails({
       </div>
       <div className="trace-body" ref={bodyRef}>
         {view.rounds.length === 0 && <div className="trace-empty">尚未开始执行</div>}
-        {view.rounds.map((round) => (
-          <div key={round.round} className="trace-round">
-            {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
-            {round.items.map((item) => (
-              <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} focused={focusStepId !== undefined && item.stepId === focusStepId} />
-            ))}
-          </div>
-        ))}
+        {view.rounds.map((round) => {
+          const items = onlyStepId === undefined ? round.items : round.items.filter((item) => item.stepId === onlyStepId);
+          if (onlyStepId !== undefined && items.length === 0) return null;
+          return (
+            <div key={round.round} className="trace-round">
+              {view.rounds.length > 1 && <div className="trace-round-label">{round.round === 0 ? "首轮" : `重做第 ${round.round} 轮`}</div>}
+              {items.map((item) => (
+                <TraceRow key={item.id} item={item} detail={ui.trajectoryDetail} focused={focusStepId !== undefined && item.stepId === focusStepId} />
+              ))}
+            </div>
+          );
+        })}
+        {onlyStepId !== undefined && !view.rounds.some((round) => round.items.some((item) => item.stepId === onlyStepId)) && (
+          <div className="trace-empty">这一步还没有记录</div>
+        )}
+        {onlyStepId === undefined && (
+        <>
         <div className="trace-round">
           <div className="trace-round-label">任务附件</div>
           {attachments.length === 0 && <div className="trace-empty">没有附件</div>}
@@ -228,6 +240,8 @@ export function TrajectoryDetails({
             </div>
           ))}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

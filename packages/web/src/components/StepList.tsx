@@ -24,12 +24,15 @@ export function StepList({
   onOpen,
   title = "任务步骤",
   defaultOpen,
+  selected,
 }: {
   rows: readonly StepRow[];
   onOpen: (stepId: string) => void;
   title?: string;
   /** 不给时：还有步骤没走完就展开，都走完就收起 */
   defaultOpen?: boolean;
+  /** 右栏里正看着详情的那一步：这一行高亮 */
+  selected?: string;
 }) {
   const progress = stepProgress(rows);
   const [open, setOpen] = useState(defaultOpen ?? !progress.finished);
@@ -53,7 +56,7 @@ export function StepList({
       {open && (
         <div className="step-rows" aria-label="任务步骤">
           {rows.map((row) => (
-            <button key={row.id} type="button" className={`step-row ${row.status}`} onClick={() => onOpen(row.id)} title="在轨迹详情里查看这一步">
+            <button key={row.id} type="button" className={`step-row ${row.status} ${selected === row.id ? "selected" : ""}`} aria-pressed={selected === row.id} onClick={() => onOpen(row.id)} title="查看这一步做了什么">
               <span className="step-row-icon">
                 <StepIcon status={row.status} />
               </span>

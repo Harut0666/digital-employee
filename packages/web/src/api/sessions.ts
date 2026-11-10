@@ -42,6 +42,10 @@ export interface SessionApi {
   /** 目录里的材料：列出可用的文件、请人确认之后作为材料 */
   listFolderFiles(id: string): Promise<FolderListing>;
   useFolderFiles(id: string, paths: string[]): Promise<SessionResult>;
+  /** 右栏“工作区文件”：浏览工作区目录这一层（path 空是根）、读文件内容预览、用本机应用打开文件或文件夹 */
+  browseWorkspace(id: string, path: string): Promise<FolderListing>;
+  readWorkspaceFile(id: string, path: string): Promise<Blob>;
+  openWorkspacePath(id: string, path: string, mode: "default" | "reveal"): Promise<{ ok: true } | { ok: false; message: string }>;
   /** form 省略时用草稿 */
   submitSession(id: string, form?: Record<string, unknown>): Promise<SessionResult>;
   /** 发起人在开工清单上确认跳过一项可跳过项 */
@@ -147,6 +151,26 @@ export function createSessionApi(origin: string, getRole: () => UiRole, fetchImp
     },
     listFolderFiles: (id) => read<FolderListing>(session(id, "/folder-files"), { headers: { "x-role": getRole() } }),
     useFolderFiles: (id, paths) => act(session(id, "/folder-files"), JSON.stringify({ paths })),
+    browseWorkspace: (id, path) => read<FolderListing>(session(id, `/workspace?path=${encodeURIComponent(path)}`), { headers: { "x-role": getRole() } }),
+    async readWorkspaceFile(id, path) {
+      const res = await fetchImpl(session(id, `/workspace/file?path=${encodeURIComponent(path)}`), { headers: { "x-role": getRole() } });
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => undefined);
+        throw new Error(messageOf(body, res.status));
+      }
+      return res.blob();
+    },
+    async openWorkspacePath(id, path, mode) {
+      const res = await fetchImpl(session(id, "/workspace/open"), {
+        method: "POST",
+        headers: { "x-role": getRole(), "content-type": "application/json" },
+        body: JSON.stringify({ path, mode }),
+      }).catch((e: unknown) => e as Error);
+      if (res instanceof Error) return { ok: false as const, message: res.message };
+      if (res.ok) return { ok: true as const };
+      const body: unknown = await res.json().catch(() => undefined);
+      return { ok: false as const, message: messageOf(body, res.status) };
+    },
     submitSession: (id, form) => act(session(id, "/submit"), JSON.stringify(form === undefined ? {} : { form })),
     skipChecklistItem: (id, item) => act(session(id, `/checklist/${encodeURIComponent(item)}/skip`), JSON.stringify({})),
     draftFiling: (id, taskId) => act(session(id, "/filing-draft"), JSON.stringify(taskId ? { taskId } : {})),

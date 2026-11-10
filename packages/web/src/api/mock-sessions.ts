@@ -1143,6 +1143,24 @@ const reply = async (s: MockSession, out: SessionMessage[]): Promise<SessionResu
       return { entries: files.map((f) => ({ path: f.path, name: f.name, size: f.size })), truncated: false };
     },
 
+    // 模拟模式的工作区文件：只有样例文件的名字，没有内容
+    async browseWorkspace(_id, path) {
+      if (path) return { entries: [], truncated: false };
+      return {
+        entries: [
+          { path: "销售明细.xlsx", name: "销售明细.xlsx", size: 28_000 },
+          { path: "周会纪要_2026W44.docx", name: "周会纪要_2026W44.docx", size: 18_000 },
+        ],
+        truncated: false,
+      };
+    },
+    async readWorkspaceFile() {
+      throw new Error("模拟模式没有文件内容");
+    },
+    async openWorkspacePath() {
+      return { ok: false as const, message: "模拟模式没有文件可以打开" };
+    },
+
     // @ 选择即视为人已确认：和卡片上的“用这个文件”一样，复制进会话材料
     async useFolderFiles(id, paths) {
       if (getRole() !== "initiator") return fail("forbidden_role", "只有发起人可以确认目录里的文件");
