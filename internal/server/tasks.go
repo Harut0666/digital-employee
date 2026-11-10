@@ -278,6 +278,72 @@ func (s *Server) handleDeliverable(w http.ResponseWriter, r *http.Request) {
 	writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可下载的交付物：%s", kind)))
 }
 
+// handleOpenDeliverable POST /api/tasks/{id}/deliverables/{kind}/open：用本机的应用打开交付物。
+// body {version?, mode}：default 用系统默认应用（Word 文档交给 Word）、text 用文本编辑器（只给 Markdown 和检验记录）、
+// reveal 在文件夹里显示。只能打开这个任务自己登记的交付物文件，路径不由请求决定。
+func (s *Server) handleOpenDeliverable(w http.ResponseWriter, r *http.Request) {
+	if s.engine() == nil {
+		writeJSON(w, http.StatusInternalServerError, internalError("任务引擎未就绪"))
+		return
+	}
+	body, err := readBodyJSON(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, err.Error()))
+		return
+	}
+	mode, _ := body["mode"].(string)
+	version := ""
+	switch v := body["version"].(type) {
+	case string:
+		version = v
+	case float64:
+		version = strconv.Itoa(int(v))
+	}
+	id, kind := r.PathValue("id"), r.PathValue("kind")
+	snapshot, found := s.engine().Get(id)
+	if !found {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("任务不存在：%s", id)))
+		return
+	}
+	files, _, ok := versionFiles(snapshot, version)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有这一版交付物：%s", version)))
+		return
+	}
+	var path string
+	for _, ref := range files {
+		if string(ref.Kind) == kind {
+			path = ref.Path
+			break
+		}
+	}
+	if info, err := os.Stat(path); path == "" || err != nil || info.IsDir() {
+		writeAPIError(w, http.StatusNotFound, apiError(contract.ErrNotFound, fmt.Sprintf("没有可打开的交付物：%s", kind)))
+		return
+	}
+	var openErr error
+	switch mode {
+	case "default":
+		openErr = s.opts.OpenDefault(path)
+	case "text":
+		if kind == string(contract.DeliverableDocx) {
+			writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "Word 文档不能用文本编辑器打开，请用默认应用（Word）打开"))
+			return
+		}
+		openErr = s.opts.OpenFile(path)
+	case "reveal":
+		openErr = s.opts.Reveal(path)
+	default:
+		writeAPIError(w, http.StatusBadRequest, apiError(contract.ErrInvalidInput, "mode 只能是 default、text 或 reveal"))
+		return
+	}
+	if openErr != nil {
+		writeJSON(w, http.StatusInternalServerError, internalError("打开失败："+openErr.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": path})
+}
+
 // handleTaskAsset Markdown 交付物旁边 assets 文件夹里的图表（PNG）。图表文件名带内容哈希，同名就是同一张图，
 // 所以任何一版的简报都能用同一个地址取到，浏览器也可以长期缓存。只放行 assets 里的 .png，文件名里不能带路径。
 func (s *Server) handleTaskAsset(w http.ResponseWriter, r *http.Request) {

@@ -22,7 +22,7 @@ import {
 import type { TrajectoryDetail, TaskState } from "@de/core/contract";
 import type { TraceItem, TrajectoryView } from "../view/trajectory";
 import { trajectoryDisplay, shouldAutoExpand, type TrajectoryDisplay } from "../pages/settings/preferences";
-import { onUserInput, useLinkProps, useUiPreferences } from "./Preferences";
+import { useLinkProps, useUiPreferences } from "./Preferences";
 
 
 export function StepIcon({ status }: { status: string }) {
@@ -133,22 +133,6 @@ function TraceRow({ item, detail, focused }: { item: TraceItem; detail: Trajecto
       )}
     </div>
   );
-}
-
-/** 轨迹详情的展开状态：默认收起，人点“轨迹详情”展开；一轮执行结束后按「折叠时机」偏好收起。 */
-export function useTrajectoryOpen(active: boolean): [boolean, (open: boolean) => void] {
-  const [open, setOpen] = useState(false);
-  const { ui } = useUiPreferences();
-  const wasActive = useRef(active);
-
-  useEffect(() => {
-    // 完成即折叠：执行刚结束就收起；下次输入时折叠：留到下一次输入
-    if (ui.collapseTiming === "completion" && wasActive.current && !active) setOpen(false);
-    wasActive.current = active;
-  }, [ui.collapseTiming, active]);
-
-  useEffect(() => onUserInput(() => ui.collapseTiming === "next-input" && setOpen(false)), [ui.collapseTiming]);
-  return [open, setOpen];
 }
 
 export interface TraceFile {

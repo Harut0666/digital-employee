@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,6 +207,9 @@ func withCrashAt(step string) harnessOption {
 
 // harness 一个运行中的主接缝。
 type harness struct {
+	// opens 服务端被要求“用本机应用打开”的记录（假的打开器，测试里不会真的启动程序），格式 模式:文件名
+	opensMu  sync.Mutex
+	opens    []string
 	t        *testing.T
 	baseURL  string
 	engine   *engine.Engine
@@ -438,6 +442,9 @@ func (h *harness) serve() string {
 		Workspaces:        h.workspaces,
 		WorkspaceDir:      h.workspace,
 		PickFolder:        h.pickFolder,
+		OpenDefault:       h.recordOpen("default"),
+		OpenFile:          h.recordOpen("text"),
+		Reveal:            h.recordOpen("reveal"),
 		WorkspaceWritable: h.writable,
 		EmployeesDir:      h.employees,
 		ToolClient:        h.registry,

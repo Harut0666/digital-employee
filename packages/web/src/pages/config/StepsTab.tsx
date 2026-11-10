@@ -3,6 +3,7 @@
 // T20：判断步骤增加“思考强度”（写回 model.thinking），任务级增加工具重试退避编辑（limits.toolRetry.backoffMs）。
 import { Alert, Card, Collapse, Input, InputNumber, Select, Space, Switch, Tag, Typography } from "antd";
 import { THINKING_LEVELS, TOOL_NAMES, type ThinkingLevel } from "@de/core/contract";
+import { MarkdownEditor } from "../../components/MarkdownEditor";
 import { asArray, asRecord, textOf, type Json, type TabProps } from "./helpers";
 
 const EDITABLE_TOOLS = TOOL_NAMES.filter((tool) => tool !== "web_search");
@@ -266,11 +267,7 @@ export function StepsTab({ config, drafts, setData, setContent }: TabProps) {
                           </Space>
                         ),
                         children: (
-                          <Input.TextArea
-                            rows={14}
-                            value={textOf(config, drafts, promptPath)}
-                            onChange={(event) => setContent(promptPath, event.target.value)}
-                          />
+                          <MarkdownEditor rows={14} value={textOf(config, drafts, promptPath)} onChange={(text) => setContent(promptPath, text)} />
                         ),
                       },
                     ]}

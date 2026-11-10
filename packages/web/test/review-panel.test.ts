@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DeliverableVersion } from "../src/api/types";
-import { deriveReviewPanel, panelLayout } from "../src/view/review-panel";
+import { deriveReviewPanel, openMenu, panelLayout } from "../src/view/review-panel";
 
 const files = (round: number) => [
   { kind: "docx" as const, path: `report-r${round}.docx`, sha256: `d${round}` },
@@ -84,5 +84,39 @@ describe("panelLayout：右栏宽度与抽屉", () => {
   test("窗口较窄时右栏收成抽屉", () => {
     expect(panelLayout(1000, true).mode).toBe("drawer");
     expect(panelLayout(1024, false).mode).toBe("column");
+  });
+});
+
+describe("openMenu：交付物右上角的“打开”", () => {
+  const summary = (kind: "docx" | "md", files: ("docx" | "md" | "qc_record")[]) => openMenu(files, kind).map((i) => `${i.group}:${i.kind}:${i.mode}`);
+
+  test("Word 文档：交给系统默认应用（Word）、在文件夹中显示，不给文本编辑器；检验记录可以另外打开", () => {
+    expect(summary("docx", ["docx", "qc_record"])).toEqual([
+      "main:docx:default",
+      "main:docx:reveal",
+      "other:qc_record:text",
+      "other:qc_record:default",
+    ]);
+  });
+
+  test("Markdown：默认应用和文本编辑器都行", () => {
+    expect(summary("md", ["md", "qc_record"])).toEqual([
+      "main:md:default",
+      "main:md:text",
+      "main:md:reveal",
+      "other:qc_record:text",
+      "other:qc_record:default",
+    ]);
+  });
+
+  test("没有交付文档时什么都不给", () => {
+    expect(openMenu([], undefined)).toEqual([]);
+  });
+
+  test("版本的文件清单进视图，菜单按它列出其他文件", () => {
+    const version = { version: 1, files: [{ kind: "docx" }, { kind: "qc_record" }] } as unknown as DeliverableVersion;
+    const view = deriveReviewPanel({ state: "delivered", versions: [version] });
+    expect(view.files).toEqual(["docx", "qc_record"]);
+    expect(openMenu(view.files, view.docKind).length).toBe(4);
   });
 });

@@ -361,3 +361,42 @@
   font: inherit;
   cursor: pointer;
 }
+
+/* ---------- Markdown 编辑器：左写右渲染 ---------- */
+.md-editor-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.md-editor-hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.md-editor-body {
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.md-editor-body.edit,
+.md-editor-body.preview {
+  grid-template-columns: minmax(0, 1fr);
+}
+.md-editor-input.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.md-editor-render {
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--card);
+  font-size: var(--fs-base);
+  line-height: 1.7;
+}
+.md-editor-empty {
+  color: var(--muted);
+}

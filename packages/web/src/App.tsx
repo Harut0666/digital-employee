@@ -17,7 +17,9 @@ import { LoadingBlock, StateBlock } from "./components/StateBlock";
 import { NewConversation, SessionChat } from "./components/Chat";
 import { LaunchPanel } from "./components/LaunchPanel";
 import { ReviewPanel } from "./components/ReviewPanel";
-import { PanelClose } from "./components/PanelClose";
+import { RightPanel, type PanelTask } from "./components/RightPanel";
+import { closeTab, INITIAL_TABS, openTab, type PanelTabs } from "./view/panel-tabs";
+import { modelLabel } from "./view/session-model";
 import type { TraceFile } from "./components/Trajectory";
 import { Handoff, TaskActionBar, type CardActions, type SessionActions } from "./components/Cards";
 import { UiPreferencesProvider, useUiPreferences } from "./components/Preferences";
@@ -26,6 +28,7 @@ import { SettingsPage } from "./pages/Settings";
 import { KnowledgePage } from "./pages/Knowledge";
 import { actionPlan } from "./view/permissions";
 import { deriveChat } from "./view/chat-view";
+import { earlierDeliveries, filingOf } from "./view/delivery";
 import { latestTaskId, pastTaskIds } from "./view/task-runs";
 import { DRAWER_BELOW, panelLayout } from "./view/review-panel";
 import { antdTheme } from "./view/theme";
@@ -53,6 +56,9 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const [panelKey, setPanelKey] = useState(0);
   /** 宽窗口时右栏被手动关掉的那一刻（任务 + 状态）；任务换了或状态变了（比如又到待审核）自动重新打开 */
   const [closedPanel, setClosedPanel] = useState<string>();
+  /** 右栏的标签页（像浏览器）：默认页 + 点了才开的任务步骤、任务详情；换任务时回到只有默认页 */
+  const [tabs, setTabs] = useState<PanelTabs>(INITIAL_TABS);
+  const [focusedStep, setFocusedStep] = useState<string>();
   const windowWidth = useWindowWidth();
   const drawerMode = windowWidth < DRAWER_BELOW;
   // 侧栏两个 tab（T38）：工作区列表带会话摘要和未归属，记录 tab 按状态分组；状态点都由后端算
@@ -136,6 +142,10 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const panelHidden = taskId !== undefined && closedPanel === `${taskId}:${taskState}`;
   // 宽窗口的右栏可以关掉（关掉后对话顶部有按钮再打开）；窄窗口是抽屉，关就是收起抽屉
   const closePanel = () => (drawerMode ? setDrawerOpen(false) : setClosedPanel(`${taskId}:${taskState}`));
+  useEffect(() => {
+    setTabs(INITIAL_TABS);
+    setFocusedStep(undefined);
+  }, [taskId]);
   const employee = employees.find((e) => e.id === (detail?.employee ?? task.snapshot?.employee));
 
   // 浏览器标签页跟随当前会话标题（新对话时回到产品名）
@@ -360,16 +370,24 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
     openSupplement: () => {
       setDrawerOpen(true);
       setClosedPanel(undefined);
+      setTabs((current) => openTab(current, "main"));
       panelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     },
     openPanel: () => {
       setDrawerOpen(true);
       setClosedPanel(undefined);
+      setTabs((current) => openTab(current, "main"));
     },
     sections: employee?.reviewSections ?? DEFAULT_SECTIONS,
     downloadUrl: (kind, version, forTask) => {
       const target = forTask ?? taskId;
       return target ? api.deliverableUrl(target, kind, version) : undefined;
+    },
+    openFile: async (kind, mode, version, forTask) => {
+      const target = forTask ?? taskId;
+      if (!target) return;
+      const res = await api.openDeliverable(target, kind, mode, version);
+      if (!res.ok) message.error(res.message);
     },
   };
 
@@ -453,9 +471,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         steps={task.snapshot?.steps ?? NO_STEPS}
         elapsedMs={task.view.elapsedMs}
         modelCalls={task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 }}
-        attachments={(task.snapshot?.attachments ?? []).map((a) => a.name)}
         folderFiles={folderFiles}
-        artifacts={artifactsOf(task.snapshot, actions.downloadUrl)}
         headerExtra={
           taskId && (drawerMode || panelHidden) ? (
             <Button className="drawer-toggle" icon={<LeftOutlined />} onClick={() => (drawerMode ? setDrawerOpen(true) : setClosedPanel(undefined))}>
@@ -503,7 +519,13 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
         <TaskActionBar actions={actions} />
       </div>
     ) : (
-      <ReviewPanel snapshot={live ?? task.snapshot} actions={actions} onClose={closePanel} />
+      <ReviewPanel
+        snapshot={live ?? task.snapshot}
+        actions={actions}
+        session={sessionActions}
+        filing={detail ? filingOf(detail, taskId) : undefined}
+        earlier={detail ? earlierDeliveries(detail, pastRuns) : []}
+      />
     );
   }
 
@@ -514,18 +536,31 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
   const columnPanel = panel !== null && !drawer && !panelHidden;
   const supplementing = taskState === "awaiting_initiator";
   const titled = taskState === "draft" || supplementing;
+  const mainTitle = taskState === "draft" ? "待开工" : supplementing ? "补充材料" : "交付";
+  const panelTask: PanelTask | undefined = taskId
+    ? {
+        events: task.events,
+        steps: task.snapshot?.steps ?? NO_STEPS,
+        elapsedMs: task.view.elapsedMs,
+        modelCalls: task.snapshot?.budget.modelCalls ?? { used: 0, limit: 0 },
+        attachments: (task.snapshot?.attachments ?? []).map((a) => a.name),
+        artifacts: artifactsOf(task.snapshot, actions.downloadUrl),
+        fallbackModel: detail?.model ? modelLabel(detail.model) : undefined,
+      }
+    : undefined;
   const panelBody = (
-    <>
-      {titled && (
-        <div className="panel-titlebar">
-          <h3 className="panel-title">{taskState === "draft" ? "待开工" : "补充材料"}</h3>
-          <PanelClose onClose={closePanel} />
-        </div>
-      )}
-      {panel}
-    </>
-  );
-  return (
+    <RightPanel
+      tabs={tabs}
+      onTabs={(change) => setTabs((current) => (change.close ? closeTab(current, change.close) : change.open ? openTab(current, change.open) : current))}
+      mainTitle={mainTitle}
+      main={panel}
+      mainFlush={!titled}
+      task={panelTask}
+      focusedStep={focusedStep}
+      onFocusStep={setFocusedStep}
+      onClose={closePanel}
+    />
+  );  return (
     <div className={`shell ${columnPanel ? (layout.wide ? "wide" : "") : "no-panel"} ${drawer ? "narrow" : ""}`}>
       <Sidebar
         role={role}
@@ -555,7 +590,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
       />
       <div className="col surface chat">{center}</div>
       {columnPanel && (
-        <div className={`col panel ${titled ? "" : "panel-review"}`} ref={panelRef}>
+        <div className="col panel panel-tabs" ref={panelRef}>
           {panelBody}
         </div>
       )}
@@ -570,7 +605,7 @@ function Shell({ roleRef, settingsApi }: { roleRef: { current: UiRole }; setting
             closable={false}
             styles={{ body: { padding: 12, display: "flex", flexDirection: "column", background: "var(--bg)" } }}
           >
-            <div className={`col panel drawer-panel ${titled ? "" : "panel-review"}`} ref={panelRef}>
+            <div className="col panel panel-tabs drawer-panel" ref={panelRef}>
               {panelBody}
             </div>
           </Drawer>

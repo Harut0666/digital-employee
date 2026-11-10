@@ -1,8 +1,7 @@
 import { Sender } from "@ant-design/x";
 import type { SenderRef } from "@ant-design/x/es/sender/interface";
-import { Alert, Button, Dropdown, Tooltip } from "antd";
+import { Alert, Button, Dropdown } from "antd";
 import {
-  BranchesOutlined,
   DownOutlined,
   FolderAddOutlined,
   FolderOutlined,
@@ -22,7 +21,6 @@ import { modelLabel, modelMenuItems, newSessionModelMenu, parseModelValue } from
 import { normalizePermissionMode, permissionHint, permissionMenuItems, permissionModeLabel, permissionTone } from "../view/permission-mode";
 import type { ChatItem, LiveTurn } from "../view/chat-view";
 import { deriveStages } from "../view/stages";
-import { deriveStepRows } from "../view/step-rows";
 import { deriveTrajectory } from "../view/trajectory";
 import { ROLE_LABELS } from "../view/permissions";
 import { composerView, enterHint, STARTERS, type Starter } from "../view/composer";
@@ -34,8 +32,6 @@ import { Markdown } from "./Markdown";
 import { ToolTurn } from "./ToolRows";
 import { useStickToBottom } from "../hooks/stick-to-bottom";
 import { atQuery, filterFolderPaths, insertAtPath } from "../view/folder-files";
-import { TrajectoryDetails, useTrajectoryOpen, type TraceFile } from "./Trajectory";
-import { StepList } from "./StepList";
 import { StageBar } from "./StageBar";
 import { StateBlock } from "./StateBlock";
 import { notifyUserInput, useUiPreferences } from "./Preferences";
@@ -372,8 +368,6 @@ export function SessionChat({
   steps,
   elapsedMs,
   modelCalls,
-  attachments,
-  artifacts,
   headerExtra,
   folderFiles,
   modelOptions,
@@ -403,9 +397,6 @@ export function SessionChat({
   steps: StepStatusView[];
   elapsedMs: number;
   modelCalls: { used: number; limit: number };
-  /** 轨迹详情里的任务附件和产物 */
-  attachments: string[];
-  artifacts: TraceFile[];
   /** 标题栏右侧的附加入口，比如窄窗口下打开右栏抽屉 */
   headerExtra?: React.ReactNode;
   onSend: (text: string) => Promise<boolean>;
@@ -417,22 +408,9 @@ export function SessionChat({
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const trajectory = useMemo(() => deriveTrajectory(events, steps), [events, steps]);
-  // 对话里的步骤行（T43）：每个步骤一行，业务说法、状态、耗时、所用模型；点开定位到轨迹详情
-  const stepRows = useMemo(
-    () => deriveStepRows(events, steps, { nowMs: Date.now(), fallbackModel: detail.model ? modelLabel(detail.model) : undefined }),
-    [events, steps, detail.model],
-  );
-  const started = stepRows.some((row) => row.status !== "pending");
   // 事件比会话摘要新：有状态变化事件时以它为准（草稿任务没有这种事件）
   const state = trajectory.state ?? detail.taskState;
   const stages = useMemo(() => deriveStages(events, steps, state, actions.pause?.title), [events, steps, state, actions.pause?.title]);
-  const [traceOpen, setTraceOpen] = useTrajectoryOpen(trajectory.active);
-  const [focusedStep, setFocusedStep] = useState<string>();
-  // 点开步骤行：打开轨迹详情并定位到这一步
-  const openStep = (stepId: string) => {
-    setFocusedStep(stepId);
-    setTraceOpen(true);
-  };
   // 自动滚动：新消息、逐字增长的回复、卡片展开、窗口缩放都跟着到底；人往上翻了就不打扰，翻回底部附近恢复；
   // 切会话重新贴底，用户自己发了话也回到底部
   const pinToBottom = useStickToBottom(bodyRef, detail.id);
@@ -464,13 +442,6 @@ export function SessionChat({
           </div>
           {subtitle && <div className="chat-sub chat-subtitle">{subtitle}</div>}
         </div>
-        {detail.taskId && (
-          <Tooltip title={traceOpen ? "收起轨迹详情" : "查看每一步做了什么"}>
-            <Button type="text" size="small" className="trace-toggle" icon={<BranchesOutlined />} aria-expanded={traceOpen} onClick={() => setTraceOpen(!traceOpen)}>
-              {traceOpen ? "收起轨迹详情" : "轨迹详情"}
-            </Button>
-          </Tooltip>
-        )}
         {headerExtra}
       </div>
       {showStages && (
@@ -479,17 +450,6 @@ export function SessionChat({
           live={trajectory.active}
           meta={detail.taskId ? { modelCalls, elapsedMs } : undefined}
           model={detail.taskId && detail.model ? modelLabel(detail.model) : undefined}
-        />
-      )}
-      {detail.taskId && started && <StepList rows={stepRows} onOpen={openStep} />}
-      {detail.taskId && traceOpen && (
-        <TrajectoryDetails
-          view={trajectory}
-          elapsedMs={elapsedMs}
-          modelCalls={modelCalls}
-          attachments={attachments}
-          artifacts={artifacts}
-          focusStepId={focusedStep}
         />
       )}
       <div className="chat-body thread" ref={bodyRef}>

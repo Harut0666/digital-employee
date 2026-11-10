@@ -20,13 +20,12 @@ import {
 import type { TaskCommand } from "@de/core/contract";
 import { actionPlan, needsModelSettings, ROLE_LABELS, type RoleHandoff } from "../view/permissions";
 import type { ChatItem } from "../view/chat-view";
-import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, PauseView, PermissionDecision, QuestionAnswer, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
+import type { CommandType, EmployeeFormAnswer, EmployeeInfo, KnowledgeFiling, OpenMode, PauseView, PermissionDecision, QuestionAnswer, SessionAttachment, SessionResult, TaskAction, UiRole } from "../api";
 import { useLinkProps } from "./Preferences";
 import { CheckRows } from "./Checklist";
 import { qcRows } from "../view/checklist";
 import { FormCard } from "./FormCard";
 import { EmployeeFormCard } from "./EmployeeFormCard";
-import { FilingCard } from "./FilingCard";
 import { TodoCard } from "./TodoCard";
 import { QuestionCard } from "./QuestionCard";
 import { ShellCommandBlock } from "./ShellCommand";
@@ -51,6 +50,8 @@ export interface CardActions {
   sections: { id: string; heading: string }[];
   /** forTask：下载哪个任务的交付物；不给就是会话的当前任务（会话里有多个任务时，早先交付的任务带着自己的任务号） */
   downloadUrl: (kind: "docx" | "md" | "qc_record", version?: number, forTask?: string) => string | undefined;
+  /** 用本机的应用打开交付物（右栏右上角“打开”）：默认应用 / 文本编辑器 / 在文件夹中显示；失败由调用方弹提示 */
+  openFile: (kind: "docx" | "md" | "qc_record", mode: OpenMode, version?: number, forTask?: string) => Promise<void>;
 }
 
 /** 会话层的操作：上传材料、答复员工表单。都只有发起人能做，后端仍会校验。 */
@@ -181,47 +182,6 @@ export function PauseCard({ item, actions }: { item: Extract<ChatItem, { kind: "
   );
 }
 
-export function QcCard({ item }: { item: Extract<ChatItem, { kind: "qc" }> }) {
-  const bad = item.checks.filter((c) => !c.passed);
-  return (
-    <div className={`card ${item.passed ? "ok" : "danger"}`}>
-      <div className="card-title">
-        {item.passed ? <CheckCircleFilled /> : <CloseCircleFilled />}
-        {item.passed ? "质检通过" : "质检未通过"}
-      </div>
-      <div className="card-body">{item.passed ? `经 ${item.checks.length} 项检查，未发现问题，符合发布要求。` : `${bad.length} 项未通过。`}</div>
-      {/* 和开工清单同样的行样式 */}
-      <CheckRows rows={qcRows(item.checks)} />
-    </div>
-  );
-}
-
-/** 送审提示：审核在右栏进行，对话里只说一句；等别的角色时给切换入口。 */
-export function ReviewNoticeCard({ item, actions }: { item: Extract<ChatItem, { kind: "review_notice" }>; actions: CardActions }) {
-  if (!item.active) return <div className="notice">交付物已送审（已处理）</div>;
-  const pause = item.pause;
-  const outOfScope = pause !== undefined && pause.code !== "awaiting_review";
-  const reviewer = actions.waitingFor.includes(actions.role);
-  return (
-    <div className={`card ${outOfScope ? "warn" : ""}`}>
-      <div className="card-title">
-        {outOfScope ? <ExclamationCircleFilled /> : <FileWordOutlined />}
-        {outOfScope ? pause.title : "交付物写好了，请在右侧审核"}
-      </div>
-      {outOfScope && <div className="card-body">{pause.message}</div>}
-      {outOfScope && pause.resolution && <div className="card-body">{pause.resolution}</div>}
-      <div className="card-actions">
-        <Button size="small" icon={<EyeOutlined />} onClick={actions.openPanel}>
-          {reviewer ? "打开审核区" : "查看交付物"}
-        </Button>
-      </div>
-      {!reviewer && actions.waitingFor.length > 0 && (
-        <Handoff handoff={{ text: `等待${actions.waitingFor.map((r) => ROLE_LABELS[r]).join("、")}审核`, switchTo: actions.waitingFor }} onRole={actions.onRole} />
-      )}
-    </div>
-  );
-}
-
 /** 对话里写的退回意见：Agent 起草，审核人检查后在卡片上确认，才真正退回。 */
 export function ReturnConfirmCard({ item, actions }: { item: Extract<ChatItem, { kind: "return_confirm" }>; actions: CardActions }) {
   const [picked, setPicked] = useState<string[]>(item.sections ?? []);
@@ -290,25 +250,6 @@ export function ReturnForm({
     </div>
   );
 }
-export function DeliveredCard({ item, actions }: { item: Extract<ChatItem, { kind: "delivered" }>; actions: CardActions }) {
-  const names: Record<string, string> = { docx: "Word 文档", md: "Markdown 报告", qc_record: "检验记录" };
-  const linkProps = useLinkProps();
-  return (
-    <div className="card ok">
-      <div className="card-title">
-        <CheckCircleFilled /> 已交付{item.run ? `（第 ${item.run} 次运行）` : ""}
-      </div>
-      <div className="card-actions">
-        {item.deliverables.map((d) => (
-          <Button key={d.kind} icon={<DownloadOutlined />} href={actions.downloadUrl(d.kind, undefined, item.taskId)} disabled={!actions.downloadUrl(d.kind, undefined, item.taskId)} {...linkProps(actions.downloadUrl(d.kind, undefined, item.taskId))}>
-            {names[d.kind] ?? d.kind}
-          </Button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** 早先任务的步骤行：留在这个任务开工的位置，只读（轨迹详情只看当前任务）。 */
 export function PastRunSteps({ item }: { item: Extract<ChatItem, { kind: "past_steps" }> }) {
   return (
@@ -475,18 +416,10 @@ export function renderCard(item: Exclude<ChatItem, { kind: "user" | "agent" }>, 
       return <EmployeeFormCard key={`${item.key}-${item.card.pending}-${item.card.decision ?? ""}`} item={item} actions={actions} session={session} />;
     case "pause":
       return <PauseCard key={item.key} item={item} actions={actions} />;
-    case "qc":
-      return <QcCard key={item.key} item={item} />;
-    case "review_notice":
-      return <ReviewNoticeCard key={item.key} item={item} actions={actions} />;
     case "return_confirm":
       return <ReturnConfirmCard key={item.key} item={item} actions={actions} />;
-    case "delivered":
-      return <DeliveredCard key={item.key} item={item} actions={actions} />;
     case "past_steps":
       return <PastRunSteps key={item.key} item={item} />;
-    case "filing":
-      return <FilingCard key={`${item.key}-${item.description}-${item.filed ?? ""}`} item={item} actions={actions} session={session} />;
     case "use_file":
       return <UseFileCard key={`${item.key}-${item.confirmed}`} item={item} actions={actions} session={session} />;
     case "permission":

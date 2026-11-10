@@ -75,22 +75,20 @@ describe("多任务会话的对话", () => {
   ];
   const detail = session(messages, { taskId: "t2", taskIds: ["t1", "t2"], taskState: "running" });
 
-  test("早先任务的步骤行和交付物留在它发生的时间点，不因后来有新任务而消失", () => {
+  test("早先任务的步骤行留在它发生的时间点，不因后来有新任务而消失；它的交付物不在对话里（在右栏“早先的交付”）", () => {
     const items = deriveChat(detail, undefined, [], undefined, [past]);
-    expect(items.map((i) => i.kind)).toEqual(["user", "form", "past_steps", "notice", "delivered", "user", "form"]);
+    expect(items.map((i) => i.kind)).toEqual(["user", "form", "past_steps", "user", "form"]);
     const steps = items.find((i) => i.kind === "past_steps");
     expect(steps).toMatchObject({ kind: "past_steps", taskId: "t1", run: 1 });
     expect(steps && steps.kind === "past_steps" ? steps.rows.map((row) => [row.id, row.status]).filter(([id]) => id === "load") : []).toEqual([["load", "done"]]);
-    const delivered = items.find((i) => i.kind === "delivered");
-    expect(delivered).toMatchObject({ kind: "delivered", taskId: "t1", run: 1 });
   });
 
   test("没有早先任务时和以前一样", () => {
     const items = deriveChat(session(messages.slice(0, 3), { taskId: "t1", taskIds: ["t1"] }));
-    expect(items.map((i) => i.kind)).toEqual(["user", "form", "notice"]);
+    expect(items.map((i) => i.kind)).toEqual(["user", "form"]);
   });
 
-  test("两张入库卡片各在自己任务交付的位置", () => {
+  test("入库卡片不在对话里：它们在右栏各自任务的交付物下面", () => {
     const filing = (taskId: string, id: string, offsetSec: number) =>
       msg({ kind: "card", card: { type: "knowledge_filing", taskId, title: taskId } }, id, offsetSec);
     const withFilings = session([...messages.slice(0, 3), filing("t1", "t4-filing", 13), ...messages.slice(3), filing("t2", "r2-t9-filing", 90)], {
@@ -98,13 +96,9 @@ describe("多任务会话的对话", () => {
       taskIds: ["t1", "t2"],
     });
     const items = deriveChat(withFilings, undefined, [], undefined, [past]);
-    const order = items.map((i) => (i.kind === "filing" ? `filing:${i.taskId}` : i.kind));
-    expect(order.indexOf("filing:t1")).toBeLessThan(order.indexOf("filing:t2"));
-    // 第一张入库卡片紧跟第一个任务的交付物，在第二个任务开工之前
-    expect(order.indexOf("filing:t1")).toBeLessThan(items.findIndex((i) => i.kind === "user" && i.text.includes("再来一版")));
+    expect(items.map((i) => i.kind)).toEqual(["user", "form", "past_steps", "user", "form"]);
   });
 });
-
 describe("交付后准备下一次运行", () => {
   const form = (id: string, offsetSec: number, submitted: boolean) =>
     msg({ kind: "card", card: { type: "form", employee: "weekly-report", submitted, taskId: submitted ? "t1" : undefined } }, id, offsetSec);

@@ -1,6 +1,7 @@
 // 查看源文件：直接编辑原文件（供开发人员修复杂改动）；保存时仍然先校验再写回。
 import { useEffect, useState } from "react";
 import { Alert, Input, Select, Space, Tag, Typography } from "antd";
+import { MarkdownEditor } from "../../components/MarkdownEditor";
 import { fileOf, textOf, type TabProps } from "./helpers";
 
 export function SourceFilesView({ config, drafts, setContent }: TabProps) {
@@ -34,14 +35,19 @@ export function SourceFilesView({ config, drafts, setContent }: TabProps) {
         ) : null}
       </Space>
       {file?.error ? <Alert type="error" showIcon message={file.error} /> : null}
-      <Input.TextArea
-        rows={26}
-        spellCheck={false}
-        style={{ fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 13 }}
-        value={textOf(config, drafts, path)}
-        onChange={(event) => setContent(path, event.target.value)}
-        placeholder="选择要编辑的配置文件"
-      />
+      {path.toLowerCase().endsWith(".md") ? (
+        // Markdown 文件（SKILL.md、frontdesk.md、提示词）：左写右即时渲染
+        <MarkdownEditor key={path} rows={26} mono value={textOf(config, drafts, path)} onChange={(text) => setContent(path, text)} placeholder="选择要编辑的配置文件" />
+      ) : (
+        <Input.TextArea
+          rows={26}
+          spellCheck={false}
+          style={{ fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 13 }}
+          value={textOf(config, drafts, path)}
+          onChange={(event) => setContent(path, event.target.value)}
+          placeholder="选择要编辑的配置文件"
+        />
+      )}
     </Space>
   );
 }

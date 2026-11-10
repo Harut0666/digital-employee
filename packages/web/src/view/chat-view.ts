@@ -41,15 +41,10 @@ export type ChatItem =
   /** 员工表单（T49）：run_employee 弹出的结构化表单，人核对、补充、确认开工或“不是这个员工” */
   | (ItemBase & { kind: "employee_form"; card: SessionCard; writable: boolean })
   | (ItemBase & { kind: "pause"; pause?: PauseView; actions: TaskAction[]; active: boolean })
-  | (ItemBase & { kind: "qc"; passed: boolean; checks: QcCheckResult[] })
-  /** 送审提示：审核在右栏进行，对话里只说一句 */
-  | (ItemBase & { kind: "review_notice"; pause?: PauseView; active: boolean })
   /** 使用目录文件：前台 Agent 提议把人工作区目录里的文件当材料，人确认后才复制进会话 */
   | (ItemBase & { kind: "use_file"; path: string; name: string; size?: number; reason?: string; confirmed: boolean; actions: TaskAction[]; active: boolean })
   /** Agent 在对话里起草的退回意见，审核人确认后才退回；只带退回这一个操作 */
   | (ItemBase & { kind: "return_confirm"; actions: TaskAction[]; active: boolean; comment: string; sections?: string[] })
-  /** 交付物；会话里有多个任务时带着任务号和第几次运行（下载取这个任务的交付物） */
-  | (ItemBase & { kind: "delivered"; deliverables: DeliverableRef[]; taskId?: string; run?: number })
   /** 早先任务的步骤行（会话里先后运行过多个任务）：留在这个任务开工的位置，只读 */
   | (ItemBase & { kind: "past_steps"; taskId: string; run: number; rows: StepRow[] })
   /** 权限确认（T48）：Agent 想做的动作和三个答复按钮；答复后只剩一行结果 */
@@ -65,19 +60,7 @@ export type ChatItem =
   /** 正在说的一轮里已经调用的工具（可折叠成一行） */
   | (ItemBase & { kind: "tools"; turn: number; items: AgentToolView[]; running: boolean; startedAt?: number; endedAt?: number })
   /** 正在说的一轮里已经说出的部分（还没写成会话里的消息） */
-  | (ItemBase & { kind: "streaming"; turn: number; text: string; running: boolean })
-  | (ItemBase & {
-      kind: "filing";
-      taskId: string;
-      title: string;
-      description: string;
-      draftFailed: boolean;
-      filed?: string;
-      /** 还没入库：可以改描述并确认 */
-      active: boolean;
-      /** 能请模型起草描述（只读会话不能写会话日志） */
-      canDraft: boolean;
-    });
+  | (ItemBase & { kind: "streaming"; turn: number; text: string; running: boolean });
 
 /** 会话绑定的任务现状（取自任务快照），用来在交付后给出交付物 */
 export interface ChatTask {
@@ -120,6 +103,9 @@ function insertByTime(items: ChatItem[], item: ChatItem): void {
   }
   items.splice(start, 0, item);
 }
+
+/** 后端在交付时写进会话的说明（internal/session/cards.go） */
+const DELIVERED_NOTICE = "任务已交付。";
 
 /** 写文件的工具：会话里已经有对应的“改动”行，不再在工具行里重复 */
 const FILE_CHANGE_TOOLS = new Set(["write_file", "edit_file"]);
@@ -194,8 +180,6 @@ function deriveMessages(
 ): ChatItem[] {
   const items: ChatItem[] = [];
   const writable = !session.readOnly;
-  // 入库确认卡片排在交付物之后：先能下载，再决定要不要入库
-  const filings: ChatItem[] = [];
 
   session.messages.forEach((m) => {
     const base = { key: m.id, ts: m.ts };
@@ -208,12 +192,16 @@ function deriveMessages(
         items.push({ ...base, kind: "agent", text: m.text ?? "", turn: m.turn });
         break;
       case "notice":
+        // “任务已交付。”不进对话：交付状态在标题栏的状态标签上，交付物和入库在右栏
+        if (m.text === DELIVERED_NOTICE) break;
         items.push({ ...base, kind: "notice", text: m.text ?? "" });
         break;
-      case "card":
-        if (m.card?.type === "knowledge_filing") filings.push(filingItem(base, m.card));
-        else if (m.card) items.push(cardItem(base, m.card));
+      case "card": {
+        // 对话里只留员工的工具卡片（员工表单、使用目录文件等）和需要人答复的确认；质检、送审提示、交付物、入库确认都在右栏
+        const item = m.card ? cardItem(base, m.card) : undefined;
+        if (item) items.push(item);
         break;
+      }
       case "todo_written":
         items.push({ ...base, kind: "todo", ...deriveTodoCard(m, m.id === latestTodoId(session.messages)) });
         break;
@@ -248,46 +236,18 @@ function deriveMessages(
     const added = items[before];
     if (m.turn !== undefined && added && !firstOfTurn.has(m.turn)) firstOfTurn.set(m.turn, added);
   });
-  if (task?.state === "delivered" && task.deliverables.length > 0) {
-    const ts = session.messages.at(-1)?.ts ?? session.updatedAt;
-    items.push({ key: "delivered", ts, kind: "delivered", deliverables: task.deliverables });
-  }
-  // 早先的任务：步骤行紧跟在它开工的位置，交付物在它交付的时间点
+  // 早先的任务：步骤行紧跟在它开工的位置（它们的交付物在右栏“早先的交付”里）
   for (const run of past) {
     const rows = deriveStepRows(run.events, run.steps, { fallbackModel: undefined });
     const first = run.events[0];
     if (first && rows.some((row) => row.status !== "pending")) {
       insertByTime(items, { key: `steps-${run.taskId}`, ts: first.ts, kind: "past_steps", taskId: run.taskId, run: run.run, rows });
     }
-    const deliveredEvent = run.events.find((e) => e.type === "state_changed" && e.to === "delivered");
-    if (run.state === "delivered" && run.deliverables.length > 0 && deliveredEvent) {
-      insertByTime(items, { key: `delivered-${run.taskId}`, ts: deliveredEvent.ts, kind: "delivered", deliverables: run.deliverables, taskId: run.taskId, run: run.run });
-    }
-  }
-  // 入库确认卡片：当前任务的排在最后；早先任务的紧跟在它交付之后
-  const latest = latestTaskId(session);
-  for (const filing of filings) {
-    if (filing.kind === "filing" && filing.taskId !== latest && past.some((run) => run.taskId === filing.taskId)) insertByTime(items, filing);
-    else items.push(filing);
   }
 
   return items;
 
-  function filingItem(base: ItemBase, card: SessionCard): ChatItem {
-    return {
-      ...base,
-      kind: "filing",
-      taskId: card.taskId ?? session.taskId ?? "",
-      title: card.title ?? "",
-      description: card.description ?? "",
-      draftFailed: card.draftFailed ?? false,
-      filed: card.filed,
-      active: !card.filed,
-      canDraft: writable,
-    };
-  }
-
-  function cardItem(base: ItemBase, card: SessionCard): ChatItem {
+  function cardItem(base: ItemBase, card: SessionCard): ChatItem | undefined {
     const actions = card.actions ?? [];
     switch (card.type) {
       case "employee_confirm":
@@ -313,15 +273,15 @@ function deriveMessages(
         return { ...base, kind: "employee_form", card, writable };
       case "pause":
         return { ...base, kind: "pause", pause: card.pause, actions, active: actions.length > 0 };
+      // 质检结果在右栏的检验记录里；送审只是一句提示，审核本身在右栏；入库确认在右栏交付物下面
       case "qc":
-        return { ...base, kind: "qc", passed: card.passed ?? false, checks: card.checks ?? [] };
+      case "knowledge_filing":
+        return undefined;
       case "review": {
-        if (!card.comment) return { ...base, kind: "review_notice", pause: card.pause, active: actions.length > 0 };
+        if (!card.comment) return undefined;
         const giveBack = actions.filter((a) => a.command === "return");
         return { ...base, kind: "return_confirm", actions: giveBack, active: giveBack.length > 0, comment: card.comment, sections: card.sections };
       }
-      case "knowledge_filing":
-        return filingItem(base, card);
       case "permission":
         return { ...base, kind: "permission", ...derivePermissionCard(card, { writable, role }) };
       case "question":

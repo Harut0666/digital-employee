@@ -56,6 +56,35 @@ func openFileWithSystem(path string) error {
 	return nil
 }
 
+// openWithSystem 用系统里关联的默认应用打开文件：.docx 交给 Word，.md 交给关联的编辑器，等等。
+// Windows 用 FileProtocolHandler（路径里有空格、& 等字符都安全，不经过 cmd 的解析）。
+func openWithSystem(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
+// revealWithSystem 在文件夹里显示并选中这个文件。
+func revealWithSystem(path string) error {
+	cmd := revealCommand(path)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
+}
+
 // OpenBrowser 用系统默认浏览器打开界面；打不开不影响服务端运行。
 func OpenBrowser(url string) error {
 	var cmd *exec.Cmd

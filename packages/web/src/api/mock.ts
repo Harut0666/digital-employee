@@ -373,6 +373,7 @@ export function createMockApi(getRole: () => UiRole): WebApi {
     },
 
     deliverableUrl: (_id, _kind: DeliverableKind) => undefined,
+    openDeliverable: async () => ({ ok: false as const, message: "模拟模式没有文件可以打开" }),
 
     // ---- 员工配置页 ----
     getEmployeeConfig: async (id) => later(configs.get(id)),

@@ -1,5 +1,6 @@
 // 前台 Agent：人设文本框 + 只读工具勾选，写回 frontdesk.md。
-import { Alert, Card, Checkbox, Input, Space, Tag, Typography } from "antd";
+import { Alert, Card, Checkbox, Space, Tag, Typography } from "antd";
+import { MarkdownEditor } from "../../components/MarkdownEditor";
 import { FRONTDESK_FIXED_TOOLS, FRONTDESK_READONLY_TOOLS, type FrontdeskDoc } from "@de/core/contract";
 import { asArray, type TabProps } from "./helpers";
 
@@ -19,7 +20,7 @@ export function FrontdeskTab({ config, drafts, setData }: TabProps) {
         message="前台 Agent 只能在对话里读写工作区文件、通过 run_employee 把工作交给员工（由发起人在员工表单卡上确认）、用只读工具回答问题；任何状态推进都必须由对应角色点击卡片按钮。这里的人设是写给前台 Agent 的、关于这个员工的说明。"
       />
       <Card size="small" title="人设" extra={<Typography.Text type="secondary">frontdesk.md 正文</Typography.Text>}>
-        <Input.TextArea rows={18} value={doc.body} onChange={(event) => update({ body: event.target.value })} placeholder="前台 Agent 的人设、能做什么、不能做什么" />
+        <MarkdownEditor rows={18} value={doc.body} onChange={(text) => update({ body: text })} placeholder="前台 Agent 的人设、能做什么、不能做什么" />
       </Card>
       <Card
         size="small"

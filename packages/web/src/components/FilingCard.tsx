@@ -1,17 +1,17 @@
-// 入库确认卡片：交付后由程序发出。模型起草一句描述，人确认或修改后才放进知识库；模型不可用时由人手写（ADR-0005）。
+// 入库确认（右栏交付物下面）：交付后由程序发出。模型起草一句描述，人确认或修改后才放进知识库；模型不可用时由人手写（ADR-0005）。
 import { useEffect, useState } from "react";
 import { Button, Input, Select } from "antd";
 import { BookOutlined, CheckCircleFilled, EditOutlined } from "@ant-design/icons";
-import type { ChatItem } from "../view/chat-view";
+import type { FilingView } from "../view/delivery";
 import type { CardActions, SessionActions } from "./Cards";
 import { Handoff } from "./Cards";
 
-type FilingItem = Extract<ChatItem, { kind: "filing" }>;
+
 
 /** 已请模型起草过的任务：卡片重新挂载（描述变化会换 key）或 StrictMode 重复执行时不再请求 */
 const requested = new Set<string>();
 
-export function FilingCard({ item, actions, session }: { item: FilingItem; actions: CardActions; session: SessionActions }) {
+export function FilingCard({ item, actions, session }: { item: FilingView; actions: CardActions; session: SessionActions }) {
   const [title, setTitle] = useState(item.title);
   const [description, setDescription] = useState(item.description);
   const [tags, setTags] = useState<string[]>([]);

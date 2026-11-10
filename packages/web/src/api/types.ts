@@ -536,6 +536,9 @@ export interface MockSessionSources {
   records(role: UiRole): Promise<RecordItem[]>;
 }
 
+/** 交付物的打开方式 */
+export type OpenMode = "default" | "text" | "reveal";
+
 export interface WebApi extends SessionApi, KnowledgeApi {
   listEmployees(): Promise<EmployeeInfo[]>;
   listTasks(): Promise<TaskSummary[]>;
@@ -550,6 +553,8 @@ export interface WebApi extends SessionApi, KnowledgeApi {
   subscribe(id: string, afterSeq: number, onEvent: (event: TaskEvent) => void): () => void;
   /** 交付物下载地址；无则 undefined。给了版本号时取那一版。 */
   deliverableUrl(id: string, kind: DeliverableKind, version?: number): string | undefined;
+  /** 用本机的应用打开交付物：default 系统默认应用（Word 文档交给 Word）、text 文本编辑器（Markdown、检验记录）、reveal 在文件夹里显示 */
+  openDeliverable(id: string, kind: DeliverableKind, mode: OpenMode, version?: number): Promise<{ ok: true } | { ok: false; message: string }>;
 
   // ---- 员工配置页 ----
   /** 配置页的数据：每个文件的原文与解析结果、派生视图、版本列表。 */

@@ -1,18 +1,32 @@
 // 右栏：上方交付物预览（单独滚动），下方固定检验记录、修改说明和审核操作。不分标签页。
 import { useEffect, useState } from "react";
-import { Button, message, Modal, Segmented, Tooltip } from "antd";
-import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, InboxOutlined } from "@ant-design/icons";
+import { Button, Collapse, Dropdown, message, Modal, Segmented, Tooltip } from "antd";
+import { CheckCircleFilled, CloseCircleFilled, DownloadOutlined, DownOutlined, ExportOutlined, InboxOutlined } from "@ant-design/icons";
 import type { TaskSnapshot } from "../api";
-import { deriveReviewPanel } from "../view/review-panel";
+import { deriveReviewPanel, openMenu } from "../view/review-panel";
+import type { EarlierDelivery, FilingView } from "../view/delivery";
 import { actionPlan } from "../view/permissions";
 import { DocxPreview } from "./DocxPreview";
 import { MarkdownPreview } from "./MarkdownPreview";
-import { PanelClose } from "./PanelClose";
-import { Handoff, ReturnForm, TaskActionBar, type CardActions } from "./Cards";
+import { Handoff, ReturnForm, TaskActionBar, type CardActions, type SessionActions } from "./Cards";
+import { FilingCard } from "./FilingCard";
 import { useLinkProps } from "./Preferences";
 import { StateBlock } from "./StateBlock";
 
-export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnapshot | undefined; actions: CardActions; onClose?: () => void }) {
+const FILE_LABELS: Record<string, string> = { docx: "Word 文档", md: "Markdown 简报", qc_record: "检验记录" };
+
+interface ReviewPanelProps {
+  snapshot: TaskSnapshot | undefined;
+  actions: CardActions;
+  /** 入库确认要用的会话操作（起草描述、放入知识库） */
+  session: SessionActions;
+  /** 当前任务的入库确认；交付之后才有 */
+  filing?: FilingView;
+  /** 会话里早先交付的任务 */
+  earlier?: EarlierDelivery[];
+}
+
+export function ReviewPanel({ snapshot, actions, session, filing, earlier = [] }: ReviewPanelProps) {
   const [selected, setSelected] = useState<number>();
   const [returning, setReturning] = useState(false);
   const linkProps = useLinkProps();
@@ -30,10 +44,9 @@ export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnap
       <div className="review">
         <div className="review-head">
           <span className="review-label">交付物</span>
-          <span className="review-name" />
-          {onClose && <PanelClose onClose={onClose} />}
         </div>
         <StateBlock icon={<InboxOutlined />} title="还没有交付物" description="员工完成后，交付物、检验记录和审核操作会显示在这里。" />
+        <EarlierDeliveries earlier={earlier} actions={actions} session={session} />
       </div>
     );
   }
@@ -42,6 +55,9 @@ export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnap
   const docUrl = view.docKind ? actions.downloadUrl(view.docKind, version) : undefined;
   const pause = view.reviewing && snapshot.pause?.code !== "awaiting_review" ? snapshot.pause : undefined;
   const plan = actionPlan(view.reviewing ? actions.taskActions : [], view.reviewing ? actions.waitingFor : [], actions.role);
+  const menu = openMenu(view.files, view.docKind);
+  // 交付之后：交付物下载、放入知识库、早先任务的交付物，都在文档下面这一块
+  const delivered = snapshot.state === "delivered" && view.latest;
 
   return (
     <div className="review">
@@ -58,10 +74,28 @@ export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnap
             options={view.versions.map((v) => ({ label: v.label, value: v.version }))}
           />
         )}
+        {menu.length > 0 && (
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: menu.flatMap((item, index) => [
+                ...(item.group === "other" && menu[index - 1]?.group === "main" ? [{ type: "divider" as const, key: `divider-${index}` }] : []),
+                { key: item.key, label: item.label },
+              ]),
+              onClick: ({ key }) => {
+                const picked = menu.find((item) => item.key === key);
+                if (picked) void actions.openFile(picked.kind, picked.mode, version);
+              },
+            }}
+          >
+            <Button size="small" icon={<ExportOutlined />}>
+              打开 <DownOutlined />
+            </Button>
+          </Dropdown>
+        )}
         <Tooltip title={docUrl ? "下载" : "模拟模式没有文件"}>
           <Button type="text" icon={<DownloadOutlined />} href={docUrl} disabled={!docUrl} {...linkProps(docUrl)} />
         </Tooltip>
-        {onClose && <PanelClose onClose={onClose} />}
       </div>
 
       <div className="review-doc">
@@ -71,6 +105,32 @@ export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnap
           <DocxPreview key={docUrl ?? "placeholder"} url={docUrl} reflow />
         )}
       </div>
+
+      {(delivered || earlier.length > 0) && (
+        <div className="review-delivery">
+          {delivered && (
+            <>
+              <div className="review-row">
+                <b>
+                  <CheckCircleFilled className="review-ok" /> 已交付
+                </b>
+                <span className="review-files">
+                  {view.files.map((kind) => {
+                    const url = actions.downloadUrl(kind, undefined);
+                    return (
+                      <Button key={kind} size="small" icon={<DownloadOutlined />} href={url} disabled={!url} {...linkProps(url)}>
+                        {FILE_LABELS[kind] ?? kind}
+                      </Button>
+                    );
+                  })}
+                </span>
+              </div>
+              {filing && <FilingCard key={`${filing.taskId}-${filing.description}-${filing.filed ?? ""}`} item={filing} actions={actions} session={session} />}
+            </>
+          )}
+          <EarlierDeliveries earlier={earlier} actions={actions} session={session} />
+        </div>
+      )}
 
       <div className="review-foot">
         <div className="review-info">
@@ -118,7 +178,6 @@ export function ReviewPanel({ snapshot, actions, onClose }: { snapshot: TaskSnap
               {pause.resolution && <div>{pause.resolution}</div>}
             </div>
           )}
-          {snapshot.state === "delivered" && view.latest && <div className="review-ok">已交付</div>}
         </div>
         {view.reviewing && (
           <div className="review-actions">
@@ -164,5 +223,36 @@ function ReturnDialog({ open, actions, onClose }: { open: boolean; actions: Card
     >
       <ReturnForm sections={actions.sections} picked={picked} onPick={setPicked} comment={comment} onComment={setComment} />
     </Modal>
+  );
+}
+
+/** 会话里早先交付的任务：交付物下载和它的入库确认，默认收起 */
+function EarlierDeliveries({ earlier, actions, session }: { earlier: EarlierDelivery[]; actions: CardActions; session: SessionActions }) {
+  const linkProps = useLinkProps();
+  if (earlier.length === 0) return null;
+  return (
+    <Collapse
+      size="small"
+      className="review-earlier"
+      items={earlier.map((run) => ({
+        key: run.taskId,
+        label: `早先的交付 · 第 ${run.run} 次运行`,
+        children: (
+          <div className="review-earlier-body">
+            <span className="review-files">
+              {run.deliverables.map((d) => {
+                const url = actions.downloadUrl(d.kind, undefined, run.taskId);
+                return (
+                  <Button key={d.kind} size="small" icon={<DownloadOutlined />} href={url} disabled={!url} {...linkProps(url)}>
+                    {FILE_LABELS[d.kind] ?? d.kind}
+                  </Button>
+                );
+              })}
+            </span>
+            {run.filing && <FilingCard key={`${run.filing.taskId}-${run.filing.description}-${run.filing.filed ?? ""}`} item={run.filing} actions={actions} session={session} />}
+          </div>
+        ),
+      }))}
+    />
   );
 }

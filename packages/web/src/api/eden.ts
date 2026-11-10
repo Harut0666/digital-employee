@@ -118,6 +118,20 @@ export function createEdenApi(getRole: () => UiRole, origin: string = window.loc
     deliverableUrl: (id, kind: DeliverableKind, version?: number) =>
       `${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}${version ? `?version=${version}` : ""}`,
 
+    async openDeliverable(id, kind: DeliverableKind, mode, version) {
+      // 打开的是本机应用，由后端（本机进程）去启动；只能打开这个任务登记的交付物
+      const res = await fetch(`${origin}/api/tasks/${encodeURIComponent(id)}/deliverables/${kind}/open`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-role": getRole() },
+        body: JSON.stringify({ mode, ...(version ? { version } : {}) }),
+      }).catch((e: unknown) => e as Error);
+      if (res instanceof Error) return { ok: false as const, message: res.message };
+      if (res.ok) return { ok: true as const };
+      const body: unknown = await res.json().catch(() => undefined);
+      const text = typeof body === "object" && body !== null && "message" in body ? String((body as { message: unknown }).message) : `请求失败（${res.status}）`;
+      return { ok: false as const, message: text };
+    },
+
     // ---- 员工配置页 ----
     getEmployeeConfig: configApi.getEmployeeConfig,
     saveEmployeeConfig: configApi.saveEmployeeConfig,

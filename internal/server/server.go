@@ -72,6 +72,10 @@ type Options struct {
 	PickFolder func(ctx context.Context) (string, bool, error)
 	// OpenFile 用系统编辑器打开文件；缺省按平台调用 notepad/open/xdg-open。
 	OpenFile func(path string) error
+	// OpenDefault 用系统默认应用打开文件（交付物的“用默认应用打开”：docx 交给 Word 等）；缺省按平台调用。
+	OpenDefault func(path string) error
+	// Reveal 在文件夹里显示并选中文件；缺省按平台调用。
+	Reveal func(path string) error
 	// Env 读取环境变量；nil 时读进程环境。
 	Env map[string]string
 	// Now 时钟（备份/诊断时间戳）；nil 时用 time.Now。
@@ -205,6 +209,12 @@ func (s *Server) resolveDefaults() {
 	}
 	if s.opts.OpenFile == nil {
 		s.opts.OpenFile = openFileWithSystem
+	}
+	if s.opts.OpenDefault == nil {
+		s.opts.OpenDefault = openWithSystem
+	}
+	if s.opts.Reveal == nil {
+		s.opts.Reveal = revealWithSystem
 	}
 	if s.opts.PickFolder == nil {
 		s.opts.PickFolder = pickFolderWithSystem
@@ -406,6 +416,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/tasks/{id}/events", s.handleEvents)
 	m.HandleFunc("GET /api/tasks/{id}/stream", s.handleStream)
 	m.HandleFunc("GET /api/tasks/{id}/deliverables/{kind}", s.handleDeliverable)
+	m.HandleFunc("POST /api/tasks/{id}/deliverables/{kind}/open", s.handleOpenDeliverable)
 	// Markdown 交付物（场景 B 的简报）引用的图表 PNG：简报里写的是相对路径 assets/<文件名>，预览时映射到这里
 	m.HandleFunc("GET /api/tasks/{id}/assets/{name}", s.handleTaskAsset)
 

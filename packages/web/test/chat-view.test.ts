@@ -119,19 +119,13 @@ describe("deriveChat", () => {
         { status: "task", taskId: "t1", waitingFor: ["reviewer"] },
       ),
     );
-    // 审核在右栏进行：对话里的审核卡只是一句提示；Agent 起草的退回意见是确认卡片
+    // 对话里只留要人答复的卡片：质检结果、送审提示在右栏；Agent 起草的退回意见是确认卡片
     expect(items.map((i) => [i.kind, "active" in i ? i.active : undefined])).toEqual([
       ["pause", false],
-      ["qc", undefined],
-      ["review_notice", true],
       ["return_confirm", true],
     ]);
-    const qc = items[1];
-    expect(qc?.kind === "qc" && [qc.passed, qc.checks.length]).toEqual([true, 1]);
-    const review = items[2];
-    expect(review?.kind === "review_notice" && review.pause?.title).toBe("待审核");
     // 确认卡片只给退回这一个操作，由审核人确认后才退回
-    const drafted = items[3];
+    const drafted = items[1];
     expect(drafted?.kind === "return_confirm" && [drafted.comment, drafted.sections, drafted.actions.map((a) => a.command)]).toEqual([
       "摘要太长",
       ["summary"],
@@ -142,42 +136,13 @@ describe("deriveChat", () => {
     expect(pause?.kind === "pause" && pause.actions).toEqual([]);
   });
 
-  test("任务交付后，对话末尾给出交付物", () => {
-    const delivered = deriveChat(session([msg({ kind: "notice", text: "任务已交付。" }, "t20")], { status: "closed", taskId: "t1" }), {
-      state: "delivered",
-      deliverables: [{ kind: "docx", path: "经营周报.docx", sha256: "x" }],
-    });
-    expect(delivered.map((i) => i.kind)).toEqual(["notice", "delivered"]);
-    const last = delivered[1];
-    expect(last?.kind === "delivered" && last.deliverables.map((d) => d.kind)).toEqual(["docx"]);
-    // 没交付就不给
-    expect(deriveChat(session([], { status: "task", taskId: "t1" }), { state: "awaiting_review", deliverables: [] }).map((i) => i.kind)).toEqual([]);
-  });
-
-  test("入库确认卡片排在交付物之后；入库前可以操作，入库后只读；只读会话不能请模型起草", () => {
+  test("交付之后对话里没有“已交付”（含“任务已交付。”那行说明）和“放入知识库”：它们都在右栏交付物下面", () => {
     const deliveredTask = { state: "delivered" as const, deliverables: [{ kind: "docx" as const, path: "经营周报.docx", sha256: "x" }] };
-    const filing = (patch: Record<string, unknown>) =>
-      msg({ kind: "card", card: { type: "knowledge_filing", taskId: "t1", title: "经营周报_2026年第44周", ...patch } }, "t20-filing");
+    const filing = msg({ kind: "card", card: { type: "knowledge_filing", taskId: "t1", title: "经营周报_2026年第44周", description: "第 44 周经营周报" } }, "t20-filing");
     const notice = msg({ kind: "notice", text: "任务已交付。" }, "t20");
-
-    const offered = deriveChat(session([notice, filing({ description: "第 44 周经营周报" })], { status: "closed", taskId: "t1" }), deliveredTask);
-    expect(offered.map((i) => i.kind)).toEqual(["notice", "delivered", "filing"]);
-    const card = offered[2];
-    expect(card?.kind === "filing" && [card.taskId, card.title, card.description, card.active, card.canDraft]).toEqual([
-      "t1",
-      "经营周报_2026年第44周",
-      "第 44 周经营周报",
-      true,
-      true,
-    ]);
-
-    const filed = deriveChat(session([notice, filing({ filed: "kb-1" })], { status: "closed", taskId: "t1" }), deliveredTask).at(-1);
-    expect(filed?.kind === "filing" && [filed.filed, filed.active]).toEqual(["kb-1", false]);
-
-    const legacy = deriveChat(session([notice, filing({ draftFailed: true })], { status: "closed", taskId: "t1", readOnly: true }), deliveredTask).at(-1);
-    expect(legacy?.kind === "filing" && [legacy.active, legacy.canDraft, legacy.draftFailed]).toEqual([true, false, true]);
+    const items = deriveChat(session([notice, filing], { status: "closed", taskId: "t1" }), deliveredTask);
+    expect(items.map((i) => i.kind)).toEqual([]);
   });
-
   test("正在说的一轮：逐字出现的文字跟在最后一条之后，工具调用单独列出", () => {
     const items = deriveChat(
       session([msg({ kind: "user", role: "initiator", text: "出周报" })], { status: "drafting", employee: "weekly-report" }),

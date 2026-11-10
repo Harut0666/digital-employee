@@ -2,7 +2,7 @@
 // 版本、修改说明、下载名都来自快照，这里只决定显示哪一版、显示什么。
 
 import type { QcCheckResult, TaskState } from "@de/core/contract";
-import type { DeliverableKind, DeliverableVersion } from "../api/types";
+import type { DeliverableKind, DeliverableVersion, OpenMode } from "../api/types";
 
 export interface ReviewQc {
   passed: boolean;
@@ -18,6 +18,8 @@ export interface ReviewPanelView {
   latest: boolean;
   docKind: "docx" | "md" | undefined;
   fileName: string | undefined;
+  /** 这一版有哪些文件（交付文档、检验记录） */
+  files: DeliverableKind[];
   /** 检验记录只有最新一版有 */
   qc: ReviewQc | undefined;
   /** 引出这一版的退回意见 */
@@ -58,6 +60,7 @@ export function deriveReviewPanel(input: ReviewPanelInput, selected?: number): R
     latest,
     docKind,
     fileName: name && current && !latest ? versionSuffix(name, current.version) : name,
+    files: current?.files.map((f) => f.kind) ?? [],
     qc:
       checks.length > 0
         ? {
@@ -85,4 +88,39 @@ export interface PanelLayout {
 
 export function panelLayout(windowWidth: number, reading: boolean): PanelLayout {
   return { mode: windowWidth < DRAWER_BELOW ? "drawer" : "column", wide: reading };
+}
+
+/** 交付物右上角“打开”菜单的一项 */
+export interface OpenMenuItem {
+  key: string;
+  kind: DeliverableKind;
+  mode: OpenMode;
+  label: string;
+  /** main：交付文档本身；other：同一版的其他文件（检验记录等） */
+  group: "main" | "other";
+}
+
+const KIND_NAMES: Record<string, string> = { docx: "Word 文档", md: "Markdown 简报", qc_record: "检验记录" };
+
+/**
+ * 用本机其他应用打开交付物：Word 文档交给系统默认应用（Word）；Markdown 可以用默认应用，也可以用文本编辑器；
+ * 同一版的其他文件（检验记录）也能打开；都能在文件夹里显示。Word 文档不给“文本编辑器”，打开只会是乱码。
+ */
+export function openMenu(files: readonly DeliverableKind[], docKind: "docx" | "md" | undefined): OpenMenuItem[] {
+  const items: OpenMenuItem[] = [];
+  const add = (kind: DeliverableKind, mode: OpenMode, label: string, group: OpenMenuItem["group"]) =>
+    items.push({ key: `${kind}:${mode}`, kind, mode, label, group });
+  if (docKind === "docx") add("docx", "default", "用 Word 打开（系统默认应用）", "main");
+  if (docKind === "md") {
+    add("md", "default", "用默认应用打开", "main");
+    add("md", "text", "用文本编辑器打开", "main");
+  }
+  if (docKind) add(docKind, "reveal", "在文件夹中显示", "main");
+  for (const kind of files) {
+    if (kind === docKind) continue;
+    const name = KIND_NAMES[kind] ?? kind;
+    add(kind, "text", `${name}：用文本编辑器打开`, "other");
+    add(kind, "default", `${name}：用默认应用打开`, "other");
+  }
+  return items;
 }
